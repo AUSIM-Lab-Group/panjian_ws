@@ -1,0 +1,1254 @@
+# ============================================================================
+# 全局路径重规划性能分析报告
+# ============================================================================
+#
+# 指标说明:
+#   search_time_seconds: 重规划真实搜索时间(秒) - 来自C++规划器
+#   velocity_variance: 路径速度方差 (m/s)²
+#   angular_velocity_variance: 路径角速度方差 (rad/s)²
+#   min_obstacle_distance_meters: 与障碍物最小安全距离(米)
+#   global_average_distance_meters: 前20个轨迹点与障碍物平均距离(米)
+#   isad_score: 改进安全平均距离评分 [0,1]
+#   success_rate_percentage: 重规划成功率(%) = 成功次数/总次数
+#
+# 过滤规则:
+#   - 平均距离超过6m的障碍物不计入统计
+#   - 最小距离为负值时标记为失败重规划
+#   - 成功率 = 无碰撞重规划次数 / 总重规划次数
+# ============================================================================
+
+detailed_replan_data:
+  replan_1:
+    angular_velocity_variance: 0.491439
+    description: 第1次重规划 - 失败
+    global_average_distance_meters: 1.0003
+    isad_score: 0.8075
+    min_obstacle_distance_meters: -0.0857
+    path_length_points: 51
+    search_time_seconds: 0.0088
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.122426
+  replan_10:
+    angular_velocity_variance: 0.09968
+    description: 第10次重规划 - 失败
+    global_average_distance_meters: 1.2074
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.0
+    path_length_points: 45
+    search_time_seconds: 0.0101
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.117529
+  replan_100:
+    angular_velocity_variance: 0.003714
+    description: 第100次重规划 - 成功
+    global_average_distance_meters: 1.1363
+    isad_score: 0.862
+    min_obstacle_distance_meters: 0.068
+    path_length_points: 45
+    search_time_seconds: 0.0085
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106329
+  replan_11:
+    angular_velocity_variance: 0.058406
+    description: 第11次重规划 - 成功
+    global_average_distance_meters: 0.962
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4087
+    path_length_points: 45
+    search_time_seconds: 0.0094
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.109039
+  replan_12:
+    angular_velocity_variance: 0.015878
+    description: 第12次重规划 - 成功
+    global_average_distance_meters: 0.6975
+    isad_score: 0.613
+    min_obstacle_distance_meters: 0.1505
+    path_length_points: 45
+    search_time_seconds: 0.0107
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10792
+  replan_13:
+    angular_velocity_variance: 0.053278
+    description: 第13次重规划 - 成功
+    global_average_distance_meters: 0.9577
+    isad_score: 0.7911
+    min_obstacle_distance_meters: 0.3231
+    path_length_points: 45
+    search_time_seconds: 0.0095
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.111223
+  replan_14:
+    angular_velocity_variance: 0.003099
+    description: 第14次重规划 - 成功
+    global_average_distance_meters: 1.03
+    isad_score: 0.8148
+    min_obstacle_distance_meters: 0.3739
+    path_length_points: 45
+    search_time_seconds: 0.0126
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106013
+  replan_15:
+    angular_velocity_variance: 0.0
+    description: 第15次重规划 - 成功
+    global_average_distance_meters: 1.0752
+    isad_score: 0.8325
+    min_obstacle_distance_meters: 0.0672
+    path_length_points: 45
+    search_time_seconds: 0.0143
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_16:
+    angular_velocity_variance: 0.008219
+    description: 第16次重规划 - 失败
+    global_average_distance_meters: 1.1125
+    isad_score: 0.8556
+    min_obstacle_distance_meters: -0.0263
+    path_length_points: 45
+    search_time_seconds: 0.0104
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106511
+  replan_17:
+    angular_velocity_variance: 0.003976
+    description: 第17次重规划 - 成功
+    global_average_distance_meters: 1.1663
+    isad_score: 0.8883
+    min_obstacle_distance_meters: 0.1852
+    path_length_points: 45
+    search_time_seconds: 0.0101
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106407
+  replan_18:
+    angular_velocity_variance: 0.011946
+    description: 第18次重规划 - 成功
+    global_average_distance_meters: 1.1956
+    isad_score: 0.9176
+    min_obstacle_distance_meters: 0.4144
+    path_length_points: 45
+    search_time_seconds: 0.0122
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106897
+  replan_19:
+    angular_velocity_variance: 0.0222
+    description: 第19次重规划 - 成功
+    global_average_distance_meters: 1.1689
+    isad_score: 0.949
+    min_obstacle_distance_meters: 0.3427
+    path_length_points: 45
+    search_time_seconds: 0.0107
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107368
+  replan_2:
+    angular_velocity_variance: 0.048538
+    description: 第2次重规划 - 成功
+    global_average_distance_meters: 0.9685
+    isad_score: 0.7948
+    min_obstacle_distance_meters: 0.4103
+    path_length_points: 45
+    search_time_seconds: 0.0106
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_20:
+    angular_velocity_variance: 0.090333
+    description: 第20次重规划 - 失败
+    global_average_distance_meters: 1.2082
+    isad_score: 0.9316
+    min_obstacle_distance_meters: -0.3416
+    path_length_points: 48
+    search_time_seconds: 0.0115
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.132259
+  replan_21:
+    angular_velocity_variance: 0.088055
+    description: 第21次重规划 - 失败
+    global_average_distance_meters: 1.1955
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.4203
+    path_length_points: 45
+    search_time_seconds: 0.014
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.116448
+  replan_22:
+    angular_velocity_variance: 0.048289
+    description: 第22次重规划 - 成功
+    global_average_distance_meters: 1.0744
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.2647
+    path_length_points: 45
+    search_time_seconds: 0.0093
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.111738
+  replan_23:
+    angular_velocity_variance: 0.021066
+    description: 第23次重规划 - 成功
+    global_average_distance_meters: 0.7508
+    isad_score: 0.6445
+    min_obstacle_distance_meters: 0.1364
+    path_length_points: 45
+    search_time_seconds: 0.0159
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107521
+  replan_24:
+    angular_velocity_variance: 0.048529
+    description: 第24次重规划 - 成功
+    global_average_distance_meters: 0.6333
+    isad_score: 0.5856
+    min_obstacle_distance_meters: 0.1738
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.108016
+  replan_25:
+    angular_velocity_variance: 0.048538
+    description: 第25次重规划 - 成功
+    global_average_distance_meters: 0.9686
+    isad_score: 0.7948
+    min_obstacle_distance_meters: 0.4132
+    path_length_points: 45
+    search_time_seconds: 0.0142
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_26:
+    angular_velocity_variance: 0.003099
+    description: 第26次重规划 - 成功
+    global_average_distance_meters: 1.0301
+    isad_score: 0.8148
+    min_obstacle_distance_meters: 0.3745
+    path_length_points: 45
+    search_time_seconds: 0.0124
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106013
+  replan_27:
+    angular_velocity_variance: 0.0
+    description: 第27次重规划 - 成功
+    global_average_distance_meters: 1.0773
+    isad_score: 0.8332
+    min_obstacle_distance_meters: 0.065
+    path_length_points: 45
+    search_time_seconds: 0.0246
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_28:
+    angular_velocity_variance: 0.0
+    description: 第28次重规划 - 成功
+    global_average_distance_meters: 1.1358
+    isad_score: 0.862
+    min_obstacle_distance_meters: 0.0669
+    path_length_points: 45
+    search_time_seconds: 0.0143
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_29:
+    angular_velocity_variance: 0.003976
+    description: 第29次重规划 - 成功
+    global_average_distance_meters: 1.1665
+    isad_score: 0.8883
+    min_obstacle_distance_meters: 0.1842
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106485
+  replan_3:
+    angular_velocity_variance: 0.003734
+    description: 第3次重规划 - 成功
+    global_average_distance_meters: 1.0325
+    isad_score: 0.8164
+    min_obstacle_distance_meters: 0.3015
+    path_length_points: 45
+    search_time_seconds: 0.0095
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.105495
+  replan_30:
+    angular_velocity_variance: 0.008299
+    description: 第30次重规划 - 成功
+    global_average_distance_meters: 1.1961
+    isad_score: 0.9177
+    min_obstacle_distance_meters: 0.413
+    path_length_points: 45
+    search_time_seconds: 0.0144
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107027
+  replan_31:
+    angular_velocity_variance: 0.011685
+    description: 第31次重规划 - 成功
+    global_average_distance_meters: 1.1551
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.3005
+    path_length_points: 45
+    search_time_seconds: 0.0079
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107304
+  replan_32:
+    angular_velocity_variance: 0.285936
+    description: 第32次重规划 - 失败
+    global_average_distance_meters: 1.2316
+    isad_score: 0.9227
+    min_obstacle_distance_meters: -0.3087
+    path_length_points: 48
+    search_time_seconds: 0.0125
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.116721
+  replan_33:
+    angular_velocity_variance: 0.09001
+    description: 第33次重规划 - 失败
+    global_average_distance_meters: 1.1981
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.3662
+    path_length_points: 45
+    search_time_seconds: 0.0115
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.114201
+  replan_34:
+    angular_velocity_variance: 0.027469
+    description: 第34次重规划 - 成功
+    global_average_distance_meters: 1.046
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4743
+    path_length_points: 45
+    search_time_seconds: 0.0121
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.110262
+  replan_35:
+    angular_velocity_variance: 0.031676
+    description: 第35次重规划 - 成功
+    global_average_distance_meters: 0.8244
+    isad_score: 0.691
+    min_obstacle_distance_meters: 0.1979
+    path_length_points: 45
+    search_time_seconds: 0.0093
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.105966
+  replan_36:
+    angular_velocity_variance: 0.024307
+    description: 第36次重规划 - 成功
+    global_average_distance_meters: 0.6145
+    isad_score: 0.5696
+    min_obstacle_distance_meters: 0.1449
+    path_length_points: 45
+    search_time_seconds: 0.0081
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10771
+  replan_37:
+    angular_velocity_variance: 0.048538
+    description: 第37次重规划 - 成功
+    global_average_distance_meters: 0.9689
+    isad_score: 0.795
+    min_obstacle_distance_meters: 0.4121
+    path_length_points: 45
+    search_time_seconds: 0.0088
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_38:
+    angular_velocity_variance: 0.003734
+    description: 第38次重规划 - 成功
+    global_average_distance_meters: 1.0333
+    isad_score: 0.8164
+    min_obstacle_distance_meters: 0.3028
+    path_length_points: 45
+    search_time_seconds: 0.0147
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.105495
+  replan_39:
+    angular_velocity_variance: 0.007162
+    description: 第39次重规划 - 成功
+    global_average_distance_meters: 1.1022
+    isad_score: 0.8437
+    min_obstacle_distance_meters: 0.0472
+    path_length_points: 45
+    search_time_seconds: 0.0087
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106356
+  replan_4:
+    angular_velocity_variance: 0.0
+    description: 第4次重规划 - 成功
+    global_average_distance_meters: 1.0986
+    isad_score: 0.8419
+    min_obstacle_distance_meters: 0.0477
+    path_length_points: 45
+    search_time_seconds: 0.0225
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_40:
+    angular_velocity_variance: 0.015168
+    description: 第40次重规划 - 成功
+    global_average_distance_meters: 1.1338
+    isad_score: 0.8682
+    min_obstacle_distance_meters: 0.0267
+    path_length_points: 45
+    search_time_seconds: 0.0085
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106582
+  replan_41:
+    angular_velocity_variance: 0.011454
+    description: 第41次重规划 - 成功
+    global_average_distance_meters: 1.1733
+    isad_score: 0.8954
+    min_obstacle_distance_meters: 0.2286
+    path_length_points: 45
+    search_time_seconds: 0.009
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106556
+  replan_42:
+    angular_velocity_variance: 0.011685
+    description: 第42次重规划 - 成功
+    global_average_distance_meters: 1.1974
+    isad_score: 0.9326
+    min_obstacle_distance_meters: 0.4881
+    path_length_points: 45
+    search_time_seconds: 0.0146
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106972
+  replan_43:
+    angular_velocity_variance: 0.011685
+    description: 第43次重规划 - 成功
+    global_average_distance_meters: 1.1059
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.1921
+    path_length_points: 45
+    search_time_seconds: 0.0097
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107377
+  replan_44:
+    angular_velocity_variance: 0.136778
+    description: 第44次重规划 - 失败
+    global_average_distance_meters: 1.1898
+    isad_score: 0.8973
+    min_obstacle_distance_meters: -0.52
+    path_length_points: 45
+    search_time_seconds: 0.0187
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.116435
+  replan_45:
+    angular_velocity_variance: 0.06901
+    description: 第45次重规划 - 失败
+    global_average_distance_meters: 1.1565
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.0023
+    path_length_points: 45
+    search_time_seconds: 0.0109
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.120775
+  replan_46:
+    angular_velocity_variance: 0.126783
+    description: 第46次重规划 - 成功
+    global_average_distance_meters: 0.9774
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4788
+    path_length_points: 45
+    search_time_seconds: 0.0089
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10797
+  replan_47:
+    angular_velocity_variance: 0.029225
+    description: 第47次重规划 - 成功
+    global_average_distance_meters: 0.6691
+    isad_score: 0.5965
+    min_obstacle_distance_meters: 0.1041
+    path_length_points: 45
+    search_time_seconds: 0.0148
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107332
+  replan_48:
+    angular_velocity_variance: 0.037606
+    description: 第48次重规划 - 成功
+    global_average_distance_meters: 0.6446
+    isad_score: 0.5925
+    min_obstacle_distance_meters: 0.1744
+    path_length_points: 45
+    search_time_seconds: 0.0084
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107965
+  replan_49:
+    angular_velocity_variance: 0.048538
+    description: 第49次重规划 - 成功
+    global_average_distance_meters: 0.9696
+    isad_score: 0.7955
+    min_obstacle_distance_meters: 0.4132
+    path_length_points: 45
+    search_time_seconds: 0.014
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_5:
+    angular_velocity_variance: 0.003714
+    description: 第5次重规划 - 成功
+    global_average_distance_meters: 1.1445
+    isad_score: 0.8682
+    min_obstacle_distance_meters: 0.089
+    path_length_points: 45
+    search_time_seconds: 0.0085
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106329
+  replan_50:
+    angular_velocity_variance: 0.003803
+    description: 第50次重规划 - 成功
+    global_average_distance_meters: 1.0415
+    isad_score: 0.8165
+    min_obstacle_distance_meters: 0.3724
+    path_length_points: 45
+    search_time_seconds: 0.0122
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.104535
+  replan_51:
+    angular_velocity_variance: 0.0
+    description: 第51次重规划 - 成功
+    global_average_distance_meters: 1.1024
+    isad_score: 0.8437
+    min_obstacle_distance_meters: 0.0471
+    path_length_points: 45
+    search_time_seconds: 0.0148
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_52:
+    angular_velocity_variance: 0.003714
+    description: 第52次重规划 - 成功
+    global_average_distance_meters: 1.1451
+    isad_score: 0.8684
+    min_obstacle_distance_meters: 0.0888
+    path_length_points: 45
+    search_time_seconds: 0.0086
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106329
+  replan_53:
+    angular_velocity_variance: 0.008053
+    description: 第53次重规划 - 成功
+    global_average_distance_meters: 1.1736
+    isad_score: 0.8954
+    min_obstacle_distance_meters: 0.2281
+    path_length_points: 45
+    search_time_seconds: 0.0083
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106688
+  replan_54:
+    angular_velocity_variance: 0.022356
+    description: 第54次重规划 - 成功
+    global_average_distance_meters: 1.0991
+    isad_score: 0.9308
+    min_obstacle_distance_meters: 0.1558
+    path_length_points: 45
+    search_time_seconds: 0.0492
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10722
+  replan_55:
+    angular_velocity_variance: 0.06995
+    description: 第55次重规划 - 成功
+    global_average_distance_meters: 1.1356
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.2612
+    path_length_points: 45
+    search_time_seconds: 0.0124
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10949
+  replan_56:
+    angular_velocity_variance: 0.128891
+    description: 第56次重规划 - 失败
+    global_average_distance_meters: 1.1826
+    isad_score: 0.8996
+    min_obstacle_distance_meters: -0.6154
+    path_length_points: 45
+    search_time_seconds: 0.0119
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.114561
+  replan_57:
+    angular_velocity_variance: 0.06901
+    description: 第57次重规划 - 失败
+    global_average_distance_meters: 1.1569
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.0029
+    path_length_points: 45
+    search_time_seconds: 0.0116
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.120775
+  replan_58:
+    angular_velocity_variance: 0.174077
+    description: 第58次重规划 - 成功
+    global_average_distance_meters: 0.9775
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4787
+    path_length_points: 48
+    search_time_seconds: 0.014
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.111513
+  replan_59:
+    angular_velocity_variance: 0.033382
+    description: 第59次重规划 - 成功
+    global_average_distance_meters: 0.6804
+    isad_score: 0.6029
+    min_obstacle_distance_meters: 0.1061
+    path_length_points: 45
+    search_time_seconds: 0.0084
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.108182
+  replan_6:
+    angular_velocity_variance: 0.008053
+    description: 第6次重规划 - 成功
+    global_average_distance_meters: 1.1799
+    isad_score: 0.9026
+    min_obstacle_distance_meters: 0.2757
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106688
+  replan_60:
+    angular_velocity_variance: 0.037606
+    description: 第60次重规划 - 成功
+    global_average_distance_meters: 0.6444
+    isad_score: 0.5923
+    min_obstacle_distance_meters: 0.174
+    path_length_points: 45
+    search_time_seconds: 0.0091
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107965
+  replan_61:
+    angular_velocity_variance: 0.048538
+    description: 第61次重规划 - 成功
+    global_average_distance_meters: 0.9691
+    isad_score: 0.7952
+    min_obstacle_distance_meters: 0.4124
+    path_length_points: 45
+    search_time_seconds: 0.0095
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_62:
+    angular_velocity_variance: 0.003803
+    description: 第62次重规划 - 成功
+    global_average_distance_meters: 1.0412
+    isad_score: 0.8164
+    min_obstacle_distance_meters: 0.3715
+    path_length_points: 45
+    search_time_seconds: 0.0144
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.104535
+  replan_63:
+    angular_velocity_variance: 0.007162
+    description: 第63次重规划 - 成功
+    global_average_distance_meters: 1.1021
+    isad_score: 0.8437
+    min_obstacle_distance_meters: 0.0472
+    path_length_points: 45
+    search_time_seconds: 0.0103
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106356
+  replan_64:
+    angular_velocity_variance: 0.00769
+    description: 第64次重规划 - 成功
+    global_average_distance_meters: 1.1338
+    isad_score: 0.8682
+    min_obstacle_distance_meters: 0.0269
+    path_length_points: 45
+    search_time_seconds: 0.0085
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106434
+  replan_65:
+    angular_velocity_variance: 0.011454
+    description: 第65次重规划 - 成功
+    global_average_distance_meters: 1.1733
+    isad_score: 0.8954
+    min_obstacle_distance_meters: 0.2291
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106556
+  replan_66:
+    angular_velocity_variance: 0.011685
+    description: 第66次重规划 - 成功
+    global_average_distance_meters: 1.1972
+    isad_score: 0.9326
+    min_obstacle_distance_meters: 0.4877
+    path_length_points: 45
+    search_time_seconds: 0.012
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106972
+  replan_67:
+    angular_velocity_variance: 0.06995
+    description: 第67次重规划 - 成功
+    global_average_distance_meters: 1.1346
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.2603
+    path_length_points: 45
+    search_time_seconds: 0.0092
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10949
+  replan_68:
+    angular_velocity_variance: 0.193807
+    description: 第68次重规划 - 失败
+    global_average_distance_meters: 1.2176
+    isad_score: 0.9103
+    min_obstacle_distance_meters: -0.6136
+    path_length_points: 45
+    search_time_seconds: 0.0113
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.121095
+  replan_69:
+    angular_velocity_variance: 0.054122
+    description: 第69次重规划 - 失败
+    global_average_distance_meters: 1.1556
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.0011
+    path_length_points: 45
+    search_time_seconds: 0.0137
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.121021
+  replan_7:
+    angular_velocity_variance: 0.022356
+    description: 第7次重规划 - 成功
+    global_average_distance_meters: 1.095
+    isad_score: 0.9324
+    min_obstacle_distance_meters: 0.1432
+    path_length_points: 45
+    search_time_seconds: 0.0133
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10722
+  replan_70:
+    angular_velocity_variance: 0.208368
+    description: 第70次重规划 - 成功
+    global_average_distance_meters: 0.9764
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4776
+    path_length_points: 48
+    search_time_seconds: 0.0127
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.109517
+  replan_71:
+    angular_velocity_variance: 0.033382
+    description: 第71次重规划 - 成功
+    global_average_distance_meters: 0.6795
+    isad_score: 0.6023
+    min_obstacle_distance_meters: 0.1057
+    path_length_points: 45
+    search_time_seconds: 0.0192
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.108182
+  replan_72:
+    angular_velocity_variance: 0.037606
+    description: 第72次重规划 - 成功
+    global_average_distance_meters: 0.6435
+    isad_score: 0.5917
+    min_obstacle_distance_meters: 0.1732
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107965
+  replan_73:
+    angular_velocity_variance: 0.048538
+    description: 第73次重规划 - 成功
+    global_average_distance_meters: 0.9692
+    isad_score: 0.7951
+    min_obstacle_distance_meters: 0.4142
+    path_length_points: 45
+    search_time_seconds: 0.0169
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_74:
+    angular_velocity_variance: 0.003099
+    description: 第74次重规划 - 成功
+    global_average_distance_meters: 1.0218
+    isad_score: 0.8147
+    min_obstacle_distance_meters: 0.3019
+    path_length_points: 45
+    search_time_seconds: 0.0114
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.105764
+  replan_75:
+    angular_velocity_variance: 0.0
+    description: 第75次重规划 - 成功
+    global_average_distance_meters: 1.0903
+    isad_score: 0.8382
+    min_obstacle_distance_meters: 0.0525
+    path_length_points: 45
+    search_time_seconds: 0.0163
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+  replan_76:
+    angular_velocity_variance: 0.003714
+    description: 第76次重规划 - 成功
+    global_average_distance_meters: 1.1359
+    isad_score: 0.862
+    min_obstacle_distance_meters: 0.0664
+    path_length_points: 45
+    search_time_seconds: 0.0098
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106329
+  replan_77:
+    angular_velocity_variance: 0.011454
+    description: 第77次重规划 - 成功
+    global_average_distance_meters: 1.1666
+    isad_score: 0.8883
+    min_obstacle_distance_meters: 0.1843
+    path_length_points: 45
+    search_time_seconds: 0.0157
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106556
+  replan_78:
+    angular_velocity_variance: 0.008299
+    description: 第78次重规划 - 成功
+    global_average_distance_meters: 1.1967
+    isad_score: 0.9183
+    min_obstacle_distance_meters: 0.4171
+    path_length_points: 45
+    search_time_seconds: 0.0109
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107027
+  replan_79:
+    angular_velocity_variance: 0.043005
+    description: 第79次重规划 - 成功
+    global_average_distance_meters: 1.1274
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.2089
+    path_length_points: 45
+    search_time_seconds: 0.0104
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107193
+  replan_8:
+    angular_velocity_variance: 0.011685
+    description: 第8次重规划 - 成功
+    global_average_distance_meters: 1.105
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.1914
+    path_length_points: 45
+    search_time_seconds: 0.0114
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107377
+  replan_80:
+    angular_velocity_variance: 0.226595
+    description: 第80次重规划 - 失败
+    global_average_distance_meters: 1.2314
+    isad_score: 0.9223
+    min_obstacle_distance_meters: -0.3258
+    path_length_points: 48
+    search_time_seconds: 0.0144
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.119302
+  replan_81:
+    angular_velocity_variance: 0.089677
+    description: 第81次重规划 - 失败
+    global_average_distance_meters: 1.197
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.2888
+    path_length_points: 45
+    search_time_seconds: 0.0164
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.114794
+  replan_82:
+    angular_velocity_variance: 0.139629
+    description: 第82次重规划 - 成功
+    global_average_distance_meters: 1.0388
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.5082
+    path_length_points: 45
+    search_time_seconds: 0.0127
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106458
+  replan_83:
+    angular_velocity_variance: 0.025109
+    description: 第83次重规划 - 成功
+    global_average_distance_meters: 0.7385
+    isad_score: 0.638
+    min_obstacle_distance_meters: 0.1205
+    path_length_points: 45
+    search_time_seconds: 0.0085
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106823
+  replan_84:
+    angular_velocity_variance: 0.019431
+    description: 第84次重规划 - 成功
+    global_average_distance_meters: 0.6142
+    isad_score: 0.5692
+    min_obstacle_distance_meters: 0.1456
+    path_length_points: 45
+    search_time_seconds: 0.0125
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107285
+  replan_85:
+    angular_velocity_variance: 0.053278
+    description: 第85次重规划 - 成功
+    global_average_distance_meters: 0.9587
+    isad_score: 0.7917
+    min_obstacle_distance_meters: 0.3267
+    path_length_points: 45
+    search_time_seconds: 0.0089
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.111223
+  replan_86:
+    angular_velocity_variance: 0.003803
+    description: 第86次重规划 - 成功
+    global_average_distance_meters: 1.0407
+    isad_score: 0.8164
+    min_obstacle_distance_meters: 0.3708
+    path_length_points: 45
+    search_time_seconds: 0.0104
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.104535
+  replan_87:
+    angular_velocity_variance: 0.007162
+    description: 第87次重规划 - 成功
+    global_average_distance_meters: 1.1018
+    isad_score: 0.8436
+    min_obstacle_distance_meters: 0.0467
+    path_length_points: 45
+    search_time_seconds: 0.0095
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106356
+  replan_88:
+    angular_velocity_variance: 0.00769
+    description: 第88次重规划 - 成功
+    global_average_distance_meters: 1.1335
+    isad_score: 0.8682
+    min_obstacle_distance_meters: 0.0262
+    path_length_points: 45
+    search_time_seconds: 0.0108
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106434
+  replan_89:
+    angular_velocity_variance: 0.008053
+    description: 第89次重规划 - 成功
+    global_average_distance_meters: 1.1736
+    isad_score: 0.8958
+    min_obstacle_distance_meters: 0.2314
+    path_length_points: 45
+    search_time_seconds: 0.0093
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106688
+  replan_9:
+    angular_velocity_variance: 0.104734
+    description: 第9次重规划 - 失败
+    global_average_distance_meters: 1.2165
+    isad_score: 0.9242
+    min_obstacle_distance_meters: -0.741
+    path_length_points: 45
+    search_time_seconds: 0.0115
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.121443
+  replan_90:
+    angular_velocity_variance: 0.011685
+    description: 第90次重规划 - 成功
+    global_average_distance_meters: 1.1974
+    isad_score: 0.9326
+    min_obstacle_distance_meters: 0.4883
+    path_length_points: 45
+    search_time_seconds: 0.0091
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106972
+  replan_91:
+    angular_velocity_variance: 0.06995
+    description: 第91次重规划 - 成功
+    global_average_distance_meters: 1.1356
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.2615
+    path_length_points: 45
+    search_time_seconds: 0.0081
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.10949
+  replan_92:
+    angular_velocity_variance: 0.126383
+    description: 第92次重规划 - 失败
+    global_average_distance_meters: 1.1845
+    isad_score: 0.8995
+    min_obstacle_distance_meters: -0.5864
+    path_length_points: 45
+    search_time_seconds: 0.014
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.114887
+  replan_93:
+    angular_velocity_variance: 0.057812
+    description: 第93次重规划 - 失败
+    global_average_distance_meters: 1.1567
+    isad_score: 0.95
+    min_obstacle_distance_meters: -0.0023
+    path_length_points: 45
+    search_time_seconds: 0.0163
+    status: 失败
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.120858
+  replan_94:
+    angular_velocity_variance: 0.208368
+    description: 第94次重规划 - 成功
+    global_average_distance_meters: 0.977
+    isad_score: 0.95
+    min_obstacle_distance_meters: 0.4783
+    path_length_points: 48
+    search_time_seconds: 0.0106
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.109517
+  replan_95:
+    angular_velocity_variance: 0.033382
+    description: 第95次重规划 - 成功
+    global_average_distance_meters: 0.6799
+    isad_score: 0.6026
+    min_obstacle_distance_meters: 0.1058
+    path_length_points: 45
+    search_time_seconds: 0.0091
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.108182
+  replan_96:
+    angular_velocity_variance: 0.037606
+    description: 第96次重规划 - 成功
+    global_average_distance_meters: 0.6438
+    isad_score: 0.5919
+    min_obstacle_distance_meters: 0.1734
+    path_length_points: 45
+    search_time_seconds: 0.0082
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.107965
+  replan_97:
+    angular_velocity_variance: 0.048538
+    description: 第97次重规划 - 成功
+    global_average_distance_meters: 0.9697
+    isad_score: 0.7955
+    min_obstacle_distance_meters: 0.4147
+    path_length_points: 45
+    search_time_seconds: 0.0178
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.113324
+  replan_98:
+    angular_velocity_variance: 0.003099
+    description: 第98次重规划 - 成功
+    global_average_distance_meters: 1.0223
+    isad_score: 0.8148
+    min_obstacle_distance_meters: 0.3031
+    path_length_points: 45
+    search_time_seconds: 0.0117
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.105764
+  replan_99:
+    angular_velocity_variance: 0.0
+    description: 第99次重规划 - 成功
+    global_average_distance_meters: 1.0908
+    isad_score: 0.8382
+    min_obstacle_distance_meters: 0.0546
+    path_length_points: 45
+    search_time_seconds: 0.0152
+    status: 成功
+    total_obstacles_detected: 4
+    valid_obstacles_count: 4
+    velocity_variance: 0.106302
+experiment_info:
+  note: 只记录重规划数据，使用真实搜索时间
+  obstacle_filtering_note: 过滤平均距离超过6m的障碍物，负距离标记为失败
+  robot_radius: 0.4
+  safety_calculation_note: 安全指标只计算前20个时间步（2秒）内的轨迹点
+  smoothness_calculation_note: 平滑度指标计算全部轨迹点
+  timestamp: '20250608_170740'
+  total_replans_recorded: 100
+replan_performance_summary:
+  failed_replans: 18
+  safety_metrics:
+    all_replans:
+      average_global_average_distance_meters: 1.0414
+      average_isad_score: 0.8439
+      average_minimum_distance_meters: 0.1483
+      global_minimum_distance_meters: -0.741
+    successful_replans_only:
+      average_global_average_distance_meters: 1.0114
+      average_isad_score: 0.8271
+      average_minimum_distance_meters: 0.2448
+  search_time_metrics:
+    all_replans:
+      average_seconds: 0.012
+      fastest_seconds: 0.0079
+      slowest_seconds: 0.0492
+      total_seconds: 1.2033
+    successful_replans_only:
+      average_seconds: 0.0119
+  smoothness_metrics:
+    average_angular_velocity_variance: 0.04897
+    average_velocity_variance: 0.109689
+  success_rate_percentage: 82.0
+  successful_replans: 82
+  total_replans: 100

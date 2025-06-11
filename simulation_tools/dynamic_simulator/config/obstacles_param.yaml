@@ -1,0 +1,65 @@
+obstacle_params:
+# when slower = 6;
+# x/6: 9(0.5), 18, 27(1.5), 28.8(1.6), 30.6(1.7), 32.4(1.8), 36(2.0)
+# y/5: 7.5(0.5), 15, 22.5(1.5)
+# --------------------------------- test
+# - {x: 5.7, y: -0.8, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 11.0, y: 0.9, z: 0.75, offset: 8.0, slower: 8.5, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 16.5, y: -0.9, z: 0.75, offset: 1.0, slower: 8.5, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# one-horizon benchmark
+# - {x: 5.7, y: -0.8, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# 外走廊场景
+# - {x: 5.5, y: -0.79, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 18.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 6.5, y: -0.6, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 18.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 15.0, y: 1.7, z: 0.75, offset: 5.0, slower: 6.0, scale_x: 18.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 14.3, y: 0.77, z: 0.75, offset: 1.5, slower: 6.0, scale_x: 18.0, scale_y: 0.0, scale_z: 0.0}
+
+# 工厂搬运场景
+# - {x: 5.0,  y: 0.0, z: 0.75, offset: 8.9, slower: 6.0, scale_x: 12.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 9.1,  y: 0.0, z: 0.75, offset: 4.95, slower: 6.0, scale_x: -12.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 13.0, y: 0.0, z: 0.75, offset: 8.0, slower: 6.0, scale_x: 12.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 17.0, y: 0.0, z: 0.75, offset: 4.1, slower: 6.0, scale_x: -12.0, scale_y: 15.0, scale_z: 0.0}
+
+# 步行街场景-复杂运动环境
+# - {x: 5.5, y: -0.6, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 21.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 7.0, y: 1.2, z: 0.75, offset: 4.0, slower: 6.0, scale_x: 18.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 11.1,  y: 0.0, z: 0.75, offset: 3.8, slower: 8.0, scale_x: 18.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 11.0,  y: 0.0, z: 0.75, offset: 0.0, slower: 8.0, scale_x: -18.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 14.85,   y: 0.1, z: 0.75, offset: 5.55, slower: 8.0, scale_x: 0.0, scale_y: 19.0, scale_z: 0.0}
+# - {x: 15.9,  y: 0.1, z: 0.75, offset: 4.6, slower: 8.0, scale_x: 0.0, scale_y: 19.0, scale_z: 0.0}
+
+# single-obstacle for 制图
+# - {x: 5.5, y: -0.57, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 21.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 4.0, y: -0.0, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 0.0, scale_y: 15.0, scale_z: 0.0}
+
+# 补做实验
+# 场景一 最简单 两横两竖
+# - {x: 6.0, y: 1.0, z: 0.75, offset: 3.0, slower: 9.0, scale_x: 21.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 6.0, y: -1.0, z: 0.75, offset: 3.0, slower: 9.0, scale_x: -21.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 3.0,  y: 0.0, z: 0.75, offset: 0.0, slower: 8.0, scale_x: 0.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 9.0,  y: 0.0, z: 0.75, offset: 0.0, slower: 8.0, scale_x: 0.0, scale_y: -15.0, scale_z: 0.0}
+
+# 场景二 两叉
+# - {x: 3.0,  y: 0.0, z: 0.75, offset: 0.0, slower: 8.0, scale_x: -12.0, scale_y: 12.0, scale_z: 0.0}
+# - {x: 6.0,  y: 0.0, z: 0.75, offset: 4.0, slower: 8.0, scale_x: -12.0, scale_y: -12.0, scale_z: 0.0}
+# - {x: 3.0,  y: 0.0, z: 0.75, offset: 4.0, slower: 8.0, scale_x: 12.0, scale_y: 12.0, scale_z: 0.0}
+# - {x: 6.0,  y: 0.0, z: 0.75, offset: 0.0, slower: 8.0, scale_x: 12.0, scale_y: -12.0, scale_z: 0.0}
+
+# 场景三 三横三竖
+- {x: 4.0, y: 2.0, z: 0.75, offset: 3.0, slower: 9.0, scale_x: 15.0, scale_y: 0.0, scale_z: 0.0}
+- {x: 5.0, y: 0.0, z: 0.75, offset: 0.0, slower: 9.0, scale_x: 9.0, scale_y: 0.0, scale_z: 0.0}
+- {x: 4.0, y: -2.0, z: 0.75, offset: 3.0, slower: 9.0, scale_x: -15.0, scale_y: 0.0, scale_z: 0.0}
+- {x: 3.0, y: -1.0, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 3.0, scale_y: 9.0, scale_z: 0.0}
+- {x: 6.0, y: 1.0, z: 0.75, offset: 0.0, slower: 6.0, scale_x: -3.0, scale_y: -9.0, scale_z: 0.0}
+
+# - {x: 10.0,  y: 0.0, z: 0.75, offset: 8.0, slower: 8.0, scale_x: 12.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 10.0,  y: 0.0, z: 0.75, offset: 8.0, slower: 8.0, scale_x: 12.0, scale_y: -15.0, scale_z: 0.0}
+
+# - {x: 12.5,  y: 0.0, z: 0.75, offset: 4.0, slower: 8.0, scale_x: 0.0, scale_y: 15.0, scale_z: 0.0}
+# - {x: 18.5,  y: 0.0, z: 0.75, offset: 4.0, slower: 8.0, scale_x: 0.0, scale_y: -15.0, scale_z: 0.0}
+
+
+# - {x: 15.0, y: 0.5, z: 0.75, offset: 9.0, slower: 6.0, scale_x: 21.0, scale_y: 0.0, scale_z: 0.0}
+# - {x: 15.0, y: -0.5, z: 0.75, offset: 9.0, slower: 6.0, scale_x: -21.0, scale_y: 0.0, scale_z: 0.0}

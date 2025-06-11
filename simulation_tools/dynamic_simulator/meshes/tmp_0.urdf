@@ -1,0 +1,24 @@
+
+<robot name="name_robot">
+  <link name="name_link">
+    <inertial>
+      <mass value="0.200" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="5.8083e-4" ixy="0" ixz="0" iyy="3.0833e-5" iyz="0" izz="5.9083e-4" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://dynamic_simulator/meshes/ConcreteDamage01b/model4.dae" scale="0.568 0.568 1.5"/>
+      </geometry>
+    </visual>
+  </link>
+  <gazebo>
+    <plugin name="move_model" filename="libmove_model.so">
+    <traj_x>1.5 *(sin((t - 0.0)/8.5 + 3.0 )+2*sin(2*(t - 0.0)/8.5 + 3.0 ))+ 16.5</traj_x>
+    <traj_y>1.5 *(cos((t - 0.0)/8.5 + 3.0 )-2*cos(2*(t - 0.0)/8.5 + 3.0 ))+ 0.5</traj_y>
+    <traj_z>0.0 *(-sin(3*(t - 0.0)/8.5 + 3.0))+ 20.0</traj_z>
+    </plugin>
+  </gazebo>
+</robot>
+                

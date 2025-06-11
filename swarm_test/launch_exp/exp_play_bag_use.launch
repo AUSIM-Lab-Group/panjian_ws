@@ -1,0 +1,39 @@
+<launch>
+  <param name="/use_sim_time" value="false"/>
+    
+    <!-- 显示机器人模型 -->
+  <node pkg="robot_simulator" type="scout_visualizer_node" name="scout_visualizer_node1" output="screen">
+    <param name="ugv/mesh" value="package://robot_simulator/param/scout2.STL" type="string"/>
+    <!-- <remap from="~odometry" to="/ause/Odometry"/> -->
+    <remap from="~odometry" to="/Odometry"/>
+    <remap from="~odom_mesh" to="robot_mesh1"/>
+    <param name="ugv/color_r" value="0.0" type="double"/>
+    <param name="ugv/color_g" value="0.0" type="double"/>
+    <param name="ugv/color_b" value="1.0" type="double"/>
+    <param name="ugv/color_a" value="0.3" type="double"/>
+  </node>
+
+  <!-- 显示机器人轨迹 -->
+  <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">
+   <!-- <remap from="~odometry" to="/ause/Odometry"/> -->
+   <remap from="/odometry" to="/Odometry"/>
+    <param name="odom_traj_vis/line_width"     value="0.05" type="double"/>
+    <param name="odom_traj_vis/color_r"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/color_g"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_b"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_a"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/show_odom_size" value="1000" type="int"/>
+  </node>
+
+  <!-- 显示障碍物预测轨迹 -->
+  <node pkg="swarm_test" type="obs_vis_node" name="obs_vis_node" output="screen">
+    <remap from="/trajs_predicted" to="/globalFsm_by_adsm/obs_traj_vis" />
+    <param name="step_time_use" value="0.12" type="double"/>
+    <param name="traj_steps_use" value="14" type="int"/>
+  </node>
+
+  
+  <!-- <node pkg="tf" type="static_transform_publisher" name="worldLinkcamera" args="0.0 0.0 0.0 0.0 0.0 0.0 world camera_init 0.0010" /> -->
+    
+  <node pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find swarm_test)/config/exp_real_bag.rviz" />
+</launch>

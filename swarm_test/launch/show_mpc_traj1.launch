@@ -1,0 +1,29 @@
+<launch>
+    <param name="/use_sim_time" value="false"/>
+
+    <arg name="bag_name1" value="tmp_e-ecbf.bag"/>
+    <arg name="bag_name2" value="tmp_mpc-dcbf.bag"/>
+    <arg name="bag_name3" value="tmp_mpc-dc.bag"/>
+    <arg name="bag_name4" value="tmp_ce-opti.bag"/>
+    <arg name="bag_name5" value="tmp_ce-planner.bag"/>
+    <arg name="bag_name6" value="tmp_vo-opti.bag"/>
+    <arg name="bag_name7" value="tmp_vo-planner.bag"/>
+
+    <!-- topic /odom_traj /robot1/odom /corridor_vis -->
+    <node pkg="rosbag" type="play" name="player1" args="--clock --pause /home/jane/Ws_Jane_github/dynamic_avoidance/src/swarm_test/bag/0422/$(arg bag_name1) " >
+        <remap from="/odom_traj" to="/odom_traj1"/>
+        <remap from="/robot1/odom" to="/odometry1"/>
+    </node>
+    <node pkg="robot_simulator" type="scout_visualizer_node" name="scout_visualizer_node1" output="screen">
+        <param name="ugv/mesh" value="package://robot_simulator/param/scout2.STL" type="string"/>
+        <remap from="~odometry" to="/odometry1"/>
+        <remap from="~odom_mesh" to="robot_mesh1"/>
+        <param name="ugv/color_r" value="1.0" type="double"/>
+        <param name="ugv/color_g" value="0.0" type="double"/>
+        <param name="ugv/color_b" value="0.0" type="double"/>
+        <param name="ugv/color_a" value="0.3" type="double"/>
+    </node>
+
+
+    <node pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find swarm_test)/config/show_mpc_traj.rviz" />
+</launch>

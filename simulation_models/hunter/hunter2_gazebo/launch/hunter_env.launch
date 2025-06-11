@@ -1,0 +1,30 @@
+<launch>
+
+    <arg name="cmd_rqt_vis_" default="true"/> <!--罗盘控制-->
+
+    <!-- Load model in gazebo -->
+    <!-- <arg name="world_name" default="$(find lio_sam)/worlds/map5.world"/> -->
+    <arg name="world_name" default="$(find hunter2_gazebo)/env/boxes2.world"/>
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="world_name" value="$(arg world_name)"/>
+        <arg name="paused" value="false"/>
+        <arg name="use_sim_time" value="true"/>
+        <arg name="gui" value="true"/>
+        <arg name="headless" value="false"/>
+        <arg name="debug" value="false"/>
+    </include>
+
+    <include file="$(find hunter2_control)/launch/hunter2_v_contol.launch" >
+        <arg name="cmd_rqt_vis" value="$(arg cmd_rqt_vis_)"/>
+    </include>
+
+    <!-- <param name="robot_description" command="$(find xacro)/xacro '$(find hunter2_base)/urdf/hunter2_base_gazebo.xacro'" /> -->
+    <param name="robot_description" command="$(find xacro)/xacro '$(find hunter2_base)/urdf/hunter_vehicle.xacro'" />
+
+    <!-- push robot_description to factory and spawn robot in gazebo -->
+    <node name="hunter_spawn" pkg="gazebo_ros" type="spawn_model" output="screen" args="-urdf -param robot_description -model hunter_vehicle -x -7 -y 8 -z 0.1 -R 0.0 -P 0.0 -Y -0.0" />
+
+    <!--use for fast_lio-->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="childlink1" args="0 0 0 0 0 0 /map /camera_init" output="screen" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="childlink2" args="0 0 0 0 0 0 /body /base_link" output="screen" />
+</launch>

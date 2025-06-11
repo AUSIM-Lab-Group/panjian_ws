@@ -1,0 +1,151 @@
+# ============================================================================
+# 全局路径规划性能分析报告
+# ============================================================================
+# 
+# 指标说明与计算方法：
+#
+# 1. 规划搜索时间 (Search Time)
+#    - 计算方法: 当前路径发布时间 - 上次路径发布时间
+#    - 意义: 反映路径规划算法的计算效率，时间越短越好
+#    - 单位: 秒(s)
+#
+# 2. 速度方差 (Velocity Variance) 
+#    - 计算方法: 路径上相邻点间速度的方差 Var(v_i), v_i = ||p_{i+1} - p_i|| / dt
+#    - 意义: 反映路径速度变化的剧烈程度，方差越小路径越平滑
+#    - 单位: (m/s)²
+#
+# 3. 角速度方差 (Angular Velocity Variance)
+#    - 计算方法: 路径上相邻段角度变化率的方差 Var(ω_i), ω_i = (θ_{i+1} - θ_i) / dt  
+#    - 意义: 反映路径转向的平滑程度，方差越小转向越平滑
+#    - 单位: (rad/s)²
+#
+# 4. 全局最小安全距离 (Global Minimum Safety Distance)
+#    - 计算方法: min(||p_traj - p_obs|| - r_robot - r_obs) 对所有轨迹点和障碍物
+#    - 意义: 轨迹与障碍物最近的有效间距，距离越大越安全
+#    - 单位: 米(m)
+#
+# 5. ISAD评分 (Improved Safety Average Distance Score)
+#    - 计算方法: 考虑相对速度权重和时间衰减的加权平均安全距离，归一化到[0,1]
+#    - 意义: 综合安全评分，1表示非常安全，0表示危险，考虑了动态因素
+#    - 单位: 无量纲 [0,1]
+#
+# 6. 路径长度 (Path Length)
+#    - 计算方法: 路径上的离散点数量
+#    - 意义: 反映路径的详细程度和覆盖范围
+#    - 单位: 个数
+#
+# ============================================================================
+
+# 实验配置信息
+experiment_info:
+  timestamp: "20250607_162646"
+  robot_radius: 0.4  # 机器人半径 (m)
+  max_replans_recorded: 3  # 记录的重规划次数
+  total_replans_recorded: 3  # 实际完成的重规划次数
+
+# 整体性能汇总
+overall_summary:
+  total_search_time: 4.234  # 总搜索时间 (s)
+  average_search_time: 2.117  # 平均搜索时间 (s)
+  best_search_time: 1.856  # 最快搜索时间 (s)
+  worst_search_time: 2.378  # 最慢搜索时间 (s)
+  
+  average_velocity_variance: 0.0234  # 平均速度方差 (m/s)²
+  average_angular_velocity_variance: 0.1456  # 平均角速度方差 (rad/s)²
+  
+  global_minimum_safety_distance: 0.234  # 全局最小安全距离 (m)
+  average_minimum_safety_distance: 0.456  # 平均最小安全距离 (m)
+  average_isad_score: 0.834  # 平均ISAD安全评分 [0,1]
+
+# 每次重规划的详细数据
+replan_details:
+  
+  replan_1:
+    description: "第1次路径规划 (初始规划)"
+    search_time: 0.000  # 初始规划无搜索时间
+    path_length: 15  # 路径点数
+    
+    smoothness_metrics:
+      velocity_variance: 0.0189  # 速度方差
+      angular_velocity_variance: 0.1234  # 角速度方差
+      smoothness_grade: "良好"  # 平滑度评级
+    
+    safety_metrics:
+      min_obstacle_distance: 0.456  # 最小障碍物距离 (m)
+      isad_score: 0.867  # ISAD安全评分
+      safety_grade: "安全"  # 安全等级评级
+    
+    performance_grade: "优秀"  # 综合性能评级
+  
+  replan_2:
+    description: "第2次路径重规划"
+    search_time: 1.856  # 搜索用时 (s)
+    path_length: 18  # 路径点数
+    
+    smoothness_metrics:
+      velocity_variance: 0.0245  # 速度方差
+      angular_velocity_variance: 0.1523  # 角速度方差
+      smoothness_grade: "一般"  # 平滑度评级
+    
+    safety_metrics:
+      min_obstacle_distance: 0.234  # 最小障碍物距离 (m)
+      isad_score: 0.798  # ISAD安全评分
+      safety_grade: "较安全"  # 安全等级评级
+    
+    performance_grade: "良好"  # 综合性能评级
+  
+  replan_3:
+    description: "第3次路径重规划"
+    search_time: 2.378  # 搜索用时 (s)
+    path_length: 20  # 路径点数
+    
+    smoothness_metrics:
+      velocity_variance: 0.0268  # 速度方差
+      angular_velocity_variance: 0.1611  # 角速度方差  
+      smoothness_grade: "一般"  # 平滑度评级
+    
+    safety_metrics:
+      min_obstacle_distance: 0.567  # 最小障碍物距离 (m)
+      isad_score: 0.839  # ISAD安全评分
+      safety_grade: "安全"  # 安全等级评级
+    
+    performance_grade: "良好"  # 综合性能评级
+
+# 性能趋势分析
+performance_trends:
+  search_time_trend: "递增"  # 搜索时间随重规划次数的变化趋势
+  smoothness_trend: "略微下降"  # 平滑度变化趋势
+  safety_trend: "波动"  # 安全性变化趋势
+  
+  observations:
+    - "搜索时间随重规划次数增加而延长，可能因为环境复杂度增加"
+    - "路径平滑度随重规划次数略有下降，但仍在可接受范围"
+    - "安全距离在重规划过程中有波动，整体维持在安全水平"
+    - "ISAD评分保持在0.8以上，表明路径规划整体安全性良好"
+
+# 评级标准说明
+grading_criteria:
+  smoothness_grades:
+    excellent: "速度方差 < 0.02 且 角速度方差 < 0.12"
+    good: "速度方差 < 0.03 且 角速度方差 < 0.15" 
+    fair: "速度方差 < 0.05 且 角速度方差 < 0.20"
+    poor: "超出上述范围"
+  
+  safety_grades:
+    very_safe: "最小距离 > 0.5m 且 ISAD > 0.9"
+    safe: "最小距离 > 0.3m 且 ISAD > 0.8"
+    moderately_safe: "最小距离 > 0.2m 且 ISAD > 0.7"
+    risky: "低于上述标准"
+  
+  performance_grades:
+    excellent: "搜索时间 < 1.5s 且 平滑度优秀 且 安全性很安全"
+    good: "搜索时间 < 2.5s 且 平滑度良好 且 安全性安全"
+    fair: "搜索时间 < 4.0s 且 满足基本要求"
+    poor: "超出可接受范围"
+
+# 改进建议
+recommendations:
+  - "考虑优化路径搜索算法以减少重规划时的计算时间"
+  - "可以调整路径平滑参数以提高轨迹平滑度"
+  - "建议增加安全边界以提高最小安全距离"
+  - "ISAD评分表现良好，当前动态避障策略有效"
