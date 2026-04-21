@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
 import rospy
@@ -16,6 +16,7 @@ from geometry_msgs.msg import PoseStamped
 class GlobalPathDataProcessor:
     def __init__(self):
         rospy.init_node('global_path_data_processor', anonymous=True)
+        package_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         # 参数配置
         self.robot_radius = rospy.get_param('~robot_radius', 0.4)
@@ -23,7 +24,7 @@ class GlobalPathDataProcessor:
         self.num_obstacles = rospy.get_param('~num_obstacles', 10)
         self.time_step = rospy.get_param('~time_step', 0.2)
         self.pre_step = rospy.get_param('~pre_step', 20)
-        self.output_dir = rospy.get_param('~output_dir', '/home/ub/workspace/dynamic_avoidance_use/src/swarm_test/output')
+        self.output_dir = rospy.get_param('~output_dir', os.path.join(package_root, 'output'))
         
         # 数据存储
         self.replan_count = 0
@@ -275,7 +276,8 @@ class GlobalPathDataProcessor:
             if len(obstacles) > 0:
                 for i in range(min(3, len(obstacles))):
                     obs = obstacles[i]
-                    rospy.loginfo(f"  障碍物{i+1}: 当前位置=({obs['x']:.2f}, {obs['y']:.2f}), 轨迹点数={len(obs['trajectory'])}")
+                    traj_len = len(obs.get('trajectory', []))
+                    rospy.loginfo(f"  障碍物{i+1}: 当前位置=({obs['x']:.2f}, {obs['y']:.2f}), 轨迹点数={traj_len}")
         
         return obstacles
 
@@ -295,17 +297,36 @@ class GlobalPathDataProcessor:
                         rospy.loginfo(f"备用方法：识别到{num_obs}个障碍物，{time_step}个时间步")
                         
                         for i in range(num_obs):
-                            first_idx = i * time_step * 7
-                            if first_idx + 6 < len(data):
+                            obstacle_trajectory = []
+                            base_idx = i * time_step * 7
+                            for t in range(time_step):
+                                idx = base_idx + t * 7
+                                if idx + 6 < len(data):
+                                    trajectory_point = {
+                                        'x': data[idx],
+                                        'y': data[idx + 1],
+                                        'radius_a': data[idx + 2],
+                                        'radius_b': data[idx + 3],
+                                        'theta': data[idx + 4],
+                                        'vx': data[idx + 5],
+                                        'vy': data[idx + 6],
+                                        'radius': max(data[idx + 2], data[idx + 3]),
+                                        'time_step': t
+                                    }
+                                    obstacle_trajectory.append(trajectory_point)
+
+                            if obstacle_trajectory:
                                 obstacle = {
-                                    'x': data[first_idx],
-                                    'y': data[first_idx + 1],
-                                    'radius_a': data[first_idx + 2],
-                                    'radius_b': data[first_idx + 3],
-                                    'theta': data[first_idx + 4],
-                                    'vx': data[first_idx + 5],
-                                    'vy': data[first_idx + 6],
-                                    'radius': max(data[first_idx + 2], data[first_idx + 3])
+                                    'id': i,
+                                    'trajectory': obstacle_trajectory,
+                                    'x': obstacle_trajectory[0]['x'],
+                                    'y': obstacle_trajectory[0]['y'],
+                                    'radius_a': obstacle_trajectory[0]['radius_a'],
+                                    'radius_b': obstacle_trajectory[0]['radius_b'],
+                                    'theta': obstacle_trajectory[0]['theta'],
+                                    'vx': obstacle_trajectory[0]['vx'],
+                                    'vy': obstacle_trajectory[0]['vy'],
+                                    'radius': obstacle_trajectory[0]['radius']
                                 }
                                 obstacles.append(obstacle)
                     break
@@ -318,7 +339,7 @@ class GlobalPathDataProcessor:
             for i in range(max_obs):
                 idx = i * 7
                 if idx + 6 < len(data):
-                    obstacle = {
+                    trajectory_point = {
                         'x': data[idx],
                         'y': data[idx + 1],
                         'radius_a': data[idx + 2],
@@ -326,7 +347,20 @@ class GlobalPathDataProcessor:
                         'theta': data[idx + 4],
                         'vx': data[idx + 5],
                         'vy': data[idx + 6],
-                        'radius': max(data[idx + 2], data[idx + 3])
+                        'radius': max(data[idx + 2], data[idx + 3]),
+                        'time_step': 0
+                    }
+                    obstacle = {
+                        'id': i,
+                        'trajectory': [trajectory_point],
+                        'x': trajectory_point['x'],
+                        'y': trajectory_point['y'],
+                        'radius_a': trajectory_point['radius_a'],
+                        'radius_b': trajectory_point['radius_b'],
+                        'theta': trajectory_point['theta'],
+                        'vx': trajectory_point['vx'],
+                        'vy': trajectory_point['vy'],
+                        'radius': trajectory_point['radius']
                     }
                     obstacles.append(obstacle)
         

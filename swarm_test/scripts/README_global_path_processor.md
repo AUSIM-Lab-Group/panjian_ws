@@ -18,7 +18,7 @@
 - `robot_radius`: 机器人半径(默认: 0.4m)
 - `max_replans`: 最大记录的重规划次数(默认: 100次)
 - `num_obstacles`: 障碍物数量(默认: 4个)
-- `output_dir`: 输出文件目录
+- `output_dir`: 输出文件目录，默认写入 `swarm_test/output/`
 
 ## 核心指标详解
 
@@ -130,7 +130,7 @@
    ```bash
    roslaunch swarm_test start_test.launch
    ```
-3. 当完成n次路径重规划后，数据会自动保存到output目录
+3. 当完成 n 次路径重规划后，数据会自动保存到 `swarm_test/output/` 目录，或者保存到 launch 中显式指定的 `output_dir`
 
 ## ISAD指标说明
 

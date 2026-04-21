@@ -5,6 +5,9 @@
 #include <fstream>
 #include <iomanip>
 #include <nav_msgs/Odometry.h>
+#include <sstream>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include "obs_manager_for_data_process/obs_manager.hpp"
 
 std::shared_ptr<Obs_Manager> obs_Manager_;
@@ -52,8 +55,39 @@ std::vector<std::pair<double, double>> distance_to_obs_ls;
 std::string controller_name;
 int controller_; // DC, CBF, DCBF, ACBF,DC+ACBF, ADSM+ACBF
 int scenario_; // 0~5
-std::string file_name     = "/home/pj/jane_ws-github/dynamic_avoidance/src/swarm_test/docs/data0715/data.csv";
-std::string file_name1     = "/home/pj/jane_ws-github/dynamic_avoidance/src/swarm_test/docs/data0729/data.csv";
+std::string file_name      = "data.csv";
+std::string file_name1     = "distance.csv";
+
+void ensureParentDirectoryExists(const std::string& path)
+{
+  const std::size_t pos = path.find_last_of('/');
+  if (pos == std::string::npos) {
+    return;
+  }
+
+  const std::string dir = path.substr(0, pos);
+  if (dir.empty()) {
+    return;
+  }
+
+  std::string current;
+  if (dir.front() == '/') {
+    current = "/";
+  }
+
+  std::stringstream ss(dir);
+  std::string part;
+  while (std::getline(ss, part, '/')) {
+    if (part.empty()) {
+      continue;
+    }
+    if (!current.empty() && current.back() != '/') {
+      current += "/";
+    }
+    current += part;
+    mkdir(current.c_str(), 0755);
+  }
+}
 
 void check_collision(Eigen::VectorXd distance_o, Eigen::MatrixXd *collision_o, double t_)
 {
@@ -234,6 +268,7 @@ void waypointCallback(const geometry_msgs::PoseStamped& msg)
 void writeToCSVFile(Eigen::VectorXd &output_data) {
     // data需要输入绝对路径，std::ofstream::app意味追加模型，默认是刷写
     std::ofstream file;
+    ensureParentDirectoryExists(file_name);
     file.open(file_name, std::ofstream::app);
     if (file.is_open()) {
       file<< std::endl;
@@ -255,6 +290,7 @@ void writeToCSVFile(Eigen::VectorXd &output_data) {
 
 void writeToCSVFile1(std::vector<std::pair<double, double>> &output_data){
   std::ofstream file;
+  ensureParentDirectoryExists(file_name1);
   file.open(file_name1, std::ofstream::app);
   if(file.is_open()){
     file<< std::endl;
@@ -275,10 +311,31 @@ int main (int argc, char** argv) {
 
 	ros::init (argc, argv, "data_processor_node");
 	ros::NodeHandle nh;
-  nh.param("data_processor_node/data/record_sign", record_sign, false);
-  nh.param("data_processor_node/data/record_sign1", record_sign1, false);
-  nh.param("data_processor_node/scenario", scenario_, 1);
-  nh.param("data_processor_node/controller", controller_, 0);
+  ros::NodeHandle pnh("~");
+
+  record_sign = false;
+  record_sign1 = false;
+  scenario_ = 1;
+  controller_ = 0;
+
+  if (!pnh.getParam("data/record_sign", record_sign)) {
+    nh.param("/data/record_sign", record_sign, false);
+  }
+  if (!pnh.getParam("data/record_sign1", record_sign1)) {
+    nh.param("/data/record_sign1", record_sign1, false);
+  }
+  if (!pnh.getParam("scenario", scenario_)) {
+    nh.param("/scenario", scenario_, 1);
+  }
+  if (!pnh.getParam("controller", controller_)) {
+    nh.param("/controller", controller_, 0);
+  }
+  pnh.param("output_csv", file_name, std::string("data.csv"));
+  pnh.param("output_csv_dist", file_name1, std::string("distance.csv"));
+
+  if (controller_ < 0 || controller_ >= static_cast<int>(controller_ls.size())) {
+    controller_ = 0;
+  }
   controller_name = controller_ls[controller_];
   // std::cout<< "Controller_name := "<< controller_name<< std::endl;
   // 初始化障碍物管理对象
@@ -310,4 +367,3 @@ int main (int argc, char** argv) {
   }
 	return 0;
 }
-

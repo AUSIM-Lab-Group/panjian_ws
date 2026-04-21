@@ -1,7 +1,7 @@
 # 修改记录
 快速使用
 ```bash
-source develop/setup.bash
+source devel/setup.bash
 roslaunch swarm_test acbf0_planner.launch  # 启动仿真脚本: 包含全局规划，局部规划
 roslaunch swarm_test start_test.launch # 启动测试脚本: 包含动态障碍物启动节点，数据记录节点
 ```
@@ -36,7 +36,7 @@ roslaunch swarm_test start_test.launch # 启动测试脚本: 包含动态障碍�
 
 需要注意：
 ```bash
-source develop/setup.bash
+source devel/setup.bash
 
 roslaunch swarm_test acbf0_one_horizen.launch  # 启动同一基准实验脚本
 
@@ -56,8 +56,23 @@ roslaunch swarm_test show_mpc_traj.launch  # 显示多个MPC运动轨迹
 ### Gazebo仿真实验
 
 需要注意：
-1.播放bag时,需要在 `start_perception.launch`和 `exp_start_test.launch`文件中的 `/use_sim_time`设置为 `true`。这样才会使bag里的系统时间与本机的gazebo仿真时间匹配上。
-2.在 `start_gazebo_env.launch`中启动gazebo仿真环境，其中加载机器人模型时会发布机器人在gazebo中的odometry真值 `/Odometry`以及发布TF坐标(odom-basklink)，但因为fast-lio模块也会发布TF坐标变换信息（world-camera, body-basklink）可能会有冲突，所以需要在机器人启动节点那设置 `use_fast_lio_`符号位设置为 `true`
+1. `start_gazebo_env.launch`、`exp_hardware.launch`、`exp_acbf_planner.launch` 现在统一通过 `use_sim_time` 控制仿真时间，Gazebo 主流程默认使用 `true`。
+2. `start_gazebo_env.launch` 默认把机器人启动节点里的 `use_fast_lio_` 置为 `true`，避免 Gazebo 真值 TF 与 Fast-LIO TF 冲突。
+3. Gazebo 默认主流程使用 3 个终端，不再额外并行启动 `roslaunch mpc_dcbf mpc_adsm_c.launch`，因为 `exp_acbf_planner.launch` 已经内嵌 `local_planner`。
+
+推荐启动顺序：
+```bash
+source devel/setup.bash
+
+# 终端 1
+roslaunch swarm_test start_gazebo_env.launch gzclient:=true
+
+# 终端 2
+roslaunch swarm_test exp_hardware.launch
+
+# 终端 3
+roslaunch swarm_test exp_acbf_planner.launch show_rviz:=true
+```
 
 播放bag时：
 ```bash

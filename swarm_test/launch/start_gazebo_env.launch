@@ -1,17 +1,19 @@
 <launch>
-  <!-- 使用rosbag时, 必须设置为true; 实物实验请设置为false -->
-    <!-- <param name="/use_sim_time" value="true"/> -->
-    <arg name="gzclient"        default="false"/> <!--gazebo UI 界面-->
+    <arg name="use_sim_time"    default="true"/>
+    <arg name="gzclient"        default="true"/> <!-- gazebo UI 界面 -->
     <arg name="use_teleop_key"  default="false"/>
+    <arg name="use_fast_lio_"   default="true"/>
+
+    <param name="/use_sim_time" value="$(arg use_sim_time)"/>
 
     <!-- 加载gazebo环境 -->
-    <arg name="world_name" default="$(find scout_gazebo_sim)worlds/simple_env.world" />
+    <arg name="world_name" default="$(find scout_gazebo_sim)/worlds/simple_env.world" />
     <!-- <arg name="world_name" default="$(find hunter2_gazebo)/env/random_1.world" /> -->
     <include file="$(find gazebo_ros)/launch/empty_world.launch">
         <arg name="world_name" value="$(arg world_name)"/>
         <arg name="paused" value="false"/>
         <arg name="gui" value="$(arg gzclient)"/>
-        <arg name="use_sim_time" value="true"/>
+        <arg name="use_sim_time" value="$(arg use_sim_time)"/>
         <arg name="headless" value="false"/>
         <arg name="debug" value="false"/>
     </include>
@@ -25,6 +27,7 @@
     <!-- 加载障碍物参数 -->
     <include file="$(find dynamic_simulator)/launch/spawn_dynamic_obstacle1.launch">
         <arg name="num_of_obs" value="7" />
+        <arg name="use_sim_time" value="$(arg use_sim_time)" />
     </include>    
 
     <!-- 加载机器人模型 -->
@@ -33,7 +36,7 @@
         <arg name="y1"      value="0.0"/>
         <arg name="z1"      value="-0.25"/>
         <arg name="yaw1"    value="0.0"/>
-        <arg name="use_fast_lio_"   value="true"/>
+        <arg name="use_fast_lio_" value="$(arg use_fast_lio_)" />
     </include>
 
 </launch>

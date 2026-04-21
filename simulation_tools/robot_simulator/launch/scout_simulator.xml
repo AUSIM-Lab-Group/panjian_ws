@@ -9,6 +9,7 @@
   <arg name="odometry_topic"/>
   <arg name="mesh_topic"/>
   <arg name="time_res_"/>
+  <arg name="cmd_topic" default="/cmd_vel"/>
 
 
   <node pkg="robot_simulator" type="scout_simulator_node" name="scout_$(arg ugv_id)_simulator_node" output="screen">
@@ -21,7 +22,7 @@
     <param name="p_init_y" value="$(arg init_y_)" type="double"/>
     <param name="p_init_z" value="$(arg init_z_)" type="double"/>
 
-    <remap from="~command" to="cmd_vel"/>
+    <remap from="~command" to="$(arg cmd_topic)"/>
     <remap from="~odometry" to="$(arg odometry_topic)"/>
     <remap from="~odom_mesh" to="$(arg mesh_topic)"/>
   </node>

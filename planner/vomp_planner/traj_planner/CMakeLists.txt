@@ -6,7 +6,25 @@ set(CMAKE_CXX_FLAGS "-std=c++14 ${CMAKE_CXX_FLAGS} -O3 -Wall")
 
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.7 REQUIRED)
-find_package(nlopt)
+find_package(PkgConfig QUIET)
+find_package(nlopt QUIET CONFIG)
+
+if(TARGET nlopt::nlopt)
+  set(NLOPT_TARGET nlopt::nlopt)
+elseif(TARGET nlopt)
+  set(NLOPT_TARGET nlopt)
+else()
+  find_path(NLOPT_INCLUDE_DIRS
+    NAMES nlopt.hpp
+  )
+  find_library(NLOPT_LIBRARIES
+    NAMES nlopt nlopt_cxx
+  )
+
+  if(NOT NLOPT_INCLUDE_DIRS OR NOT NLOPT_LIBRARIES)
+    message(FATAL_ERROR "nlopt not found. Install libnlopt-cxx-dev or set nlopt_DIR.")
+  endif()
+endif()
 
 find_package(catkin REQUIRED COMPONENTS
   roscpp
@@ -17,13 +35,6 @@ find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   message_generation
   dynamic_simulator
-)
-
-# Generate added messages and services with any dependencies listed here
-generate_messages(
-  DEPENDENCIES
-  std_msgs
-  geometry_msgs
 )
 
 catkin_package(
@@ -39,7 +50,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${Eigen3_INCLUDE_DIRS} 
   ${PCL_INCLUDE_DIRS}
-  ${nlopt_INCLUDE_DIRS}
+  ${NLOPT_INCLUDE_DIRS}
   ${PROJECT_SOURCE_DIR}/include
 )
 
@@ -54,8 +65,8 @@ add_executable( dynamic_planner_node
 target_link_libraries( dynamic_planner_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  ${EIGEN3_INCLUDE_DIR}
-  nlopt
+  ${NLOPT_TARGET}
+  ${NLOPT_LIBRARIES}
 )
 
 add_executable( obs_Manager_node
@@ -69,7 +80,6 @@ add_executable( obs_Manager_node
 target_link_libraries( obs_Manager_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  ${EIGEN3_INCLUDE_DIR}
 )
 
 add_executable( global_path_by_adsm
@@ -81,8 +91,8 @@ add_executable( global_path_by_adsm
 target_link_libraries( global_path_by_adsm
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  ${EIGEN3_INCLUDE_DIR}
-  nlopt
+  ${NLOPT_TARGET}
+  ${NLOPT_LIBRARIES}
 )
 
 add_executable( globalFsm_by_adsm
@@ -94,6 +104,6 @@ add_executable( globalFsm_by_adsm
 target_link_libraries( globalFsm_by_adsm
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  ${EIGEN3_INCLUDE_DIR}
-  nlopt
+  ${NLOPT_TARGET}
+  ${NLOPT_LIBRARIES}
 )

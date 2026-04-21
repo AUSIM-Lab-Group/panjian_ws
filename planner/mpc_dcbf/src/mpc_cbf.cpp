@@ -91,6 +91,29 @@ void MPC_PLANNER::replanCallback(const ros::TimerEvent &e)
         // ------------------------ MPC求解 ------------------------
         ros::Time time_in0 = ros::Time::now();
         bool success = solver.imp_solve(&cur_state_, &goal_state_, &obs_matrix_);
+
+        if(!success && Smetric_type == "ACBF"){
+            ROS_WARN("ACBF solve failed, retrying with DCBF fallback");
+            std::vector<double> Q = {1.0, 1.0, 0.05};
+            std::vector<double> R = {0.1, 0.05};
+            double v_max = 1.3;
+            double v_min = 1.0;
+            double o_max = 1.0;
+            double safe_dist = 0.3 + 0.4;
+
+            MPC_SOLVE fallback_solver;
+            std::string fallback_metric("DCBF");
+            fallback_solver.init_solver(fallback_metric, Ts_, N_, v_max, v_min, o_max,
+                                        Q, R, gamma_, tau_scale_, safe_dist, use_initguess);
+
+            success = fallback_solver.imp_solve(&cur_state_, &goal_state_, &obs_matrix_);
+            if(success){
+                solver.predict_x = fallback_solver.predict_x;
+                solver.predict_u = fallback_solver.predict_u;
+                ROS_WARN("DCBF fallback solve succeeded");
+            }
+        }
+
         // if(success){
         //     // ROS_INFO("Solved successfullly!");
         // }
@@ -99,10 +122,22 @@ void MPC_PLANNER::replanCallback(const ros::TimerEvent &e)
         //     // cmd_vel.linear.x    = 0.0;
         //     // cmd_vel.angular.z   = 0.0;           
         // }
-        cmd_vel.linear.x    = solver.predict_u[0];
-        cmd_vel.angular.z   = solver.predict_u[1];
+        if(success && solver.predict_u.size() >= 2){
+            cmd_vel.linear.x    = solver.predict_u[0];
+            cmd_vel.angular.z   = solver.predict_u[1];
+        }
+        else if(!solver.predict_u.empty()){
+            cmd_vel.linear.x    = solver.predict_u[0];
+            cmd_vel.angular.z   = (solver.predict_u.size() > 1) ? solver.predict_u[1] : 0.0;
+        }
+        else{
+            cmd_vel.linear.x    = 0.0;
+            cmd_vel.angular.z   = 0.0;
+        }
         // std::cout<< "v:= "<<solver.predict_u[0]<< "; w:= "<<solver.predict_u[1]<< std::endl; 
-        pub_Predict_traj(solver.predict_x);
+        if(!solver.predict_x.empty()){
+            pub_Predict_traj(solver.predict_x);
+        }
 
         ros::Time time_in1 = ros::Time::now();
         double cost_time = (time_in1-time_in0).toSec()*1000;
@@ -347,13 +382,19 @@ bool MPC_SOLVE::imp_solve(Eigen::VectorXd* param1, Eigen::MatrixXd* param2,
     goal_state_s    = param2;
     // 赋值障碍物数量
     obs_matrix_s    = param3;
-    obs_num = obs_matrix_s->cols()/N_s;
+    obs_num = (N_s > 0) ? (obs_matrix_s->cols()/N_s) : 0;
     
     prob    = casadi::Opti();
     X_k     = prob.variable(5, N_s+1);
     U_k     = prob.variable(2, N_s);
-    lambda_ = prob.variable(obs_num, N_s);
-    tau_list = casadi::MX::zeros(obs_num, N_s);
+    if(obs_num > 0){
+        lambda_ = prob.variable(obs_num, N_s);
+        tau_list = casadi::MX::zeros(obs_num, N_s);
+    }
+    else{
+        lambda_ = casadi::MX::zeros(0, N_s);
+        tau_list = casadi::MX::zeros(0, N_s);
+    }
     casadi::MX v        = U_k(0, casadi::Slice());
     casadi::MX omega    = U_k(1, casadi::Slice());
     casadi::MX cost = 0;
@@ -415,7 +456,9 @@ bool MPC_SOLVE::imp_solve(Eigen::VectorXd* param1, Eigen::MatrixXd* param2,
     // 控制量约束
     prob.subject_to(prob.bounded(-v_max, v, v_max));
     prob.subject_to(prob.bounded(-omega_max, omega, omega_max));
-    prob.subject_to(prob.bounded(0.0, lambda_, 0.2));
+    if(obs_num > 0){
+        prob.subject_to(prob.bounded(0.0, lambda_, 0.2));
+    }
 
 
     // 运动学约束
@@ -434,14 +477,16 @@ bool MPC_SOLVE::imp_solve(Eigen::VectorXd* param1, Eigen::MatrixXd* param2,
     // 障碍物约束
     int choose_num = 0;
     exit_obs1.push_back(false);
-    for(int i=0; i<obs_num; i++){
-        bool exceed_obs = exceed_ob(obs_matrix_s->col(i*N_s));
-        if(!exceed_obs && choose_num<2){
-            exit_obs1.back() = true;
-            double dis = (cur_state_s->block<2,1>(0,0)-obs_matrix_s->col(i*N_s).block<2,1>(0,0)).norm()-0.4-0.4;
-            std::cout<< "\033[34m add obstacle-num: \033[0m"<< i<< " center_dis :="<< dis<<std::endl;
-            set_safety_st(Smetric_type, prob, i);
-            choose_num++;
+    if(obs_num > 0){
+        for(int i=0; i<obs_num; i++){
+            bool exceed_obs = exceed_ob(obs_matrix_s->col(i*N_s));
+            if(!exceed_obs && choose_num<2){
+                exit_obs1.back() = true;
+                double dis = (cur_state_s->block<2,1>(0,0)-obs_matrix_s->col(i*N_s).block<2,1>(0,0)).norm()-0.4-0.4;
+                std::cout<< "\033[34m add obstacle-num: \033[0m"<< i<< " center_dis :="<< dis<<std::endl;
+                set_safety_st(Smetric_type, prob, i);
+                choose_num++;
+            }
         }
     }
 
@@ -689,4 +734,3 @@ casadi::Function MPC_SOLVE::setKinematicEquation() {
                                             v * casadi::MX::sin(theta)});
     return casadi::Function("kinematic_equation", {state_vars, control_vars}, {rhs});
 }
-

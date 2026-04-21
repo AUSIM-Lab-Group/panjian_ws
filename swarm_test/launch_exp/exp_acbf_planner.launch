@@ -1,6 +1,10 @@
 <launch>
-
-  <param name="/use_sim_time" value="true"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="show_rviz" default="true"/>
+  <arg name="rviz_config" default="$(find scout_gazebo_sim)/config/single_scout.rviz"/>
+  <arg name="runtime_ld_library_path" default="/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu:/opt/ros/noetic/share/euslisp/jskeus/eus//Linux64/lib"/>
+  
+  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
   
   <arg name="mpc_frequency" value="10" />
   <arg name="pre_step"      value="20" />
@@ -79,6 +83,6 @@
       <remap from="/obs_Manager_node/obs_predict_pub" to="/obs_Manager_node/obs_predict_pub" />
       <remap from="/local_path" to="/local_path" />
   </node>
-  <!-- <node pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find swarm_test)/config/acbf_plan.rviz" /> -->
+  <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz" output="log" launch-prefix="env LD_LIBRARY_PATH=$(arg runtime_ld_library_path)" args="-d $(arg rviz_config)" />
 
 </launch>

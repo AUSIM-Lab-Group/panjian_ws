@@ -15,7 +15,9 @@
   <node pkg="swarm_test" type="data_processor_node" name="data_processor_node" output="screen">
     <remap from="/trajs_predicted"              to="/obstacle_prediction_node/obstacle_prediction/trajs_predicted"/>
     <remap from="/trajs"                        to="/Dyn_Obs_trajs"/>
-    <param name="/obs_manager/use_GroundTruth"  value="true" type="bool"/>
+    <param name="obs_manager/use_GroundTruth"  value="true" type="bool"/>
+    <param name="output_csv" value="$(find swarm_test)/output/data_process_summary.csv" type="string"/>
+    <param name="output_csv_dist" value="$(find swarm_test)/output/data_process_distance.csv" type="string"/>
   </node>
 
   <node pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find swarm_test)/config/data_process.rviz" />

@@ -1,5 +1,7 @@
 <launch>
-    <param name="/use_sim_time" value="false"/>
+    <arg name="use_sim_time" default="true"/>
+
+    <param name="/use_sim_time" value="$(arg use_sim_time)"/>
 
     <!-- fast-lio状态估计模块 -->
     <include file="$(find fast_lio)/launch/mapping_velodyne_use.launch">

@@ -18,7 +18,6 @@ catkin_package(
  INCLUDE_DIRS include
  LIBRARIES swarm_test
  CATKIN_DEPENDS roscpp rospy dynamic_simulator visualization_msgs
- DEPENDS system_lib
 )
 
 include_directories(
