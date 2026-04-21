@@ -1,3 +1,5 @@
+在ubuntu20.04 docker中复现算法仓库，有挺多问题，工具：claude code opus4.7，codex5.4，插件superpower
+
 # MPC-A-CBF
 
 
