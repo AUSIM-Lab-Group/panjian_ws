@@ -1,0 +1,28 @@
+﻿<launch>
+
+   <!-- 启动底盘 -->
+  <!-- <include file="$(find scout_bringup)/launch/scout_mini_robot_base.launch" /> -->
+
+  <!--启RS雷达驱动-->
+  <!-- <include file="$(find rslidar_sdk)/launch/start.launch" /> -->
+  <!--启RS雷达话题转换节点-->
+  <!-- <node name="rs_converter" pkg="rs_to_velodyne" type="rs_to_velodyne" args="XYZIRT XYZIRT"/> -->
+  <!--启惯导驱动-->
+  <!-- <include file="$(find sbg_driver)/launch/examples/sbg_ellipseN.launch" /> -->
+
+  <!-- 启ouster雷达驱动 -->
+  <!-- <include file="$(find ouster_ros)/launch/sensor.launch" >
+    <arg name="timestamp_mode" value="TIME_FROM_ROS_TIME" />
+  </include> -->
+
+
+  <!-- 启动FAST-LIO -->
+  <!-- <include file="$(find fast_lio)/launch/state_estimation.launch" /> -->
+
+  <!-- 起D435相机 -->
+  <!-- <include file="$(find realsense2_camera)/launch/scout_d435.launch"/> -->
+
+  <node type="rviz" name="rviz1" pkg="rviz" args="-d $(find all_demo)/config/all.rviz" output="log" respawn="false" />
+  
+
+</launch>

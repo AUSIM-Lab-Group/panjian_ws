@@ -26,7 +26,8 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(OpenCV REQUIRED)
 find_package(PCL 1.8.1 REQUIRED)
-find_package(CASADI REQUIRED)
+find_package(casadi REQUIRED)
+get_target_property(CASADI_INCLUDE_DIR casadi::casadi INTERFACE_INCLUDE_DIRECTORIES)
 include_directories( ${CASADI_INCLUDE_DIR} )
 
 set(CMAKE_CXX_FLAGS "-O2 -Wall ${CMAKE_CXX_FLAGS}")
@@ -110,7 +111,7 @@ add_dependencies(obstacle_prediction_node
     ${${PROJECT_NAME}_EXPORTED_TARGETS}
     ${catkin_EXPORTED_TARGETS}
   )
-target_link_libraries(obstacle_prediction_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${EIGEN3_INCLUDE_DIR} casadi)
+target_link_libraries(obstacle_prediction_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${EIGEN3_INCLUDE_DIR} casadi::casadi)
 
 
 add_executable(obs_manager_node

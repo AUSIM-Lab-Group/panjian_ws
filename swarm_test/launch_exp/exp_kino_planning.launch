@@ -1,0 +1,50 @@
+<launch>
+
+  <param name="/use_sim_time" value="false"/>
+
+  <!-- 动态障碍物仿真环境 -->
+  <!-- <include file="$(find dynamic_simulator)/launch/spawn_dynamic_obstacle.launch">
+    <arg name="num_of_obs" value="10" />
+  </include> -->
+
+  <!-- 差速机器人可视化 -->
+  <include file="$(find robot_simulator)/launch/vis_scout_using_odometry.launch">
+    <arg name="odometry_topic" value="/Odometry"/>
+  </include>
+
+  <include file="$(find simple_mpc)/launch/mpc_differential.launch">
+    <arg name="odom_topic"      value="/Odometry"/>
+    <arg name="traj_topic"      value="dynamic_planner_node/mpc/traj_point"/>
+    <arg name="cmd_topic"       value="cmd_vel"/>
+  </include>
+
+  <!-- 走廊可视化 -->
+  <node pkg="swarm_test" type="corridor_visualization_node" name="corridor_visualization_node">
+    <param name="corridor_visualization/wall_width"  value="0.20" type="double"/>
+    <param name="corridor_visualization/x_offset"    value="1.00" type="double"/>
+    <param name="corridor_visualization/box_scale_x" value="22.0" type="double"/>
+    <param name="corridor_visualization/box_scale_y" value="8.00" type="double"/>
+    <param name="corridor_visualization/box_scale_z" value="1.00" type="double"/>
+  </node>
+
+  <!-- 历史轨迹可视化 -->
+  <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">
+    <remap from="/odometry" to="/Odometry"/>
+    <param name="odom_traj_vis/line_width"     value="0.05" type="double"/>
+    <param name="odom_traj_vis/color_r"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/color_g"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_b"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_a"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/show_odom_size" value="2000" type="int"/>
+  </node>
+
+  <!-- kinoAstar局部规划-->
+  <include file="$(find traj_planner)/launch/plan_kino_traj.launch">
+    <arg name="odometry_topic"          value="/Odometry"/>
+    <arg name="cloud_topic"             value="/fastLIO/non_ground_points"/>
+    <arg name="_perception_GroundTruth" value="false"/>
+  </include>
+
+  <node pkg="rviz" type="rviz" name="rviz" output="log" args="-d $(find swarm_test)/config/kino_plan.rviz" />
+
+</launch>

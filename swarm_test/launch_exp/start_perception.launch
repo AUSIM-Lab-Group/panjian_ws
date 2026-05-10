@@ -1,0 +1,27 @@
+<launch>
+    <!-- 使用rosbag时, 必须设置为true; 实物实验请设置为false -->
+    <param name="/use_sim_time" value="false"/>
+
+    <!-- 启动动态感知模块 -->
+    <rosparam file="$(find dynamic_perception)/cfg/params_lshape.yaml" command="load" /> 
+    <!-- 启动DBSCAN聚类 -->
+    <node pkg="dynamic_perception" type="ri_dbscan_node" name="ri_dbscan_node">
+        <param name="non_ground_cloud_topic"        value="/fastLIO/non_ground_points"/>
+        <param name="output_frame"                  value="world"/>
+        <param name="output_cluster_array_topic"    value="/clustering/cluster_array"/>
+        <param name="colored_cloud_topic"           value="/clustering/colored_cloud"/>
+    </node>
+
+    <!-- 启动L形拟合 -->
+    <node pkg="dynamic_perception" type="l_shape_fitting" name="L_shape_fitting">
+        <remap from="/kitti3d/cluster_array" to="/clustering/cluster_array"/>
+    </node>
+
+    <!-- 启动轨迹预测 -->
+    <node pkg="dynamic_perception" type="obstacle_prediction_node" name="obstacle_prediction_node" output="screen">
+        <param name="/obstacle_prediction_node/max_frames_skipped" value="4" type="int"/>
+        <param name="/obstacle_prediction_node/meters_to_create_new_track" value="1.0" type="double"/>
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find scout_gazebo_sim)/config/single_scout.rviz" />
+</launch>

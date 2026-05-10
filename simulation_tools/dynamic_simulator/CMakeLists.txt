@@ -8,7 +8,8 @@ project(dynamic_simulator)
 #From terminal: catkin config -DCMAKE_BUILD_TYPE=Release (or RelWithDebInfo or Debug)
 set(CMAKE_BUILD_TYPE Release) 
 
-find_package(CASADI REQUIRED)
+find_package(casadi REQUIRED)
+get_target_property(CASADI_INCLUDE_DIR casadi::casadi INTERFACE_INCLUDE_DIRECTORIES)
 include_directories( ${CASADI_INCLUDE_DIR} )
 
 find_package(gazebo REQUIRED)
