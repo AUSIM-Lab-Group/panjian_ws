@@ -164,15 +164,27 @@ roslaunch swarm_test start_test.launch
 ```bash
 source ~/catkin_ws/devel/setup.bash
 
-# 终端 1
+# 终端 1 — Gazebo 环境（机器人 + 动态障碍物）
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
 roslaunch swarm_test start_gazebo_env.launch gzclient:=true
 
-# 终端 2
+# 等 Gazebo 窗口出现、机器人模型加载完毕（看到 scout 车和障碍物圆柱体）。
+
+# 终端 2 — FAST-LIO 状态估计
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
 roslaunch swarm_test exp_hardware.launch
 
-# 终端 3
+
+# 终端 3 — 规划 + MPC 控制
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
 roslaunch swarm_test exp_acbf_planner.launch show_rviz:=true
+
 ```
+操作：在 RViz 用 2D Nav Goal 点击目标点，观察避障效果。
+
 
 验收：Gazebo + RViz 正常，发布 `/move_base_simple/goal` 后 `/global_path` 和 `/local_path` 更新。
 
