@@ -1,6 +1,8 @@
 <launch>
-    <!-- 使用rosbag时, 必须设置为true; 实物实验请设置为false -->
-    <param name="/use_sim_time" value="false"/>
+    <!-- Gazebo 仿真时设 true，实物实验设 false -->
+    <arg name="use_sim_time" default="true"/>
+    <arg name="show_rviz"    default="false"/>
+    <param name="/use_sim_time" value="$(arg use_sim_time)"/>
 
     <!-- 启动动态感知模块 -->
     <rosparam file="$(find dynamic_perception)/cfg/params_lshape.yaml" command="load" /> 
@@ -23,5 +25,5 @@
         <param name="/obstacle_prediction_node/meters_to_create_new_track" value="1.0" type="double"/>
     </node>
 
-    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find scout_gazebo_sim)/config/single_scout.rviz" />
+    <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(find scout_gazebo_sim)/config/single_scout.rviz" />
 </launch>

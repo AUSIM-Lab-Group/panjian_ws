@@ -2,6 +2,28 @@
 
 动态避障运动规划系统，支持数值仿真、Gazebo 仿真和实车部署。
 
+## 目录
+
+- [最小闭环](#最小闭环)
+- [宿主机环境（Ubuntu 20.04）](#宿主机环境ubuntu-2004)
+  - [系统要求](#系统要求)
+  - [依赖安装](#依赖安装)
+  - [CasADi（关键）](#casadi关键)
+  - [工作空间初始化](#工作空间初始化)
+  - [编译](#编译)
+- [运行](#运行)
+  - [数值仿真](#数值仿真)
+  - [Gazebo 仿真](#gazebo-仿真)
+  - [实车](#实车)
+- [包结构](#包结构)
+- [Controller 类型](#controller-类型)
+- [避障调参经验](#避障调参经验)
+- [全局路径数据处理器](#全局路径数据处理器)
+- [Docker 环境（备用）](#docker-环境备用)
+- [注意事项](#注意事项)
+
+---
+
 ## 最小闭环
 
 三条主链：
@@ -123,10 +145,16 @@ echo "source ~/catkin_ws/devel/setup.bash" >> ~/.bashrc
 source ~/catkin_ws/devel/setup.bash
 
 # 终端 1
-roslaunch swarm_test acbf0_planner.launch show_rviz:=false
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
+roslaunch swarm_test acbf0_planner.launch show_rviz:=true
+
 
 # 终端 2
+source /opt/ros/noetic/setup.bash
+source ~/catkin_ws/devel/setup.bash
 roslaunch swarm_test start_test.launch
+
 ```
 
 验收：`/global_path`、`/local_path`、`/cmd_vel1` 持续输出，`swarm_test/output/` 有结果文件。
@@ -224,6 +252,75 @@ launch 文件中 `controller` 参数：
 | 2 | MPC-SCBF (静态 CBF) |
 | 3 | MPC-DCBF (动态 CBF) |
 | 4 | MPC-ACBF (自适应 CBF) |
+
+## 避障调参经验
+
+### 关键参数速查
+
+`exp_acbf_planner.launch` 和 `acbf0_planner.launch` 的参数必须一致，否则避障效果天差地别。
+
+| 参数 | 位置 | 推荐值 | 含义 |
+|------|------|--------|------|
+| `controller` | launch arg | **4** (ACBF) | 0=None, 1=DC, 2=SCBF, 3=DCBF, 4=ACBF |
+| `front_adsm` | launch arg | **true** | 前端 Theta* 考虑动态障碍物速度 |
+| `front_dis` | launch arg | false | 与 `front_adsm` 互斥，二选一 |
+| `mpc/gamma` | node param | **0.35** | CBF 衰减率；越小越保守（避障更积极）；默认 0 = 没有避障 |
+| `mpc/tau_scale` | node param | **0.30** | ACBF 时间尺度；0 = 不用预测 |
+| `mpc/use_initiguess` | node param | **true** | 热启动 MPC 求解器，提升稳定性 |
+| `mpc/ahead` | node param | **true** | 使用提前预测 |
+| `safe_dist` | mpc_cbf.cpp | 0.3 + 0.4 | 安全余量 + 机器人半径（硬编码） |
+
+### 常见坑
+
+1. **障碍物话题 remap 错误**（最致命）
+   - MPC 订阅 `/obs_Manager_node/obs_predict_pub`，但在 Gazebo 链路里实际发布者是 `/globalFsm_by_adsm/obs_predict_pub`（前端全局规划器）
+   - 如果 remap 写成 `from="/obs_Manager_node/obs_predict_pub" to="/obs_Manager_node/obs_predict_pub"`（自己映射到自己），MPC 收不到任何障碍物信息，CBF 约束失效，车会直接撞
+   - 正确写法：`<remap from="/obs_Manager_node/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub" />`
+
+2. **Gazebo 场景 `_perception_GroundTruth` 配错**（同样致命）
+   - `exp_acbf_planner.launch` 里的 `_perception_GroundTruth` 必须配合实际启动的链路
+   - 如果设为 `false`（用感知），必须额外启动 `start_perception.launch`，否则 `globalFsm_by_adsm` 的订阅源 `/obstacle_prediction_node/...` 没人发布，前端不发 `obs_predict_pub`，MPC 依然收不到障碍物
+   - 3 终端方案：设为 **`true`**（用真值，调试首选）
+   - 4 终端方案：设为 `false`（用感知），额外起 `start_perception.launch`
+
+3. **`gamma` 和 `tau_scale` 没设**
+   - 两个参数默认值是 0，会让 CBF 约束退化成 `h_{k+1} >= h_k`（只要求不变差，不强制拉开距离）
+   - 必须显式设置为 `gamma=0.35, tau_scale=0.30`（经验值）
+
+4. **controller 选错**
+   - DCBF (3) 不考虑障碍物轨迹预测，只用当前位置
+   - ACBF (4) 基于预测，在动态障碍物场景下避障效果显著更好
+
+5. **前端全局路径穿过障碍物**
+   - `front_adsm=false` 时 Theta* 只看静态栅格，找到的路径可能穿过动态障碍物的未来位置
+   - MPC 再聪明也救不回来，必须 `front_adsm=true`
+
+6. **Python 节点缺可执行权限**
+   - `scripts/*.py` 如果没 `chmod +x`，`roslaunch` 会报 `Cannot locate node of type`
+   - 修复：`chmod +x /path/to/scripts/*.py`
+
+### 调试三板斧
+
+```bash
+# 1. 确认 MPC 真的收到了障碍物数据
+rostopic echo /globalFsm_by_adsm/obs_predict_pub | head -30
+
+# 2. 确认 MPC 订阅话题正确
+rosnode info /local_planner | grep -A5 "Subscriptions"
+
+# 3. 看 MPC 重规划耗时（正常 30-60ms）
+# 启动 planner 的终端会持续打印：
+#   MPC replan_time =: 36.5ms
+```
+
+### 如果还是容易撞
+
+按以下顺序调：
+
+1. **gamma 调小**：`0.35 -> 0.20`（避障更积极，但会更保守、速度变慢）
+2. **增加安全余量**：`planner/mpc_dcbf/src/mpc_cbf.cpp` 第 54 行 `safe_dist = 0.3 + 0.4` 改成 `0.5 + 0.4`（需重编 `mpc_dcbf`）
+3. **降低 v_max**：`mpc_cbf.cpp` 第 42 行 `v_max = 1.3` 改小（需重编）
+4. **增加预测步数**：`pre_step = 20 -> 30`（预测更远，但 MPC 耗时增加）
 
 ## 全局路径数据处理器
 

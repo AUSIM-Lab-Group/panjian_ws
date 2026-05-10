@@ -3,6 +3,7 @@
   <arg name="gzclient"    default="false"/>     <!-- 是否启动gazebo可视化 -->
   <arg name="rviz"        default="false"/>     <!-- 是否启动RVIZ可视化 -->
   <arg name="num_of_obs"  default="10" />       <!-- 障碍物数量 -->
+  <arg name="use_sim_time" default="false"/>    <!-- 是否使用仿真时间 -->
   <arg name="runtime_ld_library_path" default="/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu:/opt/ros/noetic/share/euslisp/jskeus/eus//Linux64/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"/>
 
   <!-- 启动gazebo仿真 -->
