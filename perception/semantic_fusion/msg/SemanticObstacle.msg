@@ -1,0 +1,10 @@
+uint32 id
+string semantic_class
+geometry_msgs/Point position
+geometry_msgs/Vector3 velocity
+float64 radius
+float64 beta_hat
+float64 heading_factor
+float64 ttc_norm
+float64 density_norm
+bool guard_passed

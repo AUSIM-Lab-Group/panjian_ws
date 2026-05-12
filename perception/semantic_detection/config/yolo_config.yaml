@@ -1,0 +1,9 @@
+yolo:
+  model_path: "$(find semantic_detection)/models/yolov8n.pt"
+  confidence_threshold: 0.5
+  input_size: [640, 480]
+  device: "cuda:0"
+  # COCO class mapping to semantic classes
+  # person(0) → pedestrian/child (by size), bicycle(1) → cyclist,
+  # car(2)/bus(5)/truck(7) → vehicle, suitcase(28)/backpack(24) → box
+  target_classes: [0, 1, 2, 5, 7, 24, 28]

@@ -14,7 +14,7 @@
 
 | ID | EARS 格式需求 |
 |----|--------------|
-| FR-1.1 | **When** RGB-D 图像到达 **the system shall** 使用 YOLOv8n 检测障碍物并输出语义类别 c ∈ {pedestrian, child, box, vehicle, unknown} 和 2D bounding box |
+| FR-1.1 | **When** RGB-D 图像到达 **the system shall** 使用 YOLOv8n 检测障碍物并输出语义类别 c ∈ {pedestrian, child, cyclist, vehicle, box, unknown} 和 2D bounding box |
 | FR-1.2 | **When** LiDAR 点云到达 **the system shall** 使用现有 DBSCAN+L-shape 管道输出障碍物位置 p、速度 v、半径 R |
 | FR-1.3 | **When** 视觉检测和 LiDAR 聚类同时可用 **the system shall** 通过 IoU + 匈牙利匹配将语义类别关联到 LiDAR 障碍物 |
 | FR-1.4 | **When** 匹配成功 **the system shall** 输出完整语义障碍物消息：{id, class c, position p, velocity v, radius R, context φ} |
@@ -27,7 +27,7 @@
 |----|--------------|
 | FR-2.1 | **When** 语义障碍物消息到达 **the system shall** 计算 β̂ = β̄(c) × μ(φ) |
 | FR-2.2 | **The system shall** 使用解析公式 μ = clip(0.6 + 0.2×f_head + 0.15×TTC_norm + 0.1×ρ_norm, 0, 1)，不依赖任何学习模型 |
-| FR-2.3 | **The system shall** 从 YAML 配置文件加载各类别基础安全余量 β̄(c)，默认值：pedestrian=0.8m, child=1.2m, box=0.3m, vehicle=1.0m, unknown=0.7m |
+| FR-2.3 | **The system shall** 从 YAML 配置文件加载各类别基础安全余量 β̄(c)，默认值（v7 标准）：pedestrian=0.4m, child=0.7m, cyclist=0.6m, vehicle=0.5m, box=0.1m, unknown=0.4m |
 | FR-2.4 | **When** β̂ 计算完成 **the system shall** 发布 per-obstacle 的 β 值到 MPC 求解器 |
 
 ### 2.3 第三层：Guard 审查 + MPC-SECBF
@@ -46,14 +46,14 @@
 | ID | EARS 格式需求 |
 |----|--------------|
 | FR-4.1 | **The system shall** 在每个 MPC 周期记录 h_EE(X_t, obs_i)、β_i、Guard 结果到日志文件 |
-| FR-4.2 | **The system shall** 提供离线脚本验证 inf_t h ≥ -(ε_max + Δ̄β) / γ 是否被违反 |
+| FR-4.2 | **The system shall** 提供离线脚本验证 inf_t h ≥ -(ε_max + Δ̄β) / γ 是否被违反（注：工程验证用此近似下界；论文中使用 v7 H 节的严格形式，涉及多障碍物累积影响和 ε_k 分布） |
 | FR-4.3 | **The system shall** 记录 Guard 回退次数、回退原因、回退前后 β 差值 |
 
 ### 2.5 实验场景
 
 | ID | EARS 格式需求 |
 |----|--------------|
-| FR-5.1 | **The system shall** 支持 4 个社交导航场景：(S1) 行人对向穿越, (S2) 儿童突然出现, (S3) 纸箱静态障碍, (S4) 混合场景（行人+车辆+纸箱） |
+| FR-5.1 | **The system shall** 支持 4 个社交导航场景：(S1) 行人对向穿越, (S2) 儿童突然出现, (S3) Feasibility-Critical（1 个 child 迎面 1.5m/s，初始 5m，验证 Guard 在 h_EE≈0.4 时触发回退）, (S4) 混合场景（行人+车辆+纸箱） |
 | FR-5.2 | **The system shall** 在每个场景中记录：到达时间、最小障碍物距离、平均速度、CBF 值时序、β 值时序、Guard 回退次数 |
 | FR-5.3 | **The system shall** 支持 3 种对比基线：(B1) 原 ACBF 固定 safe_dist, (B2) MPC-SECBF 无 Guard, (B3) MPC-SECBF 有 Guard（本方法） |
 
@@ -91,14 +91,14 @@
 ```
 # SemanticObstacle.msg
 uint32 id
-string semantic_class        # pedestrian/child/box/vehicle/unknown
+string semantic_class        # pedestrian/child/cyclist/vehicle/box/unknown
 geometry_msgs/Point position
 geometry_msgs/Vector3 velocity
 float64 radius
 float64 beta                 # 语义安全余量
 float64 ttc                  # time-to-collision
 float64 heading_factor       # 迎面指标 [0,1]
-float64 density              # 局部密度
+float64 density_norm         # 局部密度 (归一化)
 bool guard_passed            # Guard 是否通过
 ```
 
@@ -121,13 +121,14 @@ semantic_safety:
   enabled: true
   controller_type: 5  # MPC-SECBF
 
-  # 各类别基础安全余量 β̄(c) [meters]
+  # 各类别基础安全余量 β̄(c) [meters] — v7 标准值
   beta_bar:
-    pedestrian: 0.8
-    child: 1.2
-    box: 0.3
-    vehicle: 1.0
-    unknown: 0.7
+    pedestrian: 0.4
+    child: 0.7
+    cyclist: 0.6
+    vehicle: 0.5
+    box: 0.1
+    unknown: 0.4
 
   # 上下文调制系数
   mu_weights:
@@ -165,7 +166,7 @@ semantic_safety:
 | AC-3 | 端到端延迟实测 < 70ms（在实车 GPU 上） |
 | AC-4 | Guard 回退机制在 β 突变时正确触发（可通过人为制造突变测试） |
 | AC-5 | controller_type=0-4 的行为与改动前完全一致（回归测试） |
-| AC-6 | 无 Guard 版本 (B2) 在 S2 场景中出现 h < 0（证明 Guard 的必要性） |
+| AC-6 | 无 Guard 版本 (B2) 在 S3 场景中出现 h < 0（证明 Guard 的必要性） |
 | AC-7 | 本方法 (B3) 在所有场景中 h 始终 > -(ε_max + Δ̄β)/γ（证明理论下界） |
 
 ---

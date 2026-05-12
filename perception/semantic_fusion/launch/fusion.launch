@@ -1,0 +1,12 @@
+<launch>
+  <arg name="use_ground_truth" default="false"/>
+  <arg name="camera_frame" default="camera_color_optical_frame"/>
+  <arg name="lidar_frame" default="body"/>
+
+  <node pkg="semantic_fusion" type="semantic_fusion_node" name="semantic_fusion_node" output="screen">
+    <param name="use_ground_truth" value="$(arg use_ground_truth)"/>
+    <param name="iou_threshold" value="0.2"/>
+    <param name="camera_frame" value="$(arg camera_frame)"/>
+    <param name="lidar_frame" value="$(arg lidar_frame)"/>
+  </node>
+</launch>

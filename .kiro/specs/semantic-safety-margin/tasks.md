@@ -5,7 +5,7 @@
 ### Task 1.1: 创建 semantic_fusion 包骨架 + 自定义消息
 - [ ] 创建 `perception/semantic_fusion/` 包（CMakeLists.txt, package.xml）
 - [ ] 定义 `SemanticObstacle.msg` 和 `SemanticObstacleArray.msg`
-- [ ] 定义 `GuardLog.msg`（放在 `planner/mpc_dcbf/msg/`）
+- [ ] 定义 `GuardLog.msg`（放在 `planner/semantic_guard/msg/`）
 - [ ] 编译验证消息生成成功
 - **验收**: `rosmsg show semantic_fusion/SemanticObstacleArray` 输出正确字段
 
@@ -17,7 +17,7 @@
 - **验收**: `roslaunch semantic_detection yolo.launch` 能启动（即使无图像输入）
 
 ### Task 1.3: 创建语义安全余量配置文件
-- [ ] 创建 `planner/mpc_dcbf/config/semantic_safety_margin.yaml`
+- [ ] 创建 `planner/semantic_guard/config/semantic_safety_margin.yaml`
 - [ ] 包含: beta_bar（各类别）、mu_weights、guard 参数、cbf 参数
 - [ ] 创建 `swarm_test/config/secbf_scenarios.yaml`（4 个场景定义）
 - **验收**: `rosparam load` 成功，`rosparam get /semantic_safety` 返回正确值
@@ -74,26 +74,28 @@
 
 ## Phase 4: 第三层 — MPC-SECBF 控制器
 
-### Task 4.1: mpc_cbf.cpp 新增 SECBF 控制器
-- [ ] controller_ls 新增 "SECBF" (index=5)
+### Task 4.1: 实现 mpc_secbf 包 (独立 MPC-SECBF 控制器)
+- [ ] 创建 `planner/mpc_secbf/` 包骨架（CMakeLists.txt, package.xml）
+- [ ] 从 `mpc_dcbf` fork 运动学模型 + CasADi Opti 框架
 - [ ] 新增 `sub_beta_` 订阅 `/safety_margin/beta`
 - [ ] 新增 `rcvBetaCallBack` 回调，存入 `beta_list_`
-- [ ] 新增 `h_secbf()` 函数: 使用 per-obstacle β_i 替代固定 safe_dist
-- [ ] `set_safety_st()` 新增 `SECBF` 分支
-- [ ] 当 β 话题无数据时回退到固定 safe_dist=0.7
-- **验收**: `controller_type=5` 时 MPC 正常求解，β 值影响避障距离
+- [ ] 实现 `h_secbf()` 函数: 使用 per-obstacle β_i
+- [ ] 实现 `set_secbf_constraint()`: SECBF CBF 约束
+- [ ] 当 β 话题无数据时回退到 β = beta_bar[unknown] = 0.4
+- [ ] 总 safe_dist = R_obs + R_robot + β（与有 Guard 时一致）
+- **验收**: `mpc_secbf_node` 能编译通过，β 值影响避障距离
 
-### Task 4.2: Infeasible 处理 + 向后兼容
-- [ ] SECBF infeasible → 复用现有 DCBF fallback 机制
-- [ ] DCBF 也 infeasible → 零速停车（已有逻辑）
-- [ ] 确认 controller_type=0-4 行为完全不变（回归测试）
-- **验收**: 数值仿真中 controller=4 的结果与改动前一致
+### Task 4.2: Infeasible 处理 + 回归测试
+- [ ] SECBF infeasible → 内部 DCBF fallback（在 mpc_secbf 包内实现）
+- [ ] DCBF 也 infeasible → 零速停车
+- [ ] 确认 `mpc_dcbf` 包完全不受影响（回归测试：用原 launch 跑 controller=4）
+- **验收**: 数值仿真中 `mpc_dcbf` 的 ACBF 结果与改动前一致
 
 ### Task 4.3: 创建 MPC-SECBF launch 文件
-- [ ] `planner/mpc_dcbf/launch/mpc_secbf.launch` (独立 MPC 节点)
+- [ ] `planner/mpc_secbf/launch/mpc_secbf.launch` (独立 MPC-SECBF 节点)
 - [ ] `swarm_test/launch/secbf_planner.launch` (数值仿真完整链路)
 - [ ] `swarm_test/launch_exp/exp_secbf_planner.launch` (实车完整链路)
-- [ ] 参数: controller=5, gamma, tau_scale, beta 配置路径
+- [ ] 参数: gamma, tau_scale, beta 配置路径
 - **验收**: `roslaunch swarm_test secbf_planner.launch` 能启动完整链路
 
 ---
@@ -103,7 +105,7 @@
 ### Task 5.1: 数值仿真 4 场景验证
 - [ ] 配置 S1: 行人对向穿越（1 个 pedestrian 障碍物，v=1.0m/s 迎面）
 - [ ] 配置 S2: 儿童突然出现（1 个 child 障碍物，从侧面突入）
-- [ ] 配置 S3: 纸箱静态障碍（3 个 box 障碍物，静止）
+- [ ] 配置 S3: Feasibility-Critical（1 个 child 迎面 1.5m/s，初始 5m，验证 Guard 在 h_EE≈0.4 时触发回退；B2 → h 进入负值，B3 → Guard 回退保持安全）
 - [ ] 配置 S4: 混合场景（pedestrian + vehicle + box）
 - [ ] 每个场景跑 3 种基线: B1(ACBF固定), B2(SECBF无Guard), B3(SECBF有Guard)
 - [ ] 记录: 到达时间、min_distance、avg_speed、h_min、β 时序、Guard 回退次数

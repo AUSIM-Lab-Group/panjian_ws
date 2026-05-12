@@ -1,0 +1,9 @@
+<launch>
+  <arg name="config_file" default="$(find semantic_guard)/config/semantic_safety_margin.yaml"/>
+  <arg name="log_path" default=""/>
+
+  <node pkg="semantic_guard" type="beta_guard_node" name="beta_guard_node" output="screen">
+    <rosparam file="$(arg config_file)" subst_value="true" ns=""/>
+    <param name="log_path" value="$(arg log_path)"/>
+  </node>
+</launch>

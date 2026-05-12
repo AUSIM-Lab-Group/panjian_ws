@@ -1,0 +1,33 @@
+# Semantic Safety Margin Configuration (v7 standard)
+semantic_safety:
+  enabled: true
+
+  # 各类别基础安全余量 β̄(c) [meters] — v7 标准值
+  beta_bar:
+    pedestrian: 0.4
+    child: 0.7
+    cyclist: 0.6
+    vehicle: 0.5
+    box: 0.1
+    unknown: 0.4
+
+  # 上下文调制系数 μ(φ) = clip(bias + w_head*f + w_ttc*t + w_density*d, 0, 1)
+  mu_weights:
+    bias: 0.6
+    heading: 0.2
+    ttc: 0.15
+    density: 0.1
+
+  # Guard 参数
+  guard:
+    eta: 0.1              # Guard 余量 η [m]
+    max_delta_beta: 0.3   # 单步最大 β 变化量 Δ̄β [m]
+
+  # 机器人参数
+  robot:
+    radius: 0.4           # 机器人半径 R_robot [m]
+
+  # CBF 参数 (传给 MPC-SECBF)
+  cbf:
+    gamma: 0.35
+    tau_scale: 0.30

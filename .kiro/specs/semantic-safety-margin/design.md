@@ -97,14 +97,14 @@ class YoloNode:
 ```cpp
 struct SemanticObstacle {
     uint32_t id;
-    std::string semantic_class;  // pedestrian/child/box/vehicle/unknown
+    std::string semantic_class;  // pedestrian/child/cyclist/vehicle/box/unknown
     Eigen::Vector3d position;
     Eigen::Vector3d velocity;
     double radius;
     // 上下文特征
     double heading_factor;  // cos(angle between relative_vel and relative_pos)
-    double ttc;             // ||p_rel|| / max(||v_rel · p_hat||, eps)
-    double density;         // 半径 3m 内障碍物数量 / max_density
+    double ttc_norm;        // ||p_rel|| / max(||v_rel · p_hat||, eps)
+    double density_norm;    // 半径 3m 内障碍物数量 / max_density
 };
 ```
 
@@ -142,7 +142,7 @@ double density = std::min(1.0, count_nearby / 5.0);  // 5 个为满密度
 
 ### 2.3 beta_guard_node (新增 C++ 节点)
 
-**包**: `planner/mpc_dcbf/` (集成到现有包，或独立 `planner/semantic_guard/`)
+**包**: `planner/semantic_guard/` (独立包，与 mpc_dcbf 解耦)
 
 **职责**: β 计算 + Guard 安全审查 + 发布到 MPC
 
@@ -156,7 +156,7 @@ class BetaGuardNode {
     double max_delta_beta_;  // 最大单步变化
 
     // 状态
-    std::vector<double> beta_prev_;  // 上一时刻各障碍物 β
+    std::map<uint32_t, double> beta_prev_;  // 上一时刻各障碍物 β (按 ID 索引)
 
     void semanticObsCb(const SemanticObstacleArray& msg) {
         std::vector<double> beta_out;
@@ -167,7 +167,7 @@ class BetaGuardNode {
             double mu = std::clamp(
                 w_bias_ + w_head_ * obs.heading_factor
                         + w_ttc_ * obs.ttc_norm
-                        + w_density_ * obs.density,
+                        + w_density_ * obs.density_norm,
                 0.0, 1.0);
             double beta_hat = beta_bar * mu;
 
@@ -211,54 +211,63 @@ class BetaGuardNode {
 
 ---
 
-### 2.4 MPC-SECBF (改造现有 mpc_node_c)
+### 2.4 MPC-SECBF (新建独立包 planner/mpc_secbf/)
 
-**改造文件**: `planner/mpc_dcbf/src/mpc_cbf.cpp`, `include/mpc_cbf.h`
+**包**: `planner/mpc_secbf/` — 与 `mpc_dcbf` 并列，完全独立实现
 
-**核心改动**:
+**设计思路**: 从 `mpc_dcbf` fork 核心求解框架（CasADi Opti + 运动学模型），但 CBF 约束部分重写为 per-obstacle β 版本。
+
+**核心改动（相对于 mpc_dcbf）**:
 
 ```cpp
-// 新增 controller_type = 5
-std::vector<std::string> controller_ls = {
-    "None", "DC", "SCBF", "DCBF", "ACBF", "SECBF"  // ← 新增
+// mpc_secbf.h — 新的求解器类
+class MPC_SECBF_SOLVE {
+    // 从 /safety_margin/beta 接收 per-obstacle β
+    std::vector<double> beta_list_;
+
+    // 新的 CBF 函数：使用 β_i 替代固定 safe_dist
+    casadi::MX h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i);
+
+    // 安全约束设置
+    void set_secbf_constraint(casadi::Opti& opt, int obs_index);
+
+    // 求解
+    bool solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
+               Eigen::MatrixXd* obs_matrix);
 };
 
-// 新增 β 订阅
-sub_beta_ = nh_.subscribe("/safety_margin/beta", 10, &MPC_PLANNER::rcvBetaCallBack, this);
-
-// β 回调
-void MPC_PLANNER::rcvBetaCallBack(std_msgs::Float32MultiArray msg) {
-    std::lock_guard<std::mutex> lock(beta_mutex_);
-    beta_list_.assign(msg.data.begin(), msg.data.end());
-}
-
-// 新增 h_secbf 函数 (替代 h1/h2/h3 中的固定 safe_dist)
-casadi::MX MPC_SOLVE::h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i) {
+// h_secbf: per-obstacle β 替代固定 safe_dist
+casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i) {
     casadi::MX dx = _obs(0) - _curpos(0);
     casadi::MX dy = _obs(1) - _curpos(1);
-    // β_i 替代原来的 safe_dist
+    // β_i 来自 semantic_guard，包含了类别 + 上下文 + Guard 审查后的值
     casadi::MX h_exp = casadi::MX::sqrt(dx*dx + dy*dy) - _obs(2) - beta_i;
     return h_exp;
 }
 
-// set_safety_st 新增 SECBF 分支
-else if(smetric == "SECBF") {
+// SECBF 约束
+void MPC_SECBF_SOLVE::set_secbf_constraint(casadi::Opti& opt, int obs_index) {
+    double beta_i = (obs_index < beta_list_.size()) ? beta_list_[obs_index] : beta_bar_unknown_;  // beta_bar_unknown_ 默认 0.4，从 YAML 加载
     for(int i = 0; i < N_s-1; i++) {
         casadi::MX X_   = X_k(casadi::Slice(), i);
         casadi::MX X_1  = X_k(casadi::Slice(), i+1);
-        // 使用 per-obstacle β_i
-        double beta_i = (index < beta_list_.size()) ? beta_list_[index] : safe_dist;
-        casadi::MX hk  = h_secbf(X_,  obs_matrix_s->col(index*N_s+i),  beta_i);
-        casadi::MX hk1 = h_secbf(X_1, obs_matrix_s->col(index*N_s+i+1), beta_i);
+        casadi::MX hk  = h_secbf(X_,  obs_matrix_->col(obs_index*N_s+i),  beta_i);
+        casadi::MX hk1 = h_secbf(X_1, obs_matrix_->col(obs_index*N_s+i+1), beta_i);
         casadi::MX cbf = -hk1 + (1-gamma_)*hk;
         opt.subject_to(cbf <= 0);
     }
 }
 ```
 
-**obs_matrix_ 扩展方案**:
+**ROS 节点 (mpc_secbf_node.cpp)**:
+- 订阅: `/Odometry`, `/global_path`, `/safety_margin/beta`
+- 发布: `/cmd_vel`, `/local_path`
+- 不订阅 `/obs_Manager_node/obs_predict_pub`（改为从 `/semantic_obstacles` 获取障碍物信息）
 
-不改 obs_matrix_ 的维度（避免大范围改动），而是通过独立的 `beta_list_` 向量传递 β 值。索引对应关系：`beta_list_[i]` 对应 `obs_matrix_` 中第 i 个障碍物。
+**与 mpc_dcbf 的关系**:
+- `mpc_dcbf` 保持原样，作为对比基线 B1
+- `mpc_secbf` 是新方法，独立编译、独立运行
+- 对比实验通过 launch 文件切换启动哪个节点
 
 ---
 
@@ -323,20 +332,34 @@ panjian_ws/
 │           └── fusion.launch
 │
 ├── planner/
-│   └── mpc_dcbf/                    # 改造
-│       ├── include/
-│       │   ├── mpc_cbf.h           # 新增 beta_list_, h_secbf(), SECBF 分支
-│       │   └── beta_guard.h        # 新增: Guard 节点头文件
-│       ├── src/
-│       │   ├── mpc_cbf.cpp         # 改造: 新增 SECBF controller
-│       │   ├── mpc_node.cpp        # 改造: 新增 β 订阅
-│       │   └── beta_guard_node.cpp # 新增: Guard 节点
-│       ├── msg/
-│       │   └── GuardLog.msg        # 新增
-│       ├── config/
-│       │   └── semantic_safety_margin.yaml  # 新增
-│       └── launch/
-│           └── mpc_secbf.launch    # 新增
+│   ├── semantic_guard/              # 新增: β 计算 + Guard 审查
+│   │   ├── CMakeLists.txt
+│   │   ├── package.xml
+│   │   ├── include/semantic_guard/
+│   │   │   └── beta_guard.h
+│   │   ├── src/
+│   │   │   └── beta_guard_node.cpp
+│   │   ├── msg/
+│   │   │   └── GuardLog.msg
+│   │   ├── config/
+│   │   │   └── semantic_safety_margin.yaml
+│   │   └── launch/
+│   │       └── beta_guard.launch
+│   │
+│   ├── mpc_secbf/                   # 新增: MPC-SECBF 控制器 (与 mpc_dcbf 并列)
+│   │   ├── CMakeLists.txt
+│   │   ├── package.xml
+│   │   ├── include/mpc_secbf/
+│   │   │   ├── mpc_secbf.h         # MPC-SECBF 求解器
+│   │   │   └── mpc_secbf_planner.h # 规划器主类
+│   │   ├── src/
+│   │   │   ├── mpc_secbf.cpp       # CasADi 求解 + h_secbf + per-obstacle β
+│   │   │   └── mpc_secbf_node.cpp  # ROS 节点入口
+│   │   └── launch/
+│   │       └── mpc_secbf.launch
+│   │
+│   └── mpc_dcbf/                    # 原有，不改动 (作为对比基线 B1)
+│       ├── ...（保持原样）
 │
 └── swarm_test/
     ├── launch/
@@ -422,6 +445,8 @@ obstacles:
 inf_t h(X_t, obs_i) ≥ -(ε_max + Δ̄β) / γ
 ```
 
+> **注**: 此为工程验证用的近似常数下界。论文中使用 v7 H 节的严格形式（涉及多障碍物累积影响、ε_k 时变分布和 Guard 回退可行性引理的联合证明）。
+
 其中:
 - ε_max: MPC 离散化误差上界
 - Δ̄β: 单步最大 β 变化量 (配置参数 `max_delta_beta`)
@@ -456,6 +481,6 @@ print(f"Safety guaranteed: {h_min > theoretical_bound}")
 | 场景 | 行为 |
 |------|------|
 | `controller_type=0-4` | 完全不变，不订阅 `/safety_margin/beta`，使用固定 `safe_dist` |
-| `controller_type=5` 但 β 话题无数据 | 回退到固定 `safe_dist = 0.7`（unknown 类别默认值） |
+| `controller_type=5` 但 β 话题无数据 | 回退到 β = β̄(unknown) = 0.4，总 safe_dist = R_obs + R_robot + 0.4 |
 | 无 D435 相机 | `semantic_fusion_node` 回退到纯 LiDAR 模式，所有障碍物 class=unknown |
 | `yolo_node` 崩溃 | fusion 节点 3 秒无 YOLO 输入后自动回退 unknown |
