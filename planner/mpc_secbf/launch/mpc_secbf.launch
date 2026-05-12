@@ -1,0 +1,24 @@
+<launch>
+  <arg name="mpc_frequency" default="10"/>
+  <arg name="pre_step" default="20"/>
+  <arg name="step_time" default="0.2"/>
+  <arg name="v_max" default="0.5"/>
+  <arg name="gamma" default="0.35"/>
+  <arg name="beta_bar_unknown" default="0.4"/>
+
+  <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
+    <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
+    <param name="mpc/pre_step" value="$(arg pre_step)"/>
+    <param name="mpc/step_time" value="$(arg step_time)"/>
+    <param name="mpc/v_max" value="$(arg v_max)"/>
+    <param name="mpc/v_min" value="0.3"/>
+    <param name="mpc/o_max" value="0.8"/>
+    <param name="mpc/gamma" value="$(arg gamma)"/>
+    <param name="mpc/beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
+
+    <remap from="/Odometry" to="/Odometry"/>
+    <remap from="/global_path" to="/global_path"/>
+    <remap from="/cmd_vel" to="/cmd_vel"/>
+    <remap from="/local_path" to="/local_path"/>
+  </node>
+</launch>

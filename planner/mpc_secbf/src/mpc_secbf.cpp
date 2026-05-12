@@ -1,0 +1,216 @@
+#include "mpc_secbf/mpc_secbf.h"
+#include <ros/ros.h>
+#include <iostream>
+#include <algorithm>
+#include <cmath>
+
+void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
+                                   std::vector<double> Q, std::vector<double> R,
+                                   double gamma, double beta_bar_unknown) {
+    Ts_ = Ts;
+    N_ = N;
+    v_max_ = v_max;
+    v_min_ = v_min;
+    omega_max_ = o_max;
+    Q_ = Q;
+    R_ = R;
+    gamma_ = gamma;
+    beta_bar_unknown_ = beta_bar_unknown;
+
+    kine_equation_ = setKinematicEquation();
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f",
+             N_, Ts_, v_max_, gamma_, beta_bar_unknown_);
+}
+
+bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
+                             Eigen::MatrixXd* obs_matrix, const std::vector<double>& beta_list) {
+    cur_state_ptr_ = cur_state;
+    goal_state_ptr_ = goal_state;
+    obs_matrix_ptr_ = obs_matrix;
+
+    int obs_num = (N_ > 0 && obs_matrix->cols() > 0) ? (obs_matrix->cols() / N_) : 0;
+
+    // Create optimization problem
+    casadi::Opti prob;
+    X_k_ = prob.variable(5, N_ + 1);
+    U_k_ = prob.variable(2, N_);
+
+    casadi::MX v = U_k_(0, casadi::Slice());
+    casadi::MX omega = U_k_(1, casadi::Slice());
+
+    // Initial state constraint
+    casadi::MX X_0 = prob.parameter(5);
+    std::vector<double> x0_val(cur_state->data(), cur_state->data() + cur_state->size());
+    prob.set_value(X_0, x0_val);
+    prob.subject_to(X_k_(casadi::Slice(), 0) == X_0);
+
+    // Reference trajectory
+    casadi::MX X_ref = prob.parameter(3, N_);
+    std::vector<double> xref_val(goal_state->data(), goal_state->data() + 3 * N_);
+    casadi::DM xref_dm(xref_val);
+    X_ref = casadi::MX::reshape(casadi::DM(xref_val), 3, N_);
+
+    // Cost function (progressive Q)
+    casadi::MX cost = 0;
+    casadi::DM R_mat = casadi::DM::zeros(2, 2);
+    R_mat(0, 0) = R_[0];
+    R_mat(1, 1) = R_[1];
+    casadi::DM Q_mat = casadi::DM::zeros(3, 3);
+    Q_mat(0, 0) = Q_[0];
+    Q_mat(1, 1) = Q_[1];
+    Q_mat(2, 2) = Q_[2];
+
+    for (int i = 0; i < N_; i++) {
+        casadi::MX X_err = X_k_(casadi::Slice(0, 3), i) - X_ref(casadi::Slice(), i);
+        casadi::MX U_i = U_k_(casadi::Slice(), i);
+        cost += casadi::MX::mtimes({X_err.T(), Q_mat, X_err});
+        cost += casadi::MX::mtimes({U_i.T(), R_mat, U_i});
+        Q_mat(0, 0) += 0.05;
+        Q_mat(1, 1) += 0.05;
+        Q_mat(2, 2) += 0.005;
+    }
+    // Terminal cost
+    casadi::MX X_err_e = X_k_(casadi::Slice(0, 3), N_) - X_ref(casadi::Slice(), N_ - 1);
+    cost += casadi::MX::mtimes({X_err_e.T(), 1.1 * Q_mat, X_err_e});
+    prob.minimize(cost);
+
+    // Control bounds
+    prob.subject_to(prob.bounded(-v_max_, v, v_max_));
+    prob.subject_to(prob.bounded(-omega_max_, omega, omega_max_));
+
+    // Kinematic constraints
+    for (int i = 0; i < N_; i++) {
+        casadi::DM A = casadi::DM::zeros(5, 5);
+        for (int j = 0; j < 3; j++) A(j, j) = 1.0;
+        std::vector<casadi::MX> input(2);
+        input[0] = X_k_(casadi::Slice(), i);
+        input[1] = U_k_(casadi::Slice(), i);
+        casadi::MX x_next = casadi::MX::mtimes(A, X_k_(casadi::Slice(), i)) + kine_equation_(input)[0];
+        prob.subject_to(x_next == X_k_(casadi::Slice(), i + 1));
+    }
+
+    // SECBF constraints (per-obstacle with semantic β)
+    int choose_num = 0;
+    for (int idx = 0; idx < obs_num && choose_num < 3; idx++) {
+        // Check if obstacle is relevant (in front, within range)
+        Eigen::VectorXd obs_first = obs_matrix->col(idx * N_);
+        Eigen::Vector2d obs_p = obs_first.head<2>();
+        Eigen::Vector2d rob_p = cur_state->head<2>();
+        double dist = (obs_p - rob_p).norm();
+        if (dist > 8.0) continue;  // Too far, skip
+
+        // Get β for this obstacle
+        double beta_i = (idx < (int)beta_list.size()) ? beta_list[idx] : beta_bar_unknown_;
+
+        // Add CBF constraints
+        for (int i = 0; i < N_ - 1; i++) {
+            casadi::MX X_cur = X_k_(casadi::Slice(), i);
+            casadi::MX X_nxt = X_k_(casadi::Slice(), i + 1);
+
+            Eigen::VectorXd obs_k = obs_matrix->col(idx * N_ + i);
+            Eigen::VectorXd obs_k1 = obs_matrix->col(idx * N_ + i + 1);
+
+            casadi::MX hk = h_secbf(X_cur, obs_k, beta_i);
+            casadi::MX hk1 = h_secbf(X_nxt, obs_k1, beta_i);
+
+            // CBF constraint: -h_{k+1} + (1-γ)h_k ≤ 0
+            casadi::MX cbf = -hk1 + (1.0 - gamma_) * hk;
+            prob.subject_to(cbf <= 0);
+        }
+        choose_num++;
+    }
+
+    // Warm start
+    if (!predict_u.empty()) {
+        std::vector<double> x_warm = predict_x;
+        std::vector<double> u_warm = predict_u;
+        std::rotate(u_warm.begin(), u_warm.begin() + 2, u_warm.end());
+        u_warm[u_warm.size() - 2] = 0.0;
+        u_warm[u_warm.size() - 1] = 0.0;
+        std::rotate(x_warm.begin(), x_warm.begin() + 5, x_warm.end());
+
+        casadi::DM x_guess = casadi::DM::reshape(casadi::DM(x_warm), 5, N_ + 1);
+        casadi::DM u_guess = casadi::DM::reshape(casadi::DM(u_warm), 2, N_);
+        prob.set_initial(X_k_, x_guess);
+        prob.set_initial(U_k_, u_guess);
+    }
+
+    // Solver options
+    casadi::Dict opts;
+    opts["expand"] = true;
+    opts["ipopt.max_iter"] = 2500;
+    opts["ipopt.print_level"] = 0;
+    opts["print_time"] = 0;
+    opts["ipopt.acceptable_tol"] = 3e-3;
+    opts["ipopt.acceptable_obj_change_tol"] = 3e-3;
+    prob.solver("ipopt", opts);
+
+    try {
+        solution_ = std::make_unique<casadi::OptiSol>(prob.solve());
+
+        // Extract results
+        predict_x.clear();
+        predict_u.clear();
+        casadi::DM state_sol = solution_->value(X_k_);
+        casadi::DM ctrl_sol = solution_->value(U_k_);
+
+        for (int i = 0; i < N_ + 1; i++) {
+            for (int j = 0; j < 5; j++)
+                predict_x.push_back(static_cast<double>(state_sol(j, i)));
+        }
+        for (int i = 0; i < N_; i++) {
+            predict_u.push_back(static_cast<double>(ctrl_sol(0, i)));
+            predict_u.push_back(static_cast<double>(ctrl_sol(1, i)));
+        }
+        return true;
+
+    } catch (const casadi::CasadiException& e) {
+        std::cerr << "\033[31m[MPC-SECBF] Infeasible: \033[0m" << e.what() << std::endl;
+        rotateSolution();
+        return false;
+    }
+}
+
+casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
+    casadi::MX dx = obs(0) - curpos(0);
+    casadi::MX dy = obs(1) - curpos(1);
+    double obs_radius = obs(2);
+    // h = ||p_obs - p_robot|| - R_obs - β_i
+    casadi::MX h = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - beta_i;
+    return h;
+}
+
+casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {
+    casadi::MX x = casadi::MX::sym("x");
+    casadi::MX y = casadi::MX::sym("y");
+    casadi::MX theta = casadi::MX::sym("theta");
+    casadi::MX vx = casadi::MX::sym("vx");
+    casadi::MX vy = casadi::MX::sym("vy");
+    casadi::MX state = casadi::MX::vertcat({x, y, theta, vx, vy});
+
+    casadi::MX v = casadi::MX::sym("v");
+    casadi::MX w = casadi::MX::sym("w");
+    casadi::MX ctrl = casadi::MX::vertcat({v, w});
+
+    // Differential drive kinematics
+    casadi::MX rhs = casadi::MX::vertcat({
+        v * casadi::MX::cos(theta) * Ts_,
+        v * casadi::MX::sin(theta) * Ts_,
+        w * Ts_,
+        v * casadi::MX::cos(theta),
+        v * casadi::MX::sin(theta)
+    });
+
+    return casadi::Function("kinematic_eq", {state, ctrl}, {rhs});
+}
+
+void MPC_SECBF_SOLVE::rotateSolution() {
+    if (predict_u.empty()) return;
+    std::rotate(predict_u.begin(), predict_u.begin() + 2, predict_u.end());
+    predict_u[predict_u.size() - 2] = 0.0;
+    predict_u[predict_u.size() - 1] = 0.0;
+
+    if (!predict_x.empty()) {
+        std::rotate(predict_x.begin(), predict_x.begin() + 5, predict_x.end());
+    }
+}
