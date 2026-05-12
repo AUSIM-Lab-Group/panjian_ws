@@ -1,0 +1,96 @@
+<launch>
+  <!-- MPC-SECBF 数值仿真完整链路 -->
+  <param name="/use_sim_time" value="false"/>
+
+  <arg name="mpc_frequency" value="10"/>
+  <arg name="pre_step"      value="20"/>
+  <arg name="step_time"     value="0.2"/>
+  <arg name="v_max"         value="0.5"/>
+  <arg name="gamma"         value="0.35"/>
+  <arg name="show_rviz"     default="true"/>
+  <arg name="use_ground_truth" default="true"/>
+  <arg name="front_adsm"    value="true"/>
+  <arg name="static_path"   default="false"/>
+  <arg name="search_horizon" default="10.0"/>
+  <arg name="map_size_x" default="50.0"/>
+  <arg name="map_size_y" default="50.0"/>
+  <arg name="map_size_z" default="3.0"/>
+
+  <!-- 随机地图仿真环境 -->
+  <include file="$(find map_generator)/launch/map.launch">
+    <arg name="rviz_vis"    value="false"/>
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="c_num"       value="0"/>
+    <arg name="p_num"       value="1"/>
+  </include>
+
+  <!-- 差速机器人数值仿真 -->
+  <include file="$(find robot_simulator)/launch/scout_simulator.xml">
+    <arg name="ugv_id"         value="1"/>
+    <arg name="time_res_"      value="0.02"/>
+    <arg name="init_x_"        value="0.0"/>
+    <arg name="init_y_"        value="0.0"/>
+    <arg name="init_z_"        value="0.2"/>
+    <arg name="map_size_x_"    value="$(arg map_size_x)"/>
+    <arg name="map_size_y_"    value="$(arg map_size_y)"/>
+    <arg name="map_size_z_"    value="$(arg map_size_z)"/>
+    <arg name="odometry_topic" value="/robot1/odom"/>
+    <arg name="mesh_topic"     value="vis_mesh"/>
+    <arg name="cmd_topic"      value="/cmd_vel1"/>
+  </include>
+
+  <!-- 全局路径搜索 (globalFsm_by_adsm) -->
+  <include file="$(find traj_planner)/launch/plan_global_fsm.launch">
+    <arg name="odometry_topic"          value="/robot1/odom"/>
+    <arg name="cloud_topic"             value="/velodyne_points_world_no_use"/>
+    <arg name="_perception_GroundTruth" value="$(arg use_ground_truth)"/>
+    <arg name="pre_step_"         value="$(arg pre_step)"/>
+    <arg name="step_time_"        value="$(arg step_time)"/>
+    <arg name="used_DIS_"         value="false"/>
+    <arg name="used_adsm_"        value="$(arg front_adsm)"/>
+    <arg name="used_static_path"  value="$(arg static_path)"/>
+    <arg name="traj_horizon"      value="$(arg search_horizon)"/>
+  </include>
+
+  <!-- 语义融合 (Ground Truth 模式: 跳过 YOLO, 直接用真值类别) -->
+  <node pkg="semantic_fusion" type="semantic_fusion_node" name="semantic_fusion_node" output="screen">
+    <param name="use_ground_truth" value="$(arg use_ground_truth)"/>
+  </node>
+
+  <!-- β 计算 + Guard -->
+  <include file="$(find semantic_guard)/launch/beta_guard.launch">
+    <arg name="log_path" value="$(find swarm_test)/output/guard_log.csv"/>
+  </include>
+
+  <!-- MPC-SECBF 控制器 -->
+  <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
+    <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
+    <param name="mpc/pre_step"      value="$(arg pre_step)"/>
+    <param name="mpc/step_time"     value="$(arg step_time)"/>
+    <param name="mpc/v_max"         value="$(arg v_max)"/>
+    <param name="mpc/v_min"         value="0.3"/>
+    <param name="mpc/o_max"         value="0.8"/>
+    <param name="mpc/gamma"         value="$(arg gamma)"/>
+    <param name="mpc/beta_bar_unknown" value="0.4"/>
+    <remap from="/Odometry" to="/robot1/odom"/>
+    <remap from="/cmd_vel"  to="/cmd_vel1"/>
+    <remap from="/globalFsm_by_adsm/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub"/>
+  </node>
+
+  <!-- 轨迹可视化 -->
+  <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">
+    <remap from="/odometry" to="/robot1/odom"/>
+    <param name="odom_traj_vis/line_width"     value="0.05" type="double"/>
+    <param name="odom_traj_vis/color_r"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_g"        value="0.8" type="double"/>
+    <param name="odom_traj_vis/color_b"        value="0.2" type="double"/>
+    <param name="odom_traj_vis/color_a"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/show_odom_size" value="1000" type="int"/>
+  </node>
+
+  <!-- RViz -->
+  <node if="$(arg show_rviz)" pkg="rviz" type="rviz" name="rviz" output="log"
+        args="-d $(find swarm_test)/config/acbf_plan.rviz"/>
+</launch>

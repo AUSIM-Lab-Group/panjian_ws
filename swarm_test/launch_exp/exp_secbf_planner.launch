@@ -1,0 +1,81 @@
+<launch>
+  <!-- MPC-SECBF 实车完整链路 -->
+  <param name="/use_sim_time" value="false"/>
+
+  <arg name="mpc_frequency" value="10"/>
+  <arg name="pre_step"      value="20"/>
+  <arg name="step_time"     value="0.2"/>
+  <arg name="v_max"         value="0.5"/>
+  <arg name="gamma"         value="0.35"/>
+  <arg name="front_adsm"    value="true"/>
+  <arg name="static_path"   value="false"/>
+  <arg name="search_horizon" value="9.0"/>
+  <arg name="map_size_x" default="50.0"/>
+  <arg name="map_size_y" default="50.0"/>
+  <arg name="map_size_z" default="3.0"/>
+
+  <!-- MPC-SECBF 控制器 -->
+  <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
+    <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
+    <param name="mpc/pre_step"      value="$(arg pre_step)"/>
+    <param name="mpc/step_time"     value="$(arg step_time)"/>
+    <param name="mpc/v_max"         value="$(arg v_max)"/>
+    <param name="mpc/v_min"         value="0.3"/>
+    <param name="mpc/o_max"         value="0.8"/>
+    <param name="mpc/gamma"         value="$(arg gamma)"/>
+    <param name="mpc/beta_bar_unknown" value="0.4"/>
+    <remap from="/Odometry" to="/Odometry"/>
+    <remap from="/cmd_vel"  to="/cmd_vel"/>
+    <remap from="/globalFsm_by_adsm/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub"/>
+  </node>
+
+  <!-- 全局路径搜索 -->
+  <include file="$(find traj_planner)/launch/plan_global_fsm.launch">
+    <arg name="odometry_topic"          value="/Odometry"/>
+    <arg name="cloud_topic"             value="/fastLIO/non_ground_points"/>
+    <arg name="_perception_GroundTruth" value="false"/>
+    <arg name="pre_step_"         value="$(arg pre_step)"/>
+    <arg name="step_time_"        value="$(arg step_time)"/>
+    <arg name="used_DIS_"         value="false"/>
+    <arg name="used_adsm_"        value="$(arg front_adsm)"/>
+    <arg name="used_static_path"  value="$(arg static_path)"/>
+    <arg name="traj_horizon"      value="$(arg search_horizon)"/>
+  </include>
+
+  <!-- 随机地图 (静态障碍物用) -->
+  <include file="$(find map_generator)/launch/map.launch">
+    <arg name="rviz_vis"    value="false"/>
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="c_num"       value="0"/>
+    <arg name="p_num"       value="1"/>
+  </include>
+
+  <!-- 语义融合 (实车: 使用 YOLO + LiDAR 融合) -->
+  <node pkg="semantic_fusion" type="semantic_fusion_node" name="semantic_fusion_node" output="screen">
+    <param name="use_ground_truth" value="false"/>
+    <param name="camera_frame" value="camera_color_optical_frame"/>
+    <param name="lidar_frame" value="body"/>
+  </node>
+
+  <!-- β 计算 + Guard -->
+  <include file="$(find semantic_guard)/launch/beta_guard.launch">
+    <arg name="log_path" value="$(find swarm_test)/output/guard_log.csv"/>
+  </include>
+
+  <!-- 轨迹可视化 -->
+  <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">
+    <remap from="/odometry" to="/Odometry"/>
+    <param name="odom_traj_vis/line_width"     value="0.05" type="double"/>
+    <param name="odom_traj_vis/color_r"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_g"        value="0.8" type="double"/>
+    <param name="odom_traj_vis/color_b"        value="0.2" type="double"/>
+    <param name="odom_traj_vis/color_a"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/show_odom_size" value="1000" type="int"/>
+  </node>
+
+  <include file="$(find robot_simulator)/launch/vis_scout_using_odometry.launch">
+    <arg name="odometry_topic" value="/Odometry"/>
+  </include>
+</launch>

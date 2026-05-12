@@ -1,0 +1,78 @@
+# SECBF 实验场景配置
+# 4 个社交导航场景 + 3 种对比基线
+
+scenarios:
+  # S1: 行人对向穿越
+  S1_pedestrian_crossing:
+    description: "1 pedestrian crossing head-on at 1.0 m/s"
+    obstacles:
+      - {x: 10.0, y: 0.0, z: 0.75, offset: 0.0, slower: 10.0,
+         scale_x: -20.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "pedestrian"}
+    goal: {x: 20.0, y: 0.0}
+    expected_beta: 0.4  # β̄(pedestrian) × μ(frontal≈0.95)
+
+  # S2: 儿童突然出现 (从侧面突入)
+  S2_child_sudden:
+    description: "1 child appearing from side at 0.8 m/s"
+    obstacles:
+      - {x: 8.0, y: 3.0, z: 0.5, offset: 0.0, slower: 8.0,
+         scale_x: 0.0, scale_y: -6.0, scale_z: 0.0,
+         semantic_class: "child"}
+    goal: {x: 15.0, y: 0.0}
+    expected_beta: 0.7  # β̄(child) × μ(lateral)
+
+  # S3: Feasibility-Critical (Guard 必须触发)
+  S3_feasibility_critical:
+    description: "1 child head-on at 1.5 m/s, initial 5m. Guard triggers at h_EE≈0.4"
+    obstacles:
+      - {x: 5.0, y: 0.0, z: 0.5, offset: 0.0, slower: 3.33,
+         scale_x: -10.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child"}
+    goal: {x: 15.0, y: 0.0}
+    expected_beta_hat: 0.67  # 0.7 × 0.95 (frontal)
+    guard_trigger_condition: "β̂(0.67) > h_EE(0.4) - η(0.1) = 0.3 → Guard triggers"
+    verification:
+      B2_expected: "h enters negative (no Guard, β too large for feasibility)"
+      B3_expected: "Guard rollback keeps h > theoretical_bound"
+
+  # S4: 混合场景 (行人 + 车辆 + 纸箱)
+  S4_mixed:
+    description: "pedestrian + vehicle + box, different β for each"
+    obstacles:
+      - {x: 6.0, y: -1.0, z: 0.75, offset: 5.0, slower: 8.0,
+         scale_x: 15.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "pedestrian"}
+      - {x: 12.0, y: 1.5, z: 0.75, offset: 0.0, slower: 6.0,
+         scale_x: -12.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "vehicle"}
+      - {x: 8.0, y: 0.0, z: 0.3, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box"}
+    goal: {x: 20.0, y: 0.0}
+
+# 对比基线
+baselines:
+  B1_ACBF_fixed:
+    description: "Original ACBF with fixed safe_dist=0.7m"
+    launch: "acbf0_planner.launch"
+    controller: 4
+
+  B2_SECBF_no_guard:
+    description: "MPC-SECBF without Guard (β̂ applied directly)"
+    launch: "secbf_planner.launch"
+    guard_enabled: false
+
+  B3_SECBF_with_guard:
+    description: "MPC-SECBF with Guard (proposed method)"
+    launch: "secbf_planner.launch"
+    guard_enabled: true
+
+# 评价指标
+metrics:
+  - arrival_time_s        # 到达目标时间
+  - min_distance_m        # 最小障碍物距离
+  - avg_speed_ms          # 平均速度
+  - h_min                 # CBF 值最小值
+  - guard_rollback_count  # Guard 回退次数
+  - beta_mean             # β 平均值
