@@ -5,7 +5,7 @@
   <arg name="pre_step"      value="20" />
   <arg name="step_time"     value="0.2" />
   <!-- can choose None 0, MPC-DC 1, MPC-SCBF 2, MPC-DCBF 3, MPC-ACBF 4 -->
-  <arg name="controller"    value="3" />
+  <arg name="controller"    value="4" />
   <arg name="front_dis"     value="false" />
   <arg name="front_adsm"    value="true" />
 
@@ -20,15 +20,15 @@
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)" />
     <param name="mpc/pre_step"    value="$(arg pre_step)" />
     <param name="mpc/step_time"   value="$(arg step_time)" />
-    <param name="mpc/gamma"       value="0.35" />
-    <param name="mpc/tau_scale"   value="0.30" />
+    <param name="mpc/gamma"       value="0.5" />
+    <param name="mpc/tau_scale"   value="0.25" />
     <param name="mpc/use_initiguess" value="true" />
     <param name="mpc/ahead" value="true" />
   
     <remap from="/Odometry" to="/Odometry" />
     <remap from="/obs_Manager_node/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub" />
     <remap from="/local_path" to="/local_path" />
-    <remap from="/cmd_vel"    to="/cmd_vel1" />
+    <remap from="/cmd_vel"    to="/cmd_vel" />
   </node>
 
   <!-- global_path searching -->

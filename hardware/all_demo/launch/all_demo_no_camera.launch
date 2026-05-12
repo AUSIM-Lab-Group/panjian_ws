@@ -1,0 +1,19 @@
+<launch>
+  <!-- 无相机版本：适合没有 D435 的车或调试 -->
+
+  <!-- 起雷达驱动 -->
+  <include file="$(find rslidar_sdk)/launch/start.launch" />
+
+  <!-- 起雷达话题转换节点 (Robosense -> Velodyne 格式) -->
+  <node name="rs_converter" pkg="rs_to_velodyne" type="rs_to_velodyne" args="XYZIRT XYZIRT" />
+
+  <!-- 起惯导驱动 -->
+  <include file="$(find sbg_driver)/launch/examples/sbg_ellipseN.launch" />
+
+  <!-- 启动 FAST-LIO -->
+  <include file="$(find fast_lio)/launch/state_estimation.launch" />
+
+  <!-- 相机默认关闭 -->
+  <!-- <include file="$(find realsense2_camera)/launch/rs_aligned_depth.launch"/> -->
+
+</launch>

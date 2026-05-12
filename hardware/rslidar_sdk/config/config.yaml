@@ -19,7 +19,7 @@ lidar:
       difop_port: 7788             #Difop port of lidar
       start_angle: 0               #Start angle of point cloud
       end_angle: 360               #End angle of point cloud 
-      min_distance: 0.5            #Minimum distance of point cloud
+      min_distance: 1.5            #实车:车身半径~0.6m, 需过滤扫到自身的点
       max_distance: 20.0            #Maximum distance of point cloud
       use_lidar_clock: false       #True--Use the lidar clock as the message timestamp
                                    #False-- Use the system clock as the timestamp  

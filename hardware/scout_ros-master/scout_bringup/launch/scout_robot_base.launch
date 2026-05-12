@@ -14,8 +14,11 @@
 	<arg name="pub_tf" default="$(arg pub_tf)" />
     </include>
 
+    <!-- 注释掉不存在的 description.launch；如需 URDF，用 display_scout_v2.launch -->
+    <!--
     <include file="$(find scout_description)/launch/description.launch">
         <arg name="model_xacro" default="$(arg model_xacro)" />
     </include>
+    -->
 
 </launch>

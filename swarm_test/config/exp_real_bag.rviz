@@ -56,7 +56,7 @@ Visualization Manager:
       Cell Size: 0.20000000298023224
       Class: rviz/Grid
       Color: 186; 189; 182
-      Enabled: false
+      Enabled: true
       Line Style:
         Line Width: 0.029999999329447746
         Value: Lines
@@ -69,16 +69,16 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 250
       Reference Frame: world
-      Value: false
+      Value: true
     - Alpha: 1
       Class: rviz/Axes
-      Enabled: false
+      Enabled: true
       Length: 1
       Name: world_axis
       Radius: 0.10000000149011612
       Reference Frame: <Fixed Frame>
       Show Trail: false
-      Value: false
+      Value: true
     - Alpha: 1
       Class: rviz/PointStamped
       Color: 204; 41; 204
@@ -121,7 +121,7 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 1.649999976158142
+        Max Value: 1.9500000476837158
         Min Value: 0.05000000074505806
         Value: true
       Axis: Z
@@ -161,7 +161,7 @@ Visualization Manager:
           Marker Topic: /robot_mesh1
           Name: rob_Marker
           Namespaces:
-            ugv_mesh: true
+            {}
           Queue Size: 100
           Value: true
       Enabled: true
@@ -171,7 +171,7 @@ Visualization Manager:
       Marker Topic: /obs_trajs_Use
       Name: obs_MarkerArray
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -244,35 +244,6 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        front_left_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        front_right_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        inertial_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        rear_left_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        rear_right_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
       Name: RobotModel
       Robot Description: robot_description
       TF Prefix: ""
@@ -280,12 +251,22 @@ Visualization Manager:
       Value: true
       Visual Enabled: true
     - Class: rviz/TF
-      Enabled: false
+      Enabled: true
       Filter (blacklist): ""
       Filter (whitelist): ""
       Frame Timeout: 15
       Frames:
         All Enabled: true
+        base_link:
+          Value: true
+        body:
+          Value: true
+        camera_init:
+          Value: true
+        odom:
+          Value: true
+        world:
+          Value: true
       Marker Alpha: 1
       Marker Scale: 1
       Name: TF
@@ -293,9 +274,15 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        {}
+        odom:
+          {}
+        world:
+          camera_init:
+            body:
+              base_link:
+                {}
       Update Interval: 0
-      Value: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 211; 215; 207
@@ -318,7 +305,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 31.6854248046875
+      Distance: 6.797740936279297
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -326,9 +313,9 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 12.010942459106445
-        Y: -0.32455092668533325
-        Z: -1.3937792778015137
+        X: 0.7260562181472778
+        Y: -0.9629406332969666
+        Z: -1.4050661325454712
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false

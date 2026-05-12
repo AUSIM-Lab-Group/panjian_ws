@@ -39,9 +39,10 @@ void MPC_PLANNER::init_MPC_CBF(ros::NodeHandle& nh)
     nums_of_planning = 1;
     cost_time_sum = 0;
     // ----------初始化mpc-solver参数
-    double v_max = 1.3;
-    double v_min = 1.0;
-    double o_max = 1.0;
+    // 实车第一次测试建议 v_max=0.5, 稳定后再提速
+    double v_max = 0.5;
+    double v_min = 0.3;
+    double o_max = 0.8;
     // for mpc-Q 递增
     std::vector<double> Q = {1.0, 1.0, 0.05}; 
     std::vector<double> R = {0.1, 0.05};    
@@ -94,23 +95,33 @@ void MPC_PLANNER::replanCallback(const ros::TimerEvent &e)
 
         if(!success && Smetric_type == "ACBF"){
             ROS_WARN("ACBF solve failed, retrying with DCBF fallback");
-            std::vector<double> Q = {1.0, 1.0, 0.05};
-            std::vector<double> R = {0.1, 0.05};
-            double v_max = 1.3;
-            double v_min = 1.0;
-            double o_max = 1.0;
-            double safe_dist = 0.3 + 0.4;
+            // 懒初始化 fallback_solver (避免每次 new CasADi Opti 对象导致内存泄漏+段错误)
+            static MPC_SOLVE fallback_solver_static;
+            static bool fallback_inited = false;
+            if(!fallback_inited){
+                std::vector<double> Q = {1.0, 1.0, 0.05};
+                std::vector<double> R = {0.1, 0.05};
+                double v_max = 0.5;
+                double v_min = 0.3;
+                double o_max = 0.8;
+                double safe_dist = 0.3 + 0.4;
+                std::string fallback_metric("DCBF");
+                fallback_solver_static.init_solver(fallback_metric, Ts_, N_, v_max, v_min, o_max,
+                                            Q, R, gamma_, tau_scale_, safe_dist, use_initguess);
+                fallback_inited = true;
+            }
 
-            MPC_SOLVE fallback_solver;
-            std::string fallback_metric("DCBF");
-            fallback_solver.init_solver(fallback_metric, Ts_, N_, v_max, v_min, o_max,
-                                        Q, R, gamma_, tau_scale_, safe_dist, use_initguess);
-
-            success = fallback_solver.imp_solve(&cur_state_, &goal_state_, &obs_matrix_);
+            success = fallback_solver_static.imp_solve(&cur_state_, &goal_state_, &obs_matrix_);
             if(success){
-                solver.predict_x = fallback_solver.predict_x;
-                solver.predict_u = fallback_solver.predict_u;
+                solver.predict_x = fallback_solver_static.predict_x;
+                solver.predict_u = fallback_solver_static.predict_u;
                 ROS_WARN("DCBF fallback solve succeeded");
+            } else {
+                // 连 DCBF 都 infeasible: 直接停车, 不要发上一帧的指令
+                ROS_ERROR_THROTTLE(1.0, "Both ACBF and DCBF infeasible, STOPPING for safety");
+                solver.predict_u.clear();
+                solver.predict_u.push_back(0.0);
+                solver.predict_u.push_back(0.0);
             }
         }
 

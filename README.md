@@ -190,24 +190,29 @@ roslaunch swarm_test exp_acbf_planner.launch show_rviz:=true
 
 ### 实车
 
-```bash
-source ~/catkin_ws/devel/setup.bash
-
-# 0. CAN 底盘初始化
+# 终端 1：底盘
 sudo modprobe gs_usb
 sudo ip link set can0 up type can bitrate 500000
+source /opt/ros/noetic/setup.bash && source ~/catkin_ws/devel/setup.bash
+roslaunch scout_bringup scout_robot_base.launch
 
-# 终端 1：状态估计
-roslaunch swarm_test exp_hardware.launch use_sim_time:=false
+# 终端 2：LiDAR + IMU + FAST-LIO
+source /opt/ros/noetic/setup.bash && source ~/catkin_ws/devel/setup.bash
+roslaunch all_demo all_demo_no_camera.launch
 
-# 终端 2：动态感知
-roslaunch swarm_test start_perception.launch
+# 终端 3：感知
+source /opt/ros/noetic/setup.bash && source ~/catkin_ws/devel/setup.bash
+roslaunch swarm_test start_perception.launch use_sim_time:=false show_rviz:=false
 
-# 终端 3：规划 + 控制
+# 终端 4：规划
+source /opt/ros/noetic/setup.bash && source ~/catkin_ws/devel/setup.bash
 roslaunch swarm_test exp_acbf_planner_use.launch
-```
 
-验收：`/Odometry`、`/fastLIO/non_ground_points`、`/cmd_vel1` 正常输出。
+# 终端 5：RViz + 急停
+source /opt/ros/noetic/setup.bash && source ~/catkin_ws/devel/setup.bash
+rviz -d ~/catkin_ws/src/swarm_test/config/exp_real_bag.rviz
+
+
 
 ---
 
