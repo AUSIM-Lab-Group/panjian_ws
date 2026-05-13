@@ -43,3 +43,11 @@ add_dependencies(beta_guard_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EX
 target_link_libraries(beta_guard_node
   ${catkin_LIBRARIES}
 )
+
+add_executable(beta_ground_truth_node
+  src/beta_ground_truth_node.cpp
+)
+add_dependencies(beta_ground_truth_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(beta_ground_truth_node
+  ${catkin_LIBRARIES}
+)
