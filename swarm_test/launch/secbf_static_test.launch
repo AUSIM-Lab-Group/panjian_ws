@@ -1,0 +1,100 @@
+<launch>
+  <!-- MPC-SECBF 静态场景测试：对比不同类别障碍物的避障距离 -->
+  <param name="/use_sim_time" value="false"/>
+
+  <arg name="mpc_frequency" value="10"/>
+  <arg name="pre_step"      value="20"/>
+  <arg name="step_time"     value="0.2"/>
+  <arg name="v_max"         value="1.0"/>
+  <arg name="gamma"         value="0.35"/>
+  <arg name="show_rviz"     default="true"/>
+  <arg name="map_size_x" default="50.0"/>
+  <arg name="map_size_y" default="50.0"/>
+  <arg name="map_size_z" default="3.0"/>
+  <arg name="runtime_ld_library_path" default="/home/lxr20/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu"/>
+
+  <!-- 加载静态障碍物参数 (覆盖默认) -->
+  <rosparam command="load" file="$(find dynamic_simulator)/config/obstacles_param_static_beta.yaml"/>
+
+  <!-- 随机地图 (1 个柱子避免空点云崩溃) -->
+  <include file="$(find map_generator)/launch/map.launch">
+    <arg name="rviz_vis"    value="false"/>
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="c_num"       value="0"/>
+    <arg name="p_num"       value="1"/>
+  </include>
+
+  <!-- 差速机器人数值仿真 -->
+  <include file="$(find robot_simulator)/launch/scout_simulator.xml">
+    <arg name="ugv_id"         value="1"/>
+    <arg name="time_res_"      value="0.02"/>
+    <arg name="init_x_"        value="0.0"/>
+    <arg name="init_y_"        value="0.0"/>
+    <arg name="init_z_"        value="0.2"/>
+    <arg name="map_size_x_"    value="$(arg map_size_x)"/>
+    <arg name="map_size_y_"    value="$(arg map_size_y)"/>
+    <arg name="map_size_z_"    value="$(arg map_size_z)"/>
+    <arg name="odometry_topic" value="/robot1/odom"/>
+    <arg name="mesh_topic"     value="vis_mesh"/>
+    <arg name="cmd_topic"      value="/cmd_vel1"/>
+  </include>
+
+  <!-- 动态障碍物 (直接启动脚本，不用 spawn_dynamic_obstacle.launch 避免覆盖参数) -->
+  <node name="dynamic_corridor" pkg="dynamic_simulator" type="generate_agents_fixed_poses.py"
+        args="5 false" output="screen" launch-prefix="env LD_LIBRARY_PATH=$(arg runtime_ld_library_path)"/>
+
+  <!-- 全局路径搜索 -->
+  <include file="$(find traj_planner)/launch/plan_global_fsm.launch">
+    <arg name="odometry_topic"          value="/robot1/odom"/>
+    <arg name="cloud_topic"             value="/velodyne_points_world_no_use"/>
+    <arg name="_perception_GroundTruth" value="true"/>
+    <arg name="pre_step_"         value="$(arg pre_step)"/>
+    <arg name="step_time_"        value="$(arg step_time)"/>
+    <arg name="used_DIS_"         value="false"/>
+    <arg name="used_adsm_"        value="true"/>
+    <arg name="used_static_path"  value="false"/>
+    <arg name="traj_horizon"      value="14.0"/>
+  </include>
+
+  <!-- β Ground Truth (静态场景类别) -->
+  <node pkg="semantic_guard" type="beta_ground_truth_node" name="beta_ground_truth_node" output="screen">
+    <rosparam file="$(find semantic_guard)/config/semantic_safety_margin.yaml" subst_value="true"/>
+    <param name="log_path" value="$(find swarm_test)/output/guard_log_static.csv"/>
+    <param name="mpc/pre_step" value="$(arg pre_step)"/>
+    <remap from="/Odometry" to="/robot1/odom"/>
+    <rosparam param="obstacle_classes">
+      [pedestrian, child, cyclist, vehicle, box]
+    </rosparam>
+  </node>
+
+  <!-- MPC-SECBF 控制器 -->
+  <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
+    <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
+    <param name="mpc/pre_step"      value="$(arg pre_step)"/>
+    <param name="mpc/step_time"     value="$(arg step_time)"/>
+    <param name="mpc/v_max"         value="$(arg v_max)"/>
+    <param name="mpc/v_min"         value="0.3"/>
+    <param name="mpc/o_max"         value="1.0"/>
+    <param name="mpc/gamma"         value="$(arg gamma)"/>
+    <param name="mpc/beta_bar_unknown" value="0.4"/>
+    <remap from="/Odometry" to="/robot1/odom"/>
+    <remap from="/cmd_vel"  to="/cmd_vel1"/>
+  </node>
+
+  <!-- 轨迹可视化 -->
+  <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">
+    <remap from="/odometry" to="/robot1/odom"/>
+    <param name="odom_traj_vis/line_width"     value="0.05" type="double"/>
+    <param name="odom_traj_vis/color_r"        value="0.0" type="double"/>
+    <param name="odom_traj_vis/color_g"        value="0.8" type="double"/>
+    <param name="odom_traj_vis/color_b"        value="0.2" type="double"/>
+    <param name="odom_traj_vis/color_a"        value="1.0" type="double"/>
+    <param name="odom_traj_vis/show_odom_size" value="2000" type="int"/>
+  </node>
+
+  <!-- RViz -->
+  <node if="$(arg show_rviz)" pkg="rviz" type="rviz" name="rviz" output="log"
+        args="-d $(find swarm_test)/config/acbf_plan.rviz"/>
+</launch>

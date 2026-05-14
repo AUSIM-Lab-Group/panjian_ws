@@ -225,7 +225,14 @@ class MPC_SECBF_SOLVE {
     // 从 /safety_margin/beta 接收 per-obstacle β
     std::vector<double> beta_list_;
 
-    // 新的 CBF 函数：使用 β_i 替代固定 safe_dist
+    // 统一安全函数定义:
+    //   h_EE  = ||l + τv|| - (R_obs + R_safe)     ← EESM 基础安全函数
+    //   h_SEE = h_EE - β_i                         ← 语义增强安全函数
+    //
+    // Guard: β̂ ≤ h_EE - η                         ← Guard 审的是 h_EE
+    // MPC:   h_SEE_{k+1} ≥ (1-γ) × h_SEE_k        ← MPC 约束用 h_SEE
+
+    // 语义增强 CBF 函数
     casadi::MX h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i);
 
     // 安全约束设置
@@ -236,13 +243,18 @@ class MPC_SECBF_SOLVE {
                Eigen::MatrixXd* obs_matrix);
 };
 
-// h_secbf: per-obstacle β 替代固定 safe_dist
+// h_secbf: 统一安全函数
+// h_EE  = ||l_k|| - (R_obs + R_safe)   (obs 预测位置已含 τv 外推)
+// h_SEE = h_EE - β_i
 casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i) {
     casadi::MX dx = _obs(0) - _curpos(0);
     casadi::MX dy = _obs(1) - _curpos(1);
-    // β_i 来自 semantic_guard，包含了类别 + 上下文 + Guard 审查后的值
-    casadi::MX h_exp = casadi::MX::sqrt(dx*dx + dy*dy) - _obs(2) - beta_i;
-    return h_exp;
+    double R_safe = 0.4;  // robot radius
+    // h_EE = ||l|| - (R_obs + R_safe)
+    casadi::MX h_EE = casadi::MX::sqrt(dx*dx + dy*dy) - _obs(2) - R_safe;
+    // h_SEE = h_EE - β_i  (β 是在 EESM 安全裕度上再扣的语义余量)
+    casadi::MX h_SEE = h_EE - beta_i;
+    return h_SEE;
 }
 
 // SECBF 约束

@@ -1,6 +1,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <nav_msgs/Odometry.h>
+#include <visualization_msgs/MarkerArray.h>
 #include <Eigen/Dense>
 #include <map>
 #include <vector>
@@ -67,6 +68,7 @@ public:
         // Publishers
         pub_beta_ = nh_.advertise<std_msgs::Float32MultiArray>("/safety_margin/beta", 10);
         pub_guard_log_ = nh_.advertise<semantic_guard::GuardLog>("/safety_margin/guard_log", 10);
+        pub_vis_ = nh_.advertise<visualization_msgs::MarkerArray>("/safety_margin/vis_obstacles", 10);
 
         total_rollbacks_ = 0;
         has_odom_ = false;
@@ -143,7 +145,9 @@ private:
                 w_bias_ + w_head_ * f_head + w_ttc_ * ttc_norm + w_density_ * density_norm));
             double beta_hat = beta_bar_val * mu;
 
-            // Guard check
+            // Guard check: β̂ ≤ h_EE - η
+            // h_EE = ||p_obs - p_robot|| - R_obs - R_safe
+            // (注: 静态场景 τ=0, 动态场景 obs 位置已含预测)
             double h_ee = p_rel.norm() - obs_r - robot_radius_;
             bool guard_pass = (beta_hat <= h_ee - eta_);
 
@@ -180,6 +184,106 @@ private:
         log_msg.total_rollbacks = total_rollbacks_;
         pub_beta_.publish(beta_msg);
         pub_guard_log_.publish(log_msg);
+
+        // Publish visualization markers (obstacle spheres + β safety circles)
+        publishVisualization(msg);
+    }
+
+    void publishVisualization(const std_msgs::Float32MultiArrayConstPtr& msg) {
+        visualization_msgs::MarkerArray markers;
+        int total_floats = msg->data.size();
+        int obs_num = (N_ > 0) ? (total_floats / (7 * N_)) : 0;
+
+        // Color map per class: R, G, B
+        auto getColor = [](const std::string& cls) -> std::tuple<float,float,float> {
+            if (cls == "pedestrian") return {0.0, 1.0, 0.0};       // 绿色
+            if (cls == "child")      return {1.0, 0.5, 0.0};       // 橙色
+            if (cls == "cyclist")    return {1.0, 1.0, 0.0};       // 黄色
+            if (cls == "vehicle")    return {1.0, 0.0, 0.0};       // 红色
+            if (cls == "box")        return {0.5, 0.5, 0.5};       // 灰色
+            return {0.8, 0.8, 0.8};                                 // unknown 浅灰
+        };
+
+        for (int idx = 0; idx < obs_num; idx++) {
+            double obs_x = msg->data[7 * N_ * idx + 0];
+            double obs_y = msg->data[7 * N_ * idx + 1];
+            double obs_r = msg->data[7 * N_ * idx + 2];
+            std::string cls = (idx < (int)obstacle_classes_.size()) ?
+                              obstacle_classes_[idx] : "unknown";
+            double beta_i = (idx < (int)beta_prev_.size()) ? beta_prev_[idx] : 0.4;
+
+            auto [r, g, b] = getColor(cls);
+
+            // Marker 1: 障碍物实体 (圆柱)
+            visualization_msgs::Marker obs_marker;
+            obs_marker.header.frame_id = "world";
+            obs_marker.header.stamp = ros::Time::now();
+            obs_marker.ns = "obstacles";
+            obs_marker.id = idx * 3;
+            obs_marker.type = visualization_msgs::Marker::CYLINDER;
+            obs_marker.action = visualization_msgs::Marker::ADD;
+            obs_marker.pose.position.x = obs_x;
+            obs_marker.pose.position.y = obs_y;
+            obs_marker.pose.position.z = 0.5;
+            obs_marker.pose.orientation.w = 1.0;
+            obs_marker.scale.x = obs_r * 2.0;
+            obs_marker.scale.y = obs_r * 2.0;
+            obs_marker.scale.z = 1.0;
+            obs_marker.color.r = r;
+            obs_marker.color.g = g;
+            obs_marker.color.b = b;
+            obs_marker.color.a = 0.8;
+            obs_marker.lifetime = ros::Duration(0.2);
+            markers.markers.push_back(obs_marker);
+
+            // Marker 2: β 安全圈 (半透明圆环)
+            visualization_msgs::Marker beta_circle;
+            beta_circle.header.frame_id = "world";
+            beta_circle.header.stamp = ros::Time::now();
+            beta_circle.ns = "beta_circles";
+            beta_circle.id = idx * 3 + 1;
+            beta_circle.type = visualization_msgs::Marker::CYLINDER;
+            beta_circle.action = visualization_msgs::Marker::ADD;
+            beta_circle.pose.position.x = obs_x;
+            beta_circle.pose.position.y = obs_y;
+            beta_circle.pose.position.z = 0.02;
+            beta_circle.pose.orientation.w = 1.0;
+            double total_safe = obs_r + robot_radius_ + beta_i;
+            beta_circle.scale.x = total_safe * 2.0;
+            beta_circle.scale.y = total_safe * 2.0;
+            beta_circle.scale.z = 0.02;
+            beta_circle.color.r = r;
+            beta_circle.color.g = g;
+            beta_circle.color.b = b;
+            beta_circle.color.a = 0.2;
+            beta_circle.lifetime = ros::Duration(0.2);
+            markers.markers.push_back(beta_circle);
+
+            // Marker 3: 类别文字标签
+            visualization_msgs::Marker text_marker;
+            text_marker.header.frame_id = "world";
+            text_marker.header.stamp = ros::Time::now();
+            text_marker.ns = "labels";
+            text_marker.id = idx * 3 + 2;
+            text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+            text_marker.action = visualization_msgs::Marker::ADD;
+            text_marker.pose.position.x = obs_x;
+            text_marker.pose.position.y = obs_y;
+            text_marker.pose.position.z = 1.3;
+            text_marker.pose.orientation.w = 1.0;
+            text_marker.scale.z = 0.3;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%s\nb=%.2f", cls.c_str(), beta_i);
+            text_marker.text = buf;
+            text_marker.color.r = r;
+            text_marker.color.g = g;
+            text_marker.color.b = b;
+            text_marker.color.a = 1.0;
+            text_marker.lifetime = ros::Duration(0.2);
+            markers.markers.push_back(text_marker);
+        }
+
+        pub_vis_.publish(markers);
     }
 
     double getPrevBeta(int id) {
@@ -189,7 +293,7 @@ private:
 
     ros::NodeHandle nh_;
     ros::Subscriber sub_obs_, sub_odom_;
-    ros::Publisher pub_beta_, pub_guard_log_;
+    ros::Publisher pub_beta_, pub_guard_log_, pub_vis_;
 
     std::map<std::string, double> beta_bar_;
     double w_bias_, w_head_, w_ttc_, w_density_;

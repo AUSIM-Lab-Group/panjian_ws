@@ -179,12 +179,24 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 }
 
 casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
-    casadi::MX dx = obs(0) - curpos(0);
-    casadi::MX dy = obs(1) - curpos(1);
+    // 统一安全函数:
+    //   h_EE  = ||l|| - (R_obs + R_safe)
+    //   h_SEE = h_EE - β_i
+    //
+    // 注: obs 的位置已经是 globalFsm 预测的未来位置 (含 τv 外推)
+    // 所以 dx, dy 直接就是 "l + τv" 的效果
+
+    casadi::MX dx = obs(0) - curpos(0);  // l_x (已含预测)
+    casadi::MX dy = obs(1) - curpos(1);  // l_y (已含预测)
     double obs_radius = obs(2);
-    // h = ||p_obs - p_robot|| - R_obs - β_i
-    casadi::MX h = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - beta_i;
-    return h;
+    double R_safe = 0.4;  // robot radius
+
+    // h_EE = ||l|| - (R_obs + R_safe)
+    casadi::MX h_EE = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - R_safe;
+
+    // h_SEE = h_EE - β_i  (β 是在 EESM 裕度上再扣的语义余量)
+    casadi::MX h_SEE = h_EE - beta_i;
+    return h_SEE;
 }
 
 casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {

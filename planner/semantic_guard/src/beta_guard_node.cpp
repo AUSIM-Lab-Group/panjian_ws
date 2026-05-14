@@ -92,12 +92,14 @@ private:
 
             double beta_hat = beta_bar_val * mu;
 
-            // Step 2: Compute h_EE
+            // Step 2: Compute h_EE = ||p_obs - p_robot|| - R_obs - R_robot
+            // (EESM base safety function; τv projection handled by obs prediction)
             Eigen::Vector2d obs_pos(obs.position.x, obs.position.y);
             double dist = (obs_pos - robot_pos_.head<2>()).norm();
             double h_ee = dist - obs.radius - robot_radius_;
 
-            // Step 3: Guard check
+            // Step 3: Guard check: β̂ ≤ h_EE - η
+            // Ensures h_SEE = h_EE - β ≥ -η (feasibility guarantee)
             bool guard_pass = (beta_hat <= h_ee - eta_);
 
             // Step 4: Apply with rate limiting

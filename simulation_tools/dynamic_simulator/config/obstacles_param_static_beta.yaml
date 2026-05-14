@@ -1,0 +1,23 @@
+# 静态场景：测试不同类别障碍物的避障距离差异
+# 5 个障碍物排成一排 (y=0 轴线上)，间隔 4m，全部静止
+# 机器人从 (0,0) 出发，目标 (25, 0)
+# 路径会从障碍物旁边经过，可以直观看到不同 β 导致的避让距离
+
+obstacle_params:
+# 格式: x, y, z, offset, slower, scale_x, scale_y, scale_z
+# slower=999 + scale=0 表示静止不动
+
+# obs[0]: pedestrian (绿色, β̄=0.4)  位于 x=5, y=1.5
+- {x: 5.0, y: 1.5, z: 0.75, offset: 0.0, slower: 999.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# obs[1]: child (橙色, β̄=0.7)  位于 x=9, y=1.5
+- {x: 9.0, y: 1.5, z: 0.75, offset: 0.0, slower: 999.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# obs[2]: cyclist (黄色, β̄=0.6)  位于 x=13, y=1.5
+- {x: 13.0, y: 1.5, z: 0.75, offset: 0.0, slower: 999.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# obs[3]: vehicle (红色, β̄=0.5)  位于 x=17, y=1.5
+- {x: 17.0, y: 1.5, z: 0.75, offset: 0.0, slower: 999.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
+
+# obs[4]: box (灰色, β̄=0.1)  位于 x=21, y=1.5
+- {x: 21.0, y: 1.5, z: 0.75, offset: 0.0, slower: 999.0, scale_x: 0.0, scale_y: 0.0, scale_z: 0.0}
