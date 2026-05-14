@@ -65,6 +65,12 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         casadi::MX U_i = U_k_(casadi::Slice(), i);
         cost += casadi::MX::mtimes({X_err.T(), Q_mat, X_err});
         cost += casadi::MX::mtimes({U_i.T(), R_mat, U_i});
+
+        // 鼓励前进: 对 (v_max - v)^2 加惩罚, 使 v 接近 v_max
+        // 权重 0.5: 如果 v=0 则惩罚 0.5*v_max^2, 平衡 R_[0]*v^2 的惩罚
+        casadi::MX v_gap = v_max_ - U_i(0);
+        cost += 0.5 * v_gap * v_gap;
+
         Q_mat(0, 0) += 0.05;
         Q_mat(1, 1) += 0.05;
         Q_mat(2, 2) += 0.005;
@@ -75,7 +81,8 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     prob.minimize(cost);
 
     // Control bounds
-    prob.subject_to(prob.bounded(-v_max_, v, v_max_));
+    // 允许小幅倒车 (-0.2 m/s) 用于紧急避障, 但不鼓励长距离倒车
+    prob.subject_to(prob.bounded(-0.2, v, v_max_));
     prob.subject_to(prob.bounded(-omega_max_, omega, omega_max_));
 
     // Kinematic constraints

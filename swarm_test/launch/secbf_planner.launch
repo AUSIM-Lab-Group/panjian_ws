@@ -5,7 +5,7 @@
   <arg name="mpc_frequency" value="10"/>
   <arg name="pre_step"      value="20"/>
   <arg name="step_time"     value="0.2"/>
-  <arg name="v_max"         value="0.5"/>
+  <arg name="v_max"         value="1.5"/>
   <arg name="gamma"         value="0.35"/>
   <arg name="show_rviz"     default="true"/>
   <arg name="use_ground_truth" default="true"/>

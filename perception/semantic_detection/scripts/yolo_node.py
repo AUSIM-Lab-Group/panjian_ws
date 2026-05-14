@@ -57,6 +57,7 @@ class YoloNode:
 
         # Publishers / Subscribers
         self.pub_det = rospy.Publisher("/yolo/detections", Detection2DArray, queue_size=1)
+        self.pub_vis = rospy.Publisher("/yolo/image_vis", Image, queue_size=1)
         self.sub_img = rospy.Subscriber(image_topic, Image, self.image_cb, queue_size=1, buff_size=2**24)
 
         rospy.loginfo(f"YOLO node ready. Subscribing to {image_topic}")
@@ -125,6 +126,33 @@ class YoloNode:
             det_array.detections.append(det)
 
         self.pub_det.publish(det_array)
+
+        # Publish visualization image with bounding boxes
+        if self.pub_vis.get_num_connections() > 0:
+            import cv2
+            vis_img = img.copy()
+            for det in det_array.detections:
+                cls_name = det.source_img.encoding
+                cx, cy = det.bbox.center.x, det.bbox.center.y
+                w, h = det.bbox.size_x, det.bbox.size_y
+                x1_d, y1_d = int(cx - w/2), int(cy - h/2)
+                x2_d, y2_d = int(cx + w/2), int(cy + h/2)
+                score = det.results[0].score if det.results else 0
+
+                # Color by class
+                colors = {"pedestrian": (0,255,0), "child": (0,255,255),
+                          "cyclist": (255,255,0), "vehicle": (255,0,0),
+                          "box": (128,128,128), "unknown": (200,200,200)}
+                color = colors.get(cls_name, (255,255,255))
+
+                cv2.rectangle(vis_img, (x1_d, y1_d), (x2_d, y2_d), color, 2)
+                label = f"{cls_name} {score:.2f}"
+                cv2.putText(vis_img, label, (x1_d, y1_d - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+            vis_msg = self.bridge.cv2_to_imgmsg(vis_img, encoding="bgr8")
+            vis_msg.header = msg.header
+            self.pub_vis.publish(vis_msg)
 
     def run(self):
         rospy.spin()

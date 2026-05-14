@@ -1,1 +1,4 @@
 *.bag
+yolov8n.pt
+swarm_test/output/*.json
+swarm_test/output/*.csv
