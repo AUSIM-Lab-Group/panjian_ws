@@ -153,6 +153,54 @@ def run_verify(run_dir: Path):
     return result.returncode == 0, "verify_safety_bound.txt"
 
 
+def summarize_guard_log(guard_log: Path) -> dict:
+    metrics = {
+        "guard_records": 0,
+        "semantic_classes": "",
+        "beta_applied_mean": "",
+        "beta_applied_max": "",
+        "h_ee_min": "",
+        "h_see_min": "",
+        "guard_rollback_count": "",
+        "guard_rollback_rate": "",
+    }
+    if not guard_log.exists():
+        return metrics
+
+    with guard_log.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return metrics
+
+    def floats(name):
+        values = []
+        for row in rows:
+            try:
+                values.append(float(row[name]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        return values
+
+    beta_applied = floats("beta_applied")
+    h_ee = floats("h_ee")
+    h_see = floats("h_see")
+    guard_failed = sum(1 for row in rows if row.get("guard_passed") in {"0", "False", "false"})
+    classes = sorted({row.get("class", "") for row in rows if row.get("class", "")})
+
+    metrics["guard_records"] = len(rows)
+    metrics["semantic_classes"] = ";".join(classes)
+    if beta_applied:
+        metrics["beta_applied_mean"] = f"{sum(beta_applied) / len(beta_applied):.6f}"
+        metrics["beta_applied_max"] = f"{max(beta_applied):.6f}"
+    if h_ee:
+        metrics["h_ee_min"] = f"{min(h_ee):.6f}"
+    if h_see:
+        metrics["h_see_min"] = f"{min(h_see):.6f}"
+    metrics["guard_rollback_count"] = guard_failed
+    metrics["guard_rollback_rate"] = f"{guard_failed / len(rows):.6f}"
+    return metrics
+
+
 def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                   verify_passed, verify_note, duration_sec):
     summary_md = run_dir / "summary.md"
@@ -160,6 +208,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     guard_log = run_dir / "guard_log.csv"
     data_summary = run_dir / "data_processor_summary.csv"
     data_distance = run_dir / "data_processor_distance.csv"
+    guard_metrics = summarize_guard_log(guard_log)
 
     lines = [
         f"# {scenario_id} / {baseline_id}",
@@ -170,6 +219,14 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- data_processor_distance_exists: {data_distance.exists()}",
         f"- safety_bound_passed: {verify_passed}",
         f"- verification_note: {verify_note}",
+        f"- guard_records: {guard_metrics['guard_records']}",
+        f"- semantic_classes: {guard_metrics['semantic_classes']}",
+        f"- beta_applied_mean: {guard_metrics['beta_applied_mean']}",
+        f"- beta_applied_max: {guard_metrics['beta_applied_max']}",
+        f"- h_ee_min: {guard_metrics['h_ee_min']}",
+        f"- h_see_min: {guard_metrics['h_see_min']}",
+        f"- guard_rollback_count: {guard_metrics['guard_rollback_count']}",
+        f"- guard_rollback_rate: {guard_metrics['guard_rollback_rate']}",
         "",
         "## Commands",
         "",
@@ -184,7 +241,9 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             fieldnames=[
                 "scenario", "baseline", "duration_sec", "guard_log_exists",
                 "data_processor_summary_exists", "data_processor_distance_exists",
-                "safety_bound_passed", "output_dir",
+                "safety_bound_passed", "guard_records", "semantic_classes",
+                "beta_applied_mean", "beta_applied_max", "h_ee_min", "h_see_min",
+                "guard_rollback_count", "guard_rollback_rate", "output_dir",
             ],
         )
         writer.writeheader()
@@ -196,6 +255,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             "data_processor_summary_exists": data_summary.exists(),
             "data_processor_distance_exists": data_distance.exists(),
             "safety_bound_passed": verify_passed,
+            **guard_metrics,
             "output_dir": str(run_dir),
         })
 
