@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 
 #include "semantic_fusion/SemanticObstacle.h"
 #include "semantic_fusion/SemanticObstacleArray.h"
@@ -46,7 +47,10 @@ public:
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
                 csv_file_ << std::fixed << std::setprecision(9);
-                csv_file_ << "time,obs_id,class,beta_requested,beta_applied,h_ee,guard_passed\n";
+                csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
+                          << "guard_upper_bound,guard_passed,guard_status,"
+                          << "d_i,rel_v_norm,ttc,inv_ttc,cos_delta,rho_i,group_flag,"
+                          << "h_ee,h_see,R_base,R_sem\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
             }
         }
@@ -104,30 +108,51 @@ private:
             Eigen::Vector2d obs_vel(obs.velocity.x, obs.velocity.y);
             Eigen::Vector2d p_rel = obs_pos - robot_pos_.head<2>();
             Eigen::Vector2d v_rel = obs_vel - robot_vel_;
+            double d_i = p_rel.norm();
+            double rel_v_norm = v_rel.norm();
+            double cos_delta = 0.0;
+            if (d_i > 1e-6 && rel_v_norm > 1e-6) {
+                cos_delta = p_rel.normalized().dot(v_rel.normalized());
+            }
+            double closing_speed = 0.0;
+            if (d_i > 1e-6) {
+                closing_speed = std::max(-p_rel.normalized().dot(v_rel), 0.0);
+            }
+            double ttc = (closing_speed > 1e-6) ? (d_i / closing_speed)
+                                                : std::numeric_limits<double>::infinity();
+            double inv_ttc = std::isfinite(ttc) && ttc > 1e-6 ? 1.0 / ttc : 0.0;
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
             double h_ee = lookahead_rel_pos.norm() - obs.radius - robot_radius_;
+            double guard_upper_bound = h_ee - eta_;
 
             // Step 3: Guard check: β̂ ≤ h_EE - η
             // Ensures h_SEE = h_EE - β ≥ -η (feasibility guarantee)
-            bool guard_pass = guard_enabled_ ? (beta_hat <= h_ee - eta_) : true;
+            bool guard_pass = guard_enabled_ ? (beta_hat <= guard_upper_bound) : true;
 
             // Step 4: Apply with rate limiting
             double beta_final;
             double beta_prev = getPrevBeta(obs.id);
+            std::string guard_status;
 
             if (!guard_enabled_) {
                 beta_final = beta_hat;
+                guard_status = "disabled";
             } else if (guard_pass) {
                 double delta = beta_hat - beta_prev;
                 delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, delta));
                 beta_final = beta_prev + delta;
+                guard_status = (std::abs(delta - (beta_hat - beta_prev)) > 1e-9) ? "rate_limited" : "accept";
             } else {
                 beta_final = beta_prev;  // Rollback
                 total_rollbacks_++;
+                guard_status = "rollback";
             }
 
             // Ensure non-negative
             beta_final = std::max(0.0, beta_final);
+            double h_see = h_ee - beta_final;
+            double r_base = obs.radius + robot_radius_;
+            double r_sem = r_base + beta_final;
 
             // Update state
             beta_prev_[obs.id] = beta_final;
@@ -144,8 +169,15 @@ private:
             if (csv_file_.is_open()) {
                 csv_file_ << ros::Time::now().toSec() << ","
                           << obs.id << "," << cls << ","
+                          << beta_bar_val << "," << mu << ","
                           << beta_hat << "," << beta_final << ","
-                          << h_ee << "," << (guard_pass ? 1 : 0) << "\n";
+                          << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
+                          << guard_status << ","
+                          << d_i << "," << rel_v_norm << ","
+                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << inv_ttc << ","
+                          << cos_delta << "," << obs.density_norm << ",0,"
+                          << h_ee << "," << h_see << ","
+                          << r_base << "," << r_sem << "\n";
             }
         }
 
