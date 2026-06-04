@@ -20,7 +20,7 @@ public:
      */
     void init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                      std::vector<double> Q, std::vector<double> R,
-                     double gamma, double beta_bar_unknown);
+                     double gamma, double beta_bar_unknown, double robot_radius);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -38,7 +38,7 @@ public:
     std::vector<double> predict_u;  // Predicted controls [v,ω] × N
 
 private:
-    // SECBF barrier function: h = ||p_obs - p_robot|| - R_obs - β_i
+    // SECBF barrier function: h = ||p_obs - p_robot|| - R_obs - R_robot - β_i
     casadi::MX h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i);
 
     // Kinematic model
@@ -55,6 +55,7 @@ private:
     double omega_max_ = 0.8;
     double gamma_ = 0.35;
     double beta_bar_unknown_ = 0.4;
+    double robot_radius_ = 0.4;
     std::vector<double> Q_, R_;
 
     // CasADi objects

@@ -1,5 +1,7 @@
 # Semantic Safety Margin (β) — Implementation Tasks
 
+> 当前执行证据（2026-05-23）：`catkin_make` 白名单构建已通过 `semantic_fusion;semantic_detection;semantic_guard;mpc_secbf;swarm_test;dynamic_simulator;map_generator;robot_simulator;traj_planner;plan_env`，并通过 `mpc_dcbf;swarm_test;dynamic_simulator;map_generator;robot_simulator;traj_planner;plan_env` 回归构建。运行层面的 12 组数值仿真、B2/S3 对照、完整端到端 latency、Gazebo smoke 和实车 dry-run 仍按 Phase 5-7 待执行。
+
 ## Phase 1: 基础设施 + 消息定义
 
 ### Task 1.1: 创建 semantic_fusion 包骨架 + 自定义消息
@@ -7,20 +9,20 @@
 - [x] 定义 `SemanticObstacle.msg` 和 `SemanticObstacleArray.msg`
 - [x] 定义 `GuardLog.msg`（放在 `planner/semantic_guard/msg/`）
 - [x] 编译验证消息生成成功
-- **验收**: ✅ `rosmsg show semantic_fusion/SemanticObstacleArray` 输出正确字段
+- **验收**: ✅ 消息包参与 2026-05-23 白名单构建；`rosmsg show semantic_fusion/SemanticObstacleArray` 和 `rosmsg show semantic_guard/GuardLog` 字段已复核。
 
 ### Task 1.2: 创建 semantic_detection 包骨架 (YOLO)
 - [x] 创建 `perception/semantic_detection/` 包
 - [x] 添加 `scripts/yolo_node.py` 空框架（订阅图像、发布 Detection2DArray）
 - [x] 添加 `config/yolo_config.yaml` 和 `launch/yolo.launch`
 - [x] 安装依赖: `pip3 install ultralytics`，确认 `import ultralytics` 成功 ✅
-- **验收**: ✅ YOLO GPU 推理 7.6ms (RTX 2060), 模型已放置
+- **验收**: ✅ `semantic_detection` 参与 2026-05-23 白名单构建；YOLO GPU 7.6ms 为既有记录，实车 dry-run 时需重新记录。
 
 ### Task 1.3: 创建语义安全余量配置文件
 - [x] 创建 `planner/semantic_guard/config/semantic_safety_margin.yaml`
 - [x] 包含: beta_bar（各类别 v7 标准）、mu_weights、guard 参数、cbf 参数
 - [x] 创建 `swarm_test/config/secbf_scenarios.yaml`（4 个场景定义）
-- **验收**: ✅ 配置文件完整
+- **验收**: ✅ 配置文件存在并参与 2026-05-23 白名单构建。
 
 ---
 
@@ -32,7 +34,7 @@
 - [x] COCO 类别映射: person→pedestrian, 小尺寸 person→child, suitcase/backpack→box, car/bus/truck→vehicle, bicycle→cyclist
 - [x] 添加 `confidence_threshold` 和 `device` 参数
 - [x] 测量推理延迟，确认 ≤ 30ms ✅ 实测 7.6ms (RTX 2060)
-- **验收**: ✅ GPU 推理 7.6ms，模型加载正常
+- **验收**: ✅ 节点脚本参与 2026-05-23 白名单构建；GPU 推理延迟在 Phase 5.3/6.2 重新记录。
 
 ### Task 2.2: 实现 semantic_fusion_node (C++)
 - [x] 订阅 `/yolo/detections` + `/clustering/cluster_array` + `/Odometry` + `/camera/color/camera_info`
@@ -41,13 +43,13 @@
 - [x] 计算上下文特征 φ: heading_factor, ttc_norm, density_norm
 - [x] 发布 `/semantic_obstacles` (SemanticObstacleArray)
 - [x] 无 YOLO 输入时回退: 所有障碍物 class=unknown
-- **验收**: ✅ 编译通过
+- **验收**: ✅ 2026-05-23 `semantic_fusion_node` 编译通过。
 
 ### Task 2.3: 仿真 Ground Truth 模式
 - [x] 实现 `beta_ground_truth_node`: 直接从 `obs_predict_pub` + launch 参数获取类别
 - [x] 跳过 YOLO 推理和 IoU 匹配
 - [x] 从 launch 参数 `obstacle_classes` 读取各障碍物的 semantic_class
-- **验收**: ✅ 数值仿真中 β 差异化生效（child=0.535, box=0.077）
+- **验收**: ✅ 2026-05-23 `beta_ground_truth_node` 编译通过；β 差异化运行证据将在 Phase 5 重新采集。
 
 ---
 
@@ -62,13 +64,13 @@
 - [x] 实现单步变化限制: |Δβ| ≤ max_delta_beta
 - [x] 发布 `/safety_margin/beta` (Float32MultiArray)
 - [x] 发布 `/safety_margin/guard_log` (GuardLog)
-- **验收**: ✅ Guard 回退率 3.2%，β 输出稳定
+- **验收**: ✅ 2026-05-23 `beta_guard_node` 编译通过；Guard 回退率和 β 输出稳定性将在 Phase 5/7 重新采集。
 
 ### Task 3.2: Guard 日志记录
 - [x] 每个 MPC 周期记录: obstacle_id, beta_requested, beta_applied, h_ee, guard_passed
 - [x] 输出到 CSV 文件（路径可配置）
 - [x] 记录 Guard 回退总次数
-- **验收**: ✅ guard_log.csv 46,915 条记录，verify_safety_bound.py 验证通过
+- **验收**: ✅ 日志字段和脚本已存在；`guard_log.csv` 与 `verify_safety_bound.py` 结果将在 Phase 5 每次 run 后记录。
 
 ---
 
@@ -82,23 +84,23 @@
 - [x] 实现 `h_secbf()` 函数: 使用 per-obstacle β_i
 - [x] 实现 `set_secbf_constraint()`: SECBF CBF 约束
 - [x] 当 β 话题无数据时回退到 β = beta_bar[unknown] = 0.4
-- [x] 总 safe_dist = R_obs + R_robot + β（与有 Guard 时一致）
+- [x] 总安全边界 = R_obs + R_robot + β（与有 Guard 时一致）
 - [x] 非对称速度约束 v ∈ [-0.2, v_max]（禁止大幅倒车）
 - [x] 加速奖励项 0.5*(v_max - v)²（鼓励前进）
-- **验收**: ✅ 编译通过，CasADi 链接正确，数值仿真避障正常
+- **验收**: ✅ 2026-05-23 `mpc_secbf_node` 编译通过，CasADi 链接可用；数值仿真避障将在 Phase 5 验证。
 
 ### Task 4.2: Infeasible 处理 + 回归测试
 - [x] SECBF infeasible → 内部 fallback（清空障碍物无 CBF 重解）
 - [x] fallback 也 infeasible → 零速停车
 - [x] 确认 `mpc_dcbf` 包完全不受影响（独立包，未修改原代码）
-- **验收**: ✅ 数值仿真全程无崩溃
+- **验收**: ✅ 2026-05-23 `mpc_dcbf` 回归构建通过；SECBF infeasible 运行行为将在 Phase 5 验证。
 
 ### Task 4.3: 创建 MPC-SECBF launch 文件
 - [x] `planner/mpc_secbf/launch/mpc_secbf.launch` (独立 MPC-SECBF 节点)
 - [x] `swarm_test/launch/secbf_planner.launch` (数值仿真完整链路)
 - [x] `swarm_test/launch_exp/exp_secbf_planner.launch` (实车完整链路)
 - [x] 参数: gamma, tau_scale, v_max, beta 配置路径
-- **验收**: ✅ `roslaunch swarm_test secbf_planner.launch` 启动完整链路
+- **验收**: ✅ launch 文件存在且相关 package 编译通过；`roslaunch swarm_test secbf_planner.launch` smoke run 将在 Phase 5 执行。
 
 ---
 
@@ -159,9 +161,9 @@
 ## Phase 7: 文档 + 收尾
 
 ### Task 7.1: 更新 README + Record.md
-- [ ] README 新增 MPC-SECBF 章节（启动方式、参数说明）
+- [x] README 新增 MPC-SECBF 章节（启动方式、参数说明）
 - [ ] Record.md 新增时间线条目
-- [ ] 更新包结构图
+- [x] 更新包结构图
 
 ### Task 7.2: 论文数据整理
 - [ ] 生成对比表格: B1 vs B2 vs B3 × S1-S4

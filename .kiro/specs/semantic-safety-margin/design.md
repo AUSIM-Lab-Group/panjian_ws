@@ -39,8 +39,8 @@
 │                 │                                                   │
 │                 ▼                                                   │
 │  ┌─────────────────────────────────┐                               │
-│  │   mpc_node_c (C++ / CasADi)    │◄── /Odometry                  │
-│  │   controller_type=5: MPC-SECBF  │◄── /global_path               │
+│  │   mpc_secbf_node (C++/CasADi)  │◄── /Odometry                  │
+│  │   independent MPC-SECBF        │◄── /global_path               │
 │  │   per-obstacle β_i in CBF       │                               │
 │  │   → /cmd_vel                    │                               │
 │  └─────────────────────────────────┘                               │
@@ -172,8 +172,9 @@ class BetaGuardNode {
             double beta_hat = beta_bar * mu;
 
             // Step 2: Guard 检查
-            // h_EE = ||p_obs - p_robot|| - R_obs - R_robot
-            double h_ee = (obs.position - robot_pos_).head<2>().norm()
+            // h_EE = ||p_rel + tau * v_rel|| - R_obs - R_robot
+            Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
+            double h_ee = lookahead_rel_pos.norm()
                           - obs.radius - robot_radius_;
             bool guard_pass = (beta_hat <= h_ee - eta_);
 
@@ -226,7 +227,7 @@ class MPC_SECBF_SOLVE {
     std::vector<double> beta_list_;
 
     // 统一安全函数定义:
-    //   h_EE  = ||l + τv|| - (R_obs + R_safe)     ← EESM 基础安全函数
+    //   h_EE  = ||p_obs_pred - p_robot|| - R_obs - R_robot
     //   h_SEE = h_EE - β_i                         ← 语义增强安全函数
     //
     // Guard: β̂ ≤ h_EE - η                         ← Guard 审的是 h_EE
@@ -244,14 +245,13 @@ class MPC_SECBF_SOLVE {
 };
 
 // h_secbf: 统一安全函数
-// h_EE  = ||l_k|| - (R_obs + R_safe)   (obs 预测位置已含 τv 外推)
+// h_EE  = ||p_obs_pred - p_robot|| - R_obs - R_robot
 // h_SEE = h_EE - β_i
 casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& _curpos, Eigen::VectorXd _obs, double beta_i) {
     casadi::MX dx = _obs(0) - _curpos(0);
     casadi::MX dy = _obs(1) - _curpos(1);
-    double R_safe = 0.4;  // robot radius
-    // h_EE = ||l|| - (R_obs + R_safe)
-    casadi::MX h_EE = casadi::MX::sqrt(dx*dx + dy*dy) - _obs(2) - R_safe;
+    // h_EE = ||p_obs_pred - p_robot|| - R_obs - R_robot
+    casadi::MX h_EE = casadi::MX::sqrt(dx*dx + dy*dy) - _obs(2) - robot_radius_;
     // h_SEE = h_EE - β_i  (β 是在 EESM 安全裕度上再扣的语义余量)
     casadi::MX h_SEE = h_EE - beta_i;
     return h_SEE;
@@ -272,9 +272,9 @@ void MPC_SECBF_SOLVE::set_secbf_constraint(casadi::Opti& opt, int obs_index) {
 ```
 
 **ROS 节点 (mpc_secbf_node.cpp)**:
-- 订阅: `/Odometry`, `/global_path`, `/safety_margin/beta`
+- 订阅: `/Odometry`, `/global_path`, `/safety_margin/beta`, `/globalFsm_by_adsm/obs_predict_pub`
 - 发布: `/cmd_vel`, `/local_path`
-- 不订阅 `/obs_Manager_node/obs_predict_pub`（改为从 `/semantic_obstacles` 获取障碍物信息）
+- 障碍物预测位置来自 `/globalFsm_by_adsm/obs_predict_pub`，β 来自 `/safety_margin/beta`
 
 **与 mpc_dcbf 的关系**:
 - `mpc_dcbf` 保持原样，作为对比基线 B1
@@ -492,7 +492,7 @@ print(f"Safety guaranteed: {h_min > theoretical_bound}")
 
 | 场景 | 行为 |
 |------|------|
-| `controller_type=0-4` | 完全不变，不订阅 `/safety_margin/beta`，使用固定 `safe_dist` |
-| `controller_type=5` 但 β 话题无数据 | 回退到 β = β̄(unknown) = 0.4，总 safe_dist = R_obs + R_robot + 0.4 |
+| `mpc_dcbf` legacy modes 0-4 | 完全不变，不订阅 `/safety_margin/beta`，使用原有固定安全余量逻辑 |
+| `mpc_secbf_node` 但 β 话题无数据 | 回退到 β = β̄(unknown) = 0.4，总安全边界为 R_obs + R_robot + 0.4 |
 | 无 D435 相机 | `semantic_fusion_node` 回退到纯 LiDAR 模式，所有障碍物 class=unknown |
 | `yolo_node` 崩溃 | fusion 节点 3 秒无 YOLO 输入后自动回退 unknown |

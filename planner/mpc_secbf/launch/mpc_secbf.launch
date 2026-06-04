@@ -5,20 +5,30 @@
   <arg name="v_max" default="0.5"/>
   <arg name="gamma" default="0.35"/>
   <arg name="beta_bar_unknown" default="0.4"/>
+  <arg name="robot_radius" default="0.4"/>
+  <arg name="v_min" default="0.3"/>
+  <arg name="o_max" default="0.8"/>
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="global_path_topic" default="/global_path"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+  <arg name="local_path_topic" default="/local_path"/>
+  <arg name="obs_predict_topic" default="/globalFsm_by_adsm/obs_predict_pub"/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
     <param name="mpc/pre_step" value="$(arg pre_step)"/>
     <param name="mpc/step_time" value="$(arg step_time)"/>
     <param name="mpc/v_max" value="$(arg v_max)"/>
-    <param name="mpc/v_min" value="0.3"/>
-    <param name="mpc/o_max" value="0.8"/>
+    <param name="mpc/v_min" value="$(arg v_min)"/>
+    <param name="mpc/o_max" value="$(arg o_max)"/>
     <param name="mpc/gamma" value="$(arg gamma)"/>
     <param name="mpc/beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
+    <param name="mpc/robot_radius" value="$(arg robot_radius)"/>
 
-    <remap from="/Odometry" to="/Odometry"/>
-    <remap from="/global_path" to="/global_path"/>
-    <remap from="/cmd_vel" to="/cmd_vel"/>
-    <remap from="/local_path" to="/local_path"/>
+    <remap from="/Odometry" to="$(arg odom_topic)"/>
+    <remap from="/global_path" to="$(arg global_path_topic)"/>
+    <remap from="/cmd_vel" to="$(arg cmd_vel_topic)"/>
+    <remap from="/local_path" to="$(arg local_path_topic)"/>
+    <remap from="/globalFsm_by_adsm/obs_predict_pub" to="$(arg obs_predict_topic)"/>
   </node>
 </launch>

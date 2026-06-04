@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 
 #include "semantic_fusion/SemanticObstacle.h"
 #include "semantic_fusion/SemanticObstacleArray.h"
@@ -30,8 +31,10 @@ public:
         nh_.param("mu_weights/density", w_density_, 0.1);
 
         // Guard params
+        nh_.param("guard/enabled",        guard_enabled_,   true);
         nh_.param("guard/eta",            eta_,            0.1);
         nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
+        nh_.param("guard/tau",            tau_,            0.2);
 
         // Robot params
         nh_.param("robot/radius", robot_radius_, 0.4);
@@ -42,6 +45,7 @@ public:
         if (!log_path.empty()) {
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
+                csv_file_ << std::fixed << std::setprecision(9);
                 csv_file_ << "time,obs_id,class,beta_requested,beta_applied,h_ee,guard_passed\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
             }
@@ -58,7 +62,8 @@ public:
         total_rollbacks_ = 0;
         has_odom_ = false;
 
-        ROS_INFO("BetaGuardNode initialized. eta=%.2f, max_delta_beta=%.2f", eta_, max_delta_beta_);
+        ROS_INFO("BetaGuardNode initialized. guard_enabled=%s, eta=%.2f, max_delta_beta=%.2f, tau=%.2f",
+                 guard_enabled_ ? "true" : "false", eta_, max_delta_beta_, tau_);
     }
 
     ~BetaGuardNode() {
@@ -70,6 +75,8 @@ private:
         robot_pos_ << msg->pose.pose.position.x,
                       msg->pose.pose.position.y,
                       msg->pose.pose.position.z;
+        robot_vel_ << msg->twist.twist.linear.x,
+                      msg->twist.twist.linear.y;
         has_odom_ = true;
     }
 
@@ -92,21 +99,25 @@ private:
 
             double beta_hat = beta_bar_val * mu;
 
-            // Step 2: Compute h_EE = ||p_obs - p_robot|| - R_obs - R_robot
-            // (EESM base safety function; τv projection handled by obs prediction)
+            // Step 2: Compute h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
             Eigen::Vector2d obs_pos(obs.position.x, obs.position.y);
-            double dist = (obs_pos - robot_pos_.head<2>()).norm();
-            double h_ee = dist - obs.radius - robot_radius_;
+            Eigen::Vector2d obs_vel(obs.velocity.x, obs.velocity.y);
+            Eigen::Vector2d p_rel = obs_pos - robot_pos_.head<2>();
+            Eigen::Vector2d v_rel = obs_vel - robot_vel_;
+            Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
+            double h_ee = lookahead_rel_pos.norm() - obs.radius - robot_radius_;
 
             // Step 3: Guard check: β̂ ≤ h_EE - η
             // Ensures h_SEE = h_EE - β ≥ -η (feasibility guarantee)
-            bool guard_pass = (beta_hat <= h_ee - eta_);
+            bool guard_pass = guard_enabled_ ? (beta_hat <= h_ee - eta_) : true;
 
             // Step 4: Apply with rate limiting
             double beta_final;
             double beta_prev = getPrevBeta(obs.id);
 
-            if (guard_pass) {
+            if (!guard_enabled_) {
+                beta_final = beta_hat;
+            } else if (guard_pass) {
                 double delta = beta_hat - beta_prev;
                 delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, delta));
                 beta_final = beta_prev + delta;
@@ -156,11 +167,13 @@ private:
     // Config
     std::map<std::string, double> beta_bar_;
     double w_bias_, w_head_, w_ttc_, w_density_;
-    double eta_, max_delta_beta_;
+    double eta_, max_delta_beta_, tau_;
     double robot_radius_;
+    bool guard_enabled_;
 
     // State
     Eigen::Vector3d robot_pos_;
+    Eigen::Vector2d robot_vel_;
     bool has_odom_;
     std::map<uint32_t, double> beta_prev_;
     uint32_t total_rollbacks_;

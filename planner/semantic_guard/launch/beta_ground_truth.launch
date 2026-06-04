@@ -1,0 +1,21 @@
+<launch>
+  <arg name="config_file" default="$(find semantic_guard)/config/semantic_safety_margin.yaml"/>
+  <arg name="log_path" default=""/>
+  <arg name="pre_step" default="20"/>
+  <arg name="guard_enabled" default="true"/>
+  <arg name="scenario_id" default="manual"/>
+  <arg name="baseline_id" default="B3_SECBF_with_guard"/>
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
+
+  <node pkg="semantic_guard" type="beta_ground_truth_node" name="beta_ground_truth_node" output="screen">
+    <rosparam file="$(arg config_file)" subst_value="true"/>
+    <param name="log_path" value="$(arg log_path)"/>
+    <param name="mpc/pre_step" value="$(arg pre_step)"/>
+    <param name="guard/enabled" value="$(arg guard_enabled)"/>
+    <param name="scenario_id" value="$(arg scenario_id)"/>
+    <param name="baseline_id" value="$(arg baseline_id)"/>
+    <remap from="/Odometry" to="$(arg odom_topic)"/>
+    <rosparam param="obstacle_classes" subst_value="true">$(arg obstacle_classes)</rosparam>
+  </node>
+</launch>

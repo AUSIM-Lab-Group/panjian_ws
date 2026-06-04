@@ -22,6 +22,7 @@ semantic_safety:
   guard:
     eta: 0.1              # Guard 余量 η [m]
     max_delta_beta: 0.3   # 单步最大 β 变化量 Δ̄β [m]
+    tau: 0.2              # Guard 前瞻时间 τ [s]
 
   # 机器人参数
   robot:

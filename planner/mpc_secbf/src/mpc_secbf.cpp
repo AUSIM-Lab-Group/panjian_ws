@@ -6,7 +6,7 @@
 
 void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                                    std::vector<double> Q, std::vector<double> R,
-                                   double gamma, double beta_bar_unknown) {
+                                   double gamma, double beta_bar_unknown, double robot_radius) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -16,10 +16,11 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     R_ = R;
     gamma_ = gamma;
     beta_bar_unknown_ = beta_bar_unknown;
+    robot_radius_ = robot_radius;
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f",
-             N_, Ts_, v_max_, gamma_, beta_bar_unknown_);
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f",
+             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_);
 }
 
 bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
@@ -180,7 +181,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 
 casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
     // 统一安全函数:
-    //   h_EE  = ||l|| - (R_obs + R_safe)
+    //   h_EE  = ||l|| - R_obs - R_robot
     //   h_SEE = h_EE - β_i
     //
     // 注: obs 的位置已经是 globalFsm 预测的未来位置 (含 τv 外推)
@@ -189,10 +190,9 @@ casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, dou
     casadi::MX dx = obs(0) - curpos(0);  // l_x (已含预测)
     casadi::MX dy = obs(1) - curpos(1);  // l_y (已含预测)
     double obs_radius = obs(2);
-    double R_safe = 0.4;  // robot radius
 
-    // h_EE = ||l|| - (R_obs + R_safe)
-    casadi::MX h_EE = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - R_safe;
+    // h_EE = ||l|| - R_obs - R_robot
+    casadi::MX h_EE = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - robot_radius_;
 
     // h_SEE = h_EE - β_i  (β 是在 EESM 裕度上再扣的语义余量)
     casadi::MX h_SEE = h_EE - beta_i;

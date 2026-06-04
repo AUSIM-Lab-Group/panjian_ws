@@ -2,3 +2,5 @@
 yolov8n.pt
 swarm_test/output/*.json
 swarm_test/output/*.csv
+swarm_test/output/**/*.csv
+state_estimation/FAST_LIO/PCD/*.pcd

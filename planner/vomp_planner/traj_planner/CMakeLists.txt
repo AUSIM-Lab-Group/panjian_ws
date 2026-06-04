@@ -62,6 +62,7 @@ add_executable( dynamic_planner_node
     src/plan_manager.cpp
     src/dynamic_planner_fsm.cpp
 )
+add_dependencies(dynamic_planner_node ${catkin_EXPORTED_TARGETS})
 target_link_libraries( dynamic_planner_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
@@ -72,11 +73,7 @@ target_link_libraries( dynamic_planner_node
 add_executable( obs_Manager_node
     example/obs_manager_node.cpp
 )
-# add_dependencies(obs_Manager_node 
-#   ${${PROJECT_NAME}_EXPORTED_TARGETS} 
-#   ${catkin_EXPORTED_TARGETS}
-#   dynamic_simulator
-# )
+add_dependencies(obs_Manager_node ${catkin_EXPORTED_TARGETS})
 target_link_libraries( obs_Manager_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
@@ -88,6 +85,7 @@ add_executable( global_path_by_adsm
     src/bspline_opt.cpp
     src/plan_manager.cpp
 )
+add_dependencies(global_path_by_adsm ${catkin_EXPORTED_TARGETS})
 target_link_libraries( global_path_by_adsm
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
@@ -101,6 +99,7 @@ add_executable( globalFsm_by_adsm
     src/bspline_opt.cpp
     src/plan_manager.cpp
 )
+add_dependencies(globalFsm_by_adsm ${catkin_EXPORTED_TARGETS})
 target_link_libraries( globalFsm_by_adsm
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}

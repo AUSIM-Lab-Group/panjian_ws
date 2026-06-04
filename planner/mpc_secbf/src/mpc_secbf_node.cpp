@@ -15,7 +15,7 @@ class MpcSecbfNode {
 public:
     MpcSecbfNode(ros::NodeHandle& nh) : nh_(nh) {
         // Parameters
-        double mpc_freq, Ts, gamma, beta_unknown;
+        double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         int N;
         double v_max, v_min, o_max;
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
@@ -26,6 +26,9 @@ public:
         nh_.param("mpc/o_max", o_max, 0.8);
         nh_.param("mpc/gamma", gamma, 0.35);
         nh_.param("mpc/beta_bar_unknown", beta_unknown, 0.4);
+        if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
+            nh_.param("robot/radius", robot_radius, 0.4);
+        }
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -34,7 +37,7 @@ public:
         Ts_ = Ts;
 
         // Initialize solver
-        solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown);
+        solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius);
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);

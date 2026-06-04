@@ -36,10 +36,10 @@
 |----|--------------|
 | FR-3.1 | **When** β̂ 更新到达 **the system shall** 执行 Guard 检查：β̂_i ≤ h_EE(X_t, obs_i) - η |
 | FR-3.2 | **If** Guard 检查失败 **the system shall** 回退到 β_{t-1}（上一时刻的安全余量），不使用新 β̂ |
-| FR-3.3 | **When** Guard 通过 **the system shall** 将 β_i 替换 MPC 中原来的固定 safe_dist，作为 per-obstacle CBF 约束参数 |
-| FR-3.4 | **The system shall** 支持 controller_type=5 (MPC-SECBF) 作为新的控制器模式，与现有 0-4 模式并列 |
-| FR-3.5 | **When** controller_type ≠ 5 **the system shall** 保持原有 DCBF/ACBF 行为不变（向后兼容） |
-| FR-3.6 | **When** MPC-SECBF 求解 infeasible **the system shall** 回退到 DCBF fallback（复用现有机制），并发零速停车 |
+| FR-3.3 | **When** Guard 通过 **the system shall** 将 β_i 作为独立 `mpc_secbf_node` 的 per-obstacle 语义安全余量，使 CBF 约束使用 `h_SEE = h_EE - β_i` |
+| FR-3.4 | **The system shall** 提供独立的 `mpc_secbf_node` 作为 MPC-SECBF 控制器，与 `mpc_dcbf` 中的 legacy modes 0-4 并列部署 |
+| FR-3.5 | **When** 使用 legacy modes 0-4 **the system shall** 保持原有 DCBF/ACBF 行为不变（向后兼容），且不依赖语义安全模块 |
+| FR-3.6 | **When** MPC-SECBF 求解 infeasible **the system shall** 先按当前 `mpc_secbf` fallback 逻辑清空动态障碍物重解，若仍 infeasible 则发零速停车 |
 
 ### 2.4 理论验证
 
@@ -55,7 +55,7 @@
 |----|--------------|
 | FR-5.1 | **The system shall** 支持 4 个社交导航场景：(S1) 行人对向穿越, (S2) 儿童突然出现, (S3) Feasibility-Critical（1 个 child 迎面 1.5m/s，初始 5m，验证 Guard 在 h_EE≈0.4 时触发回退）, (S4) 混合场景（行人+车辆+纸箱） |
 | FR-5.2 | **The system shall** 在每个场景中记录：到达时间、最小障碍物距离、平均速度、CBF 值时序、β 值时序、Guard 回退次数 |
-| FR-5.3 | **The system shall** 支持 3 种对比基线：(B1) 原 ACBF 固定 safe_dist, (B2) MPC-SECBF 无 Guard, (B3) MPC-SECBF 有 Guard（本方法） |
+| FR-5.3 | **The system shall** 支持 3 种对比基线：(B1) 原 ACBF 固定安全余量, (B2) MPC-SECBF 无 Guard, (B3) MPC-SECBF 有 Guard（本方法） |
 
 ---
 
@@ -70,7 +70,7 @@
 | NFR-5 | 端到端管道（感知→β→MPC）总延迟 < 70ms |
 | NFR-6 | 系统在 10Hz 频率下稳定运行，无内存泄漏 |
 | NFR-7 | 仿真（Gazebo）和实车（Scout+D435+RSLidar）使用同一套代码，通过 launch 参数切换 |
-| NFR-8 | 新增模块不破坏现有 controller_type 0-4 的功能 |
+| NFR-8 | 新增模块不破坏 `mpc_dcbf` 中现有 legacy modes 0-4 的功能 |
 | NFR-9 | β̄(c) 配置文件可热加载（rosparam / dynamic_reconfigure） |
 
 ---
@@ -81,7 +81,7 @@
 
 | Topic | 类型 | 发布者 | 订阅者 | 频率 |
 |-------|------|--------|--------|------|
-| `/semantic_obstacles` | 自定义 msg (SemanticObstacleArray) | 融合节点 | β 计算节点, MPC | 10Hz |
+| `/semantic_obstacles` | 自定义 msg (SemanticObstacleArray) | 融合节点 | β 计算节点 | 10Hz |
 | `/safety_margin/beta` | std_msgs/Float32MultiArray | β 计算节点 | MPC-SECBF | 10Hz |
 | `/safety_margin/guard_log` | 自定义 msg (GuardLog) | Guard 节点 | 数据记录 | 10Hz |
 | `/yolo/detections` | vision_msgs/Detection2DArray | YOLO 节点 | 融合节点 | 10Hz |
@@ -102,14 +102,15 @@ float64 density_norm         # 局部密度 (归一化)
 bool guard_passed            # Guard 是否通过
 ```
 
-### 4.3 与现有系统的接口改造
+### 4.3 与现有系统的接口关系
 
-| 现有接口 | 改造方式 |
+| 接口 | 当前方式 |
 |----------|----------|
-| `mpc_cbf.cpp` 中 `safe_dist = 0.3 + 0.4` | 当 controller_type=5 时，从 `/safety_margin/beta` 读取 per-obstacle β_i 替换 safe_dist |
-| `obs_matrix_` (7×N 矩阵) | 扩展为 8×N，第 8 行存 β_i |
-| `set_safety_st()` 中 `h1/h2/h3` 函数 | 新增 `h_secbf()` 使用 β_i 替代固定 safe_dist |
-| `exp_acbf_planner_use.launch` | 新增 controller=5 选项 + β 相关参数 |
+| `planner/mpc_dcbf` legacy modes 0-4 | 保持原样，作为 B1/legacy 回归对象，不订阅 `/safety_margin/beta` |
+| `planner/mpc_secbf` 独立控制器 | 订阅 `/safety_margin/beta`、`/global_path`、`/globalFsm_by_adsm/obs_predict_pub` 与 `/Odometry` |
+| `MPC_SECBF_SOLVE::h_secbf()` | 使用 `h_EE = ||p_obs_pred - p_robot|| - R_obs - R_robot` 与 `h_SEE = h_EE - β_i` |
+| `swarm_test/launch/secbf_planner.launch` | 数值仿真链路使用 `beta_ground_truth_node` 发布 β |
+| `swarm_test/launch_exp/exp_secbf_planner.launch` | 实车代码链路使用 `semantic_fusion_node` + `beta_guard_node` 发布 β |
 
 ---
 
@@ -119,7 +120,7 @@ bool guard_passed            # Guard 是否通过
 # config/semantic_safety_margin.yaml
 semantic_safety:
   enabled: true
-  controller_type: 5  # MPC-SECBF
+  controller: "mpc_secbf"  # 独立 MPC-SECBF 节点
 
   # 各类别基础安全余量 β̄(c) [meters] — v7 标准值
   beta_bar:
@@ -200,6 +201,6 @@ semantic_safety:
 |------|------|----------|
 | YOLOv8 推理超时 | 整体延迟 > 70ms | 降分辨率 320×240 或用 TensorRT 加速 |
 | 视觉-LiDAR 融合误匹配 | β 分配给错误障碍物 | 加 temporal consistency 检查（连续 3 帧一致才更新类别） |
-| Guard 频繁回退 | β 无法更新，退化为固定 safe_dist | 调大 η 或加 hysteresis |
+| Guard 频繁回退 | β 无法更新，退化为上一时刻 β 或 unknown 类别默认 β | 调大 η 或加 hysteresis |
 | CasADi per-obstacle β 增加求解时间 | MPC 超时 | 限制最多 3 个 active 障碍物（现有代码已有 `choose_num<2` 限制） |
 | obstacle_prediction_node heap corruption | 感知链路崩溃 | 修复 Hungarian 算法内存 bug（已知问题） |

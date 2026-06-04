@@ -42,9 +42,11 @@ add_executable (start_trigger_node src/start_trigger.cpp )
 target_link_libraries(start_trigger_node ${catkin_LIBRARIES})
 
 add_executable (data_processor_node src/data_processor.cpp )
+add_dependencies(data_processor_node ${catkin_EXPORTED_TARGETS})
 target_link_libraries(data_processor_node ${catkin_LIBRARIES})
 
 add_executable (obs_vis_node src/obstacle_trajs_visualization.cpp )
+add_dependencies(obs_vis_node ${catkin_EXPORTED_TARGETS})
 target_link_libraries(obs_vis_node ${catkin_LIBRARIES})
 
 add_executable (rosbag_trans_color_node src/rosbag_trans_color.cpp )

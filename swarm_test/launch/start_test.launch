@@ -2,10 +2,17 @@
 
   <param name="/use_sim_time" value="false"/>
   <arg name="runtime_ld_library_path" default="/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu:/opt/ros/noetic/share/euslisp/jskeus/eus//Linux64/lib:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"/>
+  <arg name="scenario_index" default="4"/>
+  <arg name="controller_index" default="6"/>
+  <arg name="num_of_obs" default="7"/>
+  <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
+  <arg name="obstacle_params_file" default="$(find dynamic_simulator)/config/obstacles_param.yaml"/>
+  <arg name="record_data" default="false"/>
 
   <!-- 动态障碍物仿真环境 -->
   <include file="$(find dynamic_simulator)/launch/spawn_dynamic_obstacle.launch">
-    <arg name="num_of_obs" value="7" />
+    <arg name="num_of_obs" value="$(arg num_of_obs)" />
+    <arg name="obstacle_params_file" value="$(arg obstacle_params_file)" />
     <arg name="runtime_ld_library_path" value="$(arg runtime_ld_library_path)" />
   </include>
 
@@ -18,22 +25,22 @@
     <remap from="/trajs"    to="/Dyn_Obs_trajs"/>
     <!-- <remap from="/odometry" to="/robot1/odom"/> -->
     <param name="obs_manager/use_GroundTruth"  value="true"  type="bool"/>
-    <param name="scenario" value="3" type="int" />
-    <param name="controller" value="6" type="int" />
-    <param name="data/record_sign" value="false"  type="bool"/>
-    <param name="data/record_sign1" value="false"  type="bool"/>
-    <param name="output_csv" value="$(find swarm_test)/output/data_processor_summary.csv" type="string"/>
-    <param name="output_csv_dist" value="$(find swarm_test)/output/data_processor_distance.csv" type="string"/>
+    <param name="scenario" value="$(arg scenario_index)" type="int" />
+    <param name="controller" value="$(arg controller_index)" type="int" />
+    <param name="data/record_sign" value="$(arg record_data)"  type="bool"/>
+    <param name="data/record_sign1" value="$(arg record_data)"  type="bool"/>
+    <param name="output_csv" value="$(arg output_dir)/data_processor_summary.csv" type="string"/>
+    <param name="output_csv_dist" value="$(arg output_dir)/data_processor_distance.csv" type="string"/>
   </node>
 
   <!-- 全局路径数据处理器 -->
   <node pkg="swarm_test" type="global_path_data_processor.py" name="global_path_data_processor" output="screen" launch-prefix="env LD_LIBRARY_PATH=$(arg runtime_ld_library_path)">
     <param name="robot_radius" value="0.4" type="double"/>
     <param name="max_replans" value="100" type="int"/>
-    <param name="num_obstacles" value="5" type="int"/>
+    <param name="num_obstacles" value="$(arg num_of_obs)" type="int"/>
     <param name="pre_step" value="20" type="int"/>
     <param name="time_step" value="0.2" type="double"/>
-    <param name="output_dir" value="$(find swarm_test)/output" type="string"/>
+    <param name="output_dir" value="$(arg output_dir)" type="string"/>
   </node>
 
   <!-- rosbag录制 -->

@@ -15,6 +15,11 @@
   <arg name="map_size_x" default="50.0"/>
   <arg name="map_size_y" default="50.0"/>
   <arg name="map_size_z" default="3.0"/>
+  <arg name="scenario_id" default="S4_mixed"/>
+  <arg name="baseline_id" default="B3_SECBF_with_guard"/>
+  <arg name="guard_enabled" default="true"/>
+  <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
+  <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
 
   <!-- 随机地图仿真环境 -->
   <include file="$(find map_generator)/launch/map.launch">
@@ -54,32 +59,30 @@
     <arg name="traj_horizon"      value="$(arg search_horizon)"/>
   </include>
 
-  <!-- 语义 β (Ground Truth 模式: 直接从 obs_predict_pub 计算 β, 跳过感知) -->
-  <node pkg="semantic_guard" type="beta_ground_truth_node" name="beta_ground_truth_node" output="screen">
-    <rosparam file="$(find semantic_guard)/config/semantic_safety_margin.yaml" subst_value="true"/>
-    <param name="log_path" value="$(find swarm_test)/output/guard_log.csv"/>
-    <param name="mpc/pre_step" value="$(arg pre_step)"/>
-    <remap from="/Odometry" to="/robot1/odom"/>
-    <!-- 障碍物类别: 与 obstacles_param.yaml 中的顺序对应 -->
-    <rosparam param="obstacle_classes">
-      [pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]
-    </rosparam>
-  </node>
+  <!-- 本文语义 β + Guard (Ground Truth 模式: 跳过感知，类别来自场景配置) -->
+  <include file="$(find semantic_guard)/launch/beta_ground_truth.launch">
+    <arg name="log_path" value="$(arg output_dir)/guard_log.csv"/>
+    <arg name="pre_step" value="$(arg pre_step)"/>
+    <arg name="guard_enabled" value="$(arg guard_enabled)"/>
+    <arg name="scenario_id" value="$(arg scenario_id)"/>
+    <arg name="baseline_id" value="$(arg baseline_id)"/>
+    <arg name="odom_topic" value="/robot1/odom"/>
+    <arg name="obstacle_classes" value="$(arg obstacle_classes)"/>
+  </include>
 
   <!-- MPC-SECBF 控制器 -->
-  <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
-    <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
-    <param name="mpc/pre_step"      value="$(arg pre_step)"/>
-    <param name="mpc/step_time"     value="$(arg step_time)"/>
-    <param name="mpc/v_max"         value="$(arg v_max)"/>
-    <param name="mpc/v_min"         value="0.3"/>
-    <param name="mpc/o_max"         value="0.8"/>
-    <param name="mpc/gamma"         value="$(arg gamma)"/>
-    <param name="mpc/beta_bar_unknown" value="0.4"/>
-    <remap from="/Odometry" to="/robot1/odom"/>
-    <remap from="/cmd_vel"  to="/cmd_vel1"/>
-    <remap from="/globalFsm_by_adsm/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub"/>
-  </node>
+  <include file="$(find mpc_secbf)/launch/mpc_secbf.launch">
+    <arg name="mpc_frequency" value="$(arg mpc_frequency)"/>
+    <arg name="pre_step" value="$(arg pre_step)"/>
+    <arg name="step_time" value="$(arg step_time)"/>
+    <arg name="v_max" value="$(arg v_max)"/>
+    <arg name="gamma" value="$(arg gamma)"/>
+    <arg name="beta_bar_unknown" value="0.4"/>
+    <arg name="robot_radius" value="0.4"/>
+    <arg name="odom_topic" value="/robot1/odom"/>
+    <arg name="cmd_vel_topic" value="/cmd_vel1"/>
+    <arg name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub"/>
+  </include>
 
   <!-- 轨迹可视化 -->
   <node pkg="swarm_test" type="odom_traj_visualization_node" name="odom_traj_visualization_node">

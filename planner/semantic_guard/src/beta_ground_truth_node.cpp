@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <iomanip>
 #include <algorithm>
 #include <cmath>
 
@@ -38,8 +39,10 @@ public:
         nh_.param("mu_weights/density", w_density_, 0.1);
 
         // Guard params
+        nh_.param("guard/enabled",        guard_enabled_,   true);
         nh_.param("guard/eta",            eta_,            0.1);
         nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
+        nh_.param("guard/tau",            tau_,            0.2);
         nh_.param("robot/radius",         robot_radius_,   0.4);
 
         // Ground truth obstacle classes (from scenario config)
@@ -57,6 +60,7 @@ public:
         if (!log_path.empty()) {
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
+                csv_file_ << std::fixed << std::setprecision(9);
                 csv_file_ << "time,obs_id,class,beta_requested,beta_applied,h_ee,guard_passed\n";
             }
         }
@@ -73,7 +77,8 @@ public:
         total_rollbacks_ = 0;
         has_odom_ = false;
 
-        ROS_INFO("BetaGroundTruthNode initialized with %zu obstacle classes", obstacle_classes_.size());
+        ROS_INFO("BetaGroundTruthNode initialized with %zu obstacle classes, guard_enabled=%s",
+                 obstacle_classes_.size(), guard_enabled_ ? "true" : "false");
         for (size_t i = 0; i < obstacle_classes_.size(); i++) {
             ROS_INFO("  obs[%zu] = %s, beta_bar = %.2f", i, obstacle_classes_[i].c_str(),
                      beta_bar_[obstacle_classes_[i]]);
@@ -131,7 +136,10 @@ private:
                 f_head = std::max(0.0, -cos_a);
             }
 
-            double closing_speed = std::max(-p_rel.normalized().dot(v_rel), 0.0);
+            double closing_speed = 0.0;
+            if (p_rel.norm() > 0.01) {
+                closing_speed = std::max(-p_rel.normalized().dot(v_rel), 0.0);
+            }
             double ttc_norm = 0.0;
             if (closing_speed > 0.01) {
                 double ttc_raw = p_rel.norm() / closing_speed;
@@ -146,15 +154,17 @@ private:
             double beta_hat = beta_bar_val * mu;
 
             // Guard check: β̂ ≤ h_EE - η
-            // h_EE = ||p_obs - p_robot|| - R_obs - R_safe
-            // (注: 静态场景 τ=0, 动态场景 obs 位置已含预测)
-            double h_ee = p_rel.norm() - obs_r - robot_radius_;
-            bool guard_pass = (beta_hat <= h_ee - eta_);
+            // h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
+            Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
+            double h_ee = lookahead_rel_pos.norm() - obs_r - robot_radius_;
+            bool guard_pass = guard_enabled_ ? (beta_hat <= h_ee - eta_) : true;
 
             // Apply with rate limiting
             double beta_prev = getPrevBeta(idx);
             double beta_final;
-            if (guard_pass) {
+            if (!guard_enabled_) {
+                beta_final = beta_hat;
+            } else if (guard_pass) {
                 double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, beta_hat - beta_prev));
                 beta_final = beta_prev + delta;
             } else {
@@ -212,7 +222,10 @@ private:
                               obstacle_classes_[idx] : "unknown";
             double beta_i = (idx < (int)beta_prev_.size()) ? beta_prev_[idx] : 0.4;
 
-            auto [r, g, b] = getColor(cls);
+            auto color = getColor(cls);
+            float r = std::get<0>(color);
+            float g = std::get<1>(color);
+            float b = std::get<2>(color);
 
             // Marker 1: 障碍物实体 (圆柱)
             visualization_msgs::Marker obs_marker;
@@ -297,7 +310,8 @@ private:
 
     std::map<std::string, double> beta_bar_;
     double w_bias_, w_head_, w_ttc_, w_density_;
-    double eta_, max_delta_beta_, robot_radius_;
+    double eta_, max_delta_beta_, tau_, robot_radius_;
+    bool guard_enabled_;
     int N_;
 
     std::vector<std::string> obstacle_classes_;
