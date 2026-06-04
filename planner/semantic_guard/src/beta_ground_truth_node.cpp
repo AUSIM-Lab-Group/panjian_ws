@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "semantic_guard/GuardLog.h"
 
@@ -61,7 +62,10 @@ public:
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
                 csv_file_ << std::fixed << std::setprecision(9);
-                csv_file_ << "time,obs_id,class,beta_requested,beta_applied,h_ee,guard_passed\n";
+                csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
+                          << "guard_upper_bound,guard_passed,guard_status,"
+                          << "d_i,rel_v_norm,ttc,inv_ttc,cos_delta,rho_i,group_flag,"
+                          << "h_ee,h_see,R_base,R_sem\n";
             }
         }
 
@@ -131,19 +135,24 @@ private:
             Eigen::Vector2d v_rel = obs_vel - robot_vel_;
 
             double f_head = 0.0;
+            double d_i = p_rel.norm();
+            double rel_v_norm = v_rel.norm();
+            double cos_delta = 0.0;
             if (p_rel.norm() > 0.01 && v_rel.norm() > 0.01) {
-                double cos_a = p_rel.normalized().dot(v_rel.normalized());
-                f_head = std::max(0.0, -cos_a);
+                cos_delta = p_rel.normalized().dot(v_rel.normalized());
+                f_head = std::max(0.0, -cos_delta);
             }
 
             double closing_speed = 0.0;
             if (p_rel.norm() > 0.01) {
                 closing_speed = std::max(-p_rel.normalized().dot(v_rel), 0.0);
             }
+            double ttc = (closing_speed > 1e-6) ? (d_i / closing_speed)
+                                                : std::numeric_limits<double>::infinity();
+            double inv_ttc = std::isfinite(ttc) && ttc > 1e-6 ? 1.0 / ttc : 0.0;
             double ttc_norm = 0.0;
             if (closing_speed > 0.01) {
-                double ttc_raw = p_rel.norm() / closing_speed;
-                ttc_norm = std::max(0.0, std::min(1.0, 1.0 - ttc_raw / 5.0));
+                ttc_norm = std::max(0.0, std::min(1.0, 1.0 - ttc / 5.0));
             }
 
             double density_norm = std::min(1.0, (obs_num - 1) / 5.0);
@@ -157,21 +166,30 @@ private:
             // h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
             double h_ee = lookahead_rel_pos.norm() - obs_r - robot_radius_;
-            bool guard_pass = guard_enabled_ ? (beta_hat <= h_ee - eta_) : true;
+            double guard_upper_bound = h_ee - eta_;
+            bool guard_pass = guard_enabled_ ? (beta_hat <= guard_upper_bound) : true;
 
             // Apply with rate limiting
             double beta_prev = getPrevBeta(idx);
             double beta_final;
+            std::string guard_status;
             if (!guard_enabled_) {
                 beta_final = beta_hat;
+                guard_status = "disabled";
             } else if (guard_pass) {
-                double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, beta_hat - beta_prev));
+                double raw_delta = beta_hat - beta_prev;
+                double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta));
                 beta_final = beta_prev + delta;
+                guard_status = (std::abs(delta - raw_delta) > 1e-9) ? "rate_limited" : "accept";
             } else {
                 beta_final = beta_prev;
                 total_rollbacks_++;
+                guard_status = "rollback";
             }
             beta_final = std::max(0.0, beta_final);
+            double h_see = h_ee - beta_final;
+            double r_base = obs_r + robot_radius_;
+            double r_sem = r_base + beta_final;
             beta_prev_[idx] = beta_final;
 
             beta_msg.data.push_back(static_cast<float>(beta_final));
@@ -186,8 +204,15 @@ private:
             if (csv_file_.is_open()) {
                 csv_file_ << ros::Time::now().toSec() << ","
                           << idx << "," << cls << ","
+                          << beta_bar_val << "," << mu << ","
                           << beta_hat << "," << beta_final << ","
-                          << h_ee << "," << (guard_pass ? 1 : 0) << "\n";
+                          << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
+                          << guard_status << ","
+                          << d_i << "," << rel_v_norm << ","
+                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << inv_ttc << ","
+                          << cos_delta << "," << density_norm << ",0,"
+                          << h_ee << "," << h_see << ","
+                          << r_base << "," << r_sem << "\n";
             }
         }
 
