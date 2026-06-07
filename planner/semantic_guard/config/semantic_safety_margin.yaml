@@ -5,7 +5,9 @@ semantic_safety:
   # 各类别基础安全余量 β̄(c) [meters] — v7 标准值
   beta_bar:
     pedestrian: 0.4
+    adult: 0.4
     child: 0.7
+    child_like: 0.7
     cyclist: 0.6
     vehicle: 0.5
     box: 0.1

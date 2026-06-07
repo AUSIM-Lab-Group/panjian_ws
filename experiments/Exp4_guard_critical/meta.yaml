@@ -1,0 +1,29 @@
+experiment_id: Exp4_guard_critical
+purpose: Stress-test the Safety Guard near the feasibility boundary.
+scenario: single_pedestrian_critical
+method: SEESM_Ours
+map_name: corridor_8m_x_4m
+start: [0.0, 0.0, 0.0]
+goal: [8.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 1
+obstacle_classes: [adult_to_child_like]
+motion_patterns: [frontal_approaching, near_path_crossing]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+baselines: [Context_without_Guard, SEESM_Ours]
+events_to_count: [project, fallback, zero, infeasible, slack_peak]
+metrics: [MPC_feasible_rate, infeasible_count, slack_max, min_h_SEE, guard_project_count, guard_fallback_count]
+status: template

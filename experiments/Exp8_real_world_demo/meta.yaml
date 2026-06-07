@@ -1,0 +1,31 @@
+experiment_id: Exp8_real_world_demo
+purpose: Small-scale real-world demonstration under safe, low-risk settings.
+scenario: real_world_safe_demo
+method: SEESM_Ours
+map_name: lab_corridor
+start: [0.0, 0.0, 0.0]
+goal: [6.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 2
+obstacle_classes: [box, adult_or_dummy]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+baselines: [Fixed_margin, SEESM_Ours]
+required_artifacts: [front_video, top_video, rviz_recording, rosbag, csv, params, photos]
+safety_notes:
+  physical_cmd_vel_requires_user_approval: true
+  no_child_risk_experiment: true
+metrics: [D_min, path_length, travel_time, success, total_loop_time]
+status: template

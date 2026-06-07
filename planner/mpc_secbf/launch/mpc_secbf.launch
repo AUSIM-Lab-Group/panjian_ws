@@ -13,6 +13,8 @@
   <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="local_path_topic" default="/local_path"/>
   <arg name="obs_predict_topic" default="/globalFsm_by_adsm/obs_predict_pub"/>
+  <arg name="planner_log_path" default=""/>
+  <arg name="timing_log_path" default=""/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
@@ -24,6 +26,8 @@
     <param name="mpc/gamma" value="$(arg gamma)"/>
     <param name="mpc/beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
     <param name="mpc/robot_radius" value="$(arg robot_radius)"/>
+    <param name="planner_log_path" value="$(arg planner_log_path)"/>
+    <param name="timing_log_path" value="$(arg timing_log_path)"/>
 
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <remap from="/global_path" to="$(arg global_path_topic)"/>

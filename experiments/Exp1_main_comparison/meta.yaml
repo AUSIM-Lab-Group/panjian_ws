@@ -1,0 +1,38 @@
+experiment_id: Exp1_main_comparison
+purpose: Main comparison among fixed margin, context without Guard, and SEESM.
+scenario: mixed_dynamic_obstacles
+method: SEESM_Ours
+map_name: corridor_20m_x_8m
+start: [0.0, 0.0, 0.0]
+goal: [20.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 6
+obstacle_classes: [box, adult, child_like, cyclist, adult, box]
+motion_patterns: [crossing, diagonal, reciprocal, frontal, crossing, static]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+baselines: [Fixed_margin, Context_without_Guard, SEESM_Ours, Category_only_optional]
+metrics:
+  - success_rate
+  - collision_count
+  - infeasible_count
+  - D_min
+  - PSV
+  - path_length
+  - travel_time
+  - velocity_smoothness
+  - angular_smoothness
+  - total_loop_time
+status: template

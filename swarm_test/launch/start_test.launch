@@ -8,6 +8,9 @@
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
   <arg name="obstacle_params_file" default="$(find dynamic_simulator)/config/obstacles_param.yaml"/>
   <arg name="record_data" default="false"/>
+  <arg name="obstacle_classes" default="[unknown]"/>
+  <arg name="goal_x" default="21.0"/>
+  <arg name="goal_y" default="0.0"/>
 
   <!-- 动态障碍物仿真环境 -->
   <include file="$(find dynamic_simulator)/launch/spawn_dynamic_obstacle.launch">
@@ -17,7 +20,11 @@
   </include>
 
   <!-- 发布目标点 -->
-  <node pkg="swarm_test" type="start_trigger_node" name="start_trigger_node"/>
+  <node pkg="swarm_test" type="start_trigger_node" name="start_trigger_node">
+    <param name="goal_x" value="$(arg goal_x)" type="double"/>
+    <param name="goal_y" value="$(arg goal_y)" type="double"/>
+    <param name="goal_z" value="0.0" type="double"/>
+  </node>
 
   <!-- 收集实验数据并输出结果 -->
   <node pkg="swarm_test" type="data_processor_node" name="data_processor_node" output="screen">
@@ -31,6 +38,18 @@
     <param name="data/record_sign1" value="$(arg record_data)"  type="bool"/>
     <param name="output_csv" value="$(arg output_dir)/data_processor_summary.csv" type="string"/>
     <param name="output_csv_dist" value="$(arg output_dir)/data_processor_distance.csv" type="string"/>
+  </node>
+
+  <!-- Phase 5 paper-log contract logger -->
+  <node pkg="swarm_test" type="phase5_csv_logger.py" name="phase5_csv_logger" output="screen">
+    <param name="output_dir" value="$(arg output_dir)" type="string"/>
+    <param name="pre_step" value="20" type="int"/>
+    <param name="robot_radius" value="0.4" type="double"/>
+    <param name="guard_tau" value="0.2" type="double"/>
+    <param name="obstacle_classes" value="$(arg obstacle_classes)" type="string"/>
+    <param name="odom_topic" value="/robot1/odom" type="string"/>
+    <param name="cmd_vel_topic" value="/cmd_vel1" type="string"/>
+    <param name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub" type="string"/>
   </node>
 
   <!-- 全局路径数据处理器 -->

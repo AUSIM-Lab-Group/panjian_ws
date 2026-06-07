@@ -1,0 +1,34 @@
+experiment_id: Exp0_log_check
+purpose: Verify formula, Guard, and CSV field contracts before large runs.
+scenario: log_check_short
+method: SEESM_Ours
+map_name: sim_env_smoke
+start: [0.0, 0.0, 0.0]
+goal: [8.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+safety_contract:
+  h_see: "||p_rel + tau v_rel|| - R_obs - R_robot - beta_i"
+  guard_upper_bound: "min(beta_bar_i, max(0, h_EE - eta))"
+  fixed_margin_baseline: "beta_i = d_safe"
+required_logs:
+  - robot_log.csv
+  - obstacle_log.csv
+  - margin_guard_log.csv
+  - planner_log.csv
+  - timing_log.csv
+  - event_log.csv
+status: template

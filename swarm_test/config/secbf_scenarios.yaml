@@ -51,6 +51,92 @@ scenarios:
          semantic_class: "box"}
     goal: {x: 20.0, y: 0.0}
 
+  # Exp2: 类别感知单障碍物 sweep，固定几何与运动，只改变类别
+  Exp2_category_box:
+    description: "Exp2 category-aware sanity: single static box on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp2_category_adult:
+    description: "Exp2 category-aware sanity: single static adult on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "adult"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp2_category_child_like:
+    description: "Exp2 category-aware sanity: single static child-like obstacle on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp2_category_cyclist:
+    description: "Exp2 category-aware sanity: single static cyclist on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "cyclist"}
+    goal: {x: 12.0, y: 0.0}
+
+  # Exp3: 上下文调制 sweep，固定 adult 类别和单障碍物，只改变运动上下文
+  Exp3_context_static:
+    description: "Exp3 context modulation: adult static off the path"
+    context: "static"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 2.8, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "adult"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp3_context_same_direction:
+    description: "Exp3 context modulation: adult moving with the robot direction"
+    context: "same_direction"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 5.0, y: 2.8, z: 0.5, offset: 0.0, slower: 10.0,
+         scale_x: 12.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "adult"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp3_context_crossing:
+    description: "Exp3 context modulation: adult crossing the robot path"
+    context: "crossing"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.0, y: -2.8, z: 0.5, offset: 1.5708, slower: 1.5,
+         scale_x: 0.0, scale_y: 7.0, scale_z: 0.0,
+         semantic_class: "adult"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp3_context_frontal_approaching:
+    description: "Exp3 context modulation: adult approaching frontally"
+    context: "frontal_approaching"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 7.5, y: 0.0, z: 0.5, offset: 0.0, slower: 5.0,
+         scale_x: -6.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "adult"}
+    goal: {x: 12.0, y: 0.0}
+
 # 对比基线
 baselines:
   B1_ACBF_fixed:

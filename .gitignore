@@ -1,6 +1,12 @@
 *.bag
 yolov8n.pt
+.catkin_workspace
+build/
+devel/
+**/__pycache__/
+experiments/**/runs*/
 swarm_test/output/*.json
 swarm_test/output/*.csv
 swarm_test/output/**/*.csv
+swarm_test/output/secbf_runs/
 state_estimation/FAST_LIO/PCD/*.pcd

@@ -1,0 +1,28 @@
+experiment_id: Exp3_context_modulation
+purpose: Show that context features modulate beta beyond a static class table.
+scenario: adult_context_sweep
+method: SEESM_Ours
+map_name: corridor_12m_x_6m
+start: [0.0, 0.0, 0.0]
+goal: [12.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 1
+obstacle_classes: [adult]
+motion_patterns: [static, same_direction, crossing, frontal_approaching]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+features_to_log: [cos_delta, TTC, TTC_norm, rho_norm, mu, beta_hat, beta, h_EE, h_SEE]
+metrics: [beta_mean, beta_max, D_min, path_length, travel_time]
+status: template

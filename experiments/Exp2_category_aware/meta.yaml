@@ -1,0 +1,28 @@
+experiment_id: Exp2_category_aware
+purpose: Show that semantic class changes the selected safety margin.
+scenario: single_obstacle_category_sweep
+method: SEESM_Ours
+map_name: corridor_12m_x_6m
+start: [0.0, 0.0, 0.0]
+goal: [12.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 1
+obstacle_classes: [box, adult, child_like, cyclist]
+motion_patterns: [static_on_path]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+baselines: [Fixed_margin, Category_only, SEESM_Ours]
+metrics: [D_min, beta_mean, beta_max, path_length, travel_time, success_rate]
+status: template

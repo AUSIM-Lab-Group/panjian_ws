@@ -1,0 +1,35 @@
+experiment_id: Exp7_runtime
+purpose: Measure module-level and total loop runtime in the main scenario.
+scenario: mixed_dynamic_obstacles_runtime
+method: SEESM_Ours
+map_name: corridor_20m_x_8m
+start: [0.0, 0.0, 0.0]
+goal: [20.0, 0.0, 0.0]
+robot_radius: 0.4
+obstacle_radius: 0.4
+obstacle_count: 6
+obstacle_classes: [box, adult, child_like, cyclist, adult, box]
+beta_table:
+  box: 0.10
+  adult: 0.40
+  child_like: 0.70
+  cyclist: 0.60
+  vehicle: 0.50
+  unknown: 0.40
+guard_eta: 0.10
+guard_enable: true
+guard_tau: 0.20
+mpc_horizon: 20
+dt: 0.10
+random_seed: 1
+timing_modules:
+  - semantic_perception
+  - tracking_prediction
+  - association
+  - margin_generation
+  - safety_guard
+  - global_planning
+  - mpc_secbf
+  - total_loop
+statistics: [mean, max, std, p95]
+status: template

@@ -22,6 +22,14 @@ SCENARIO_INDEX = {
     "S2_child_sudden": 2,
     "S3_feasibility_critical": 3,
     "S4_mixed": 4,
+    "Exp2_category_box": 21,
+    "Exp2_category_adult": 22,
+    "Exp2_category_child_like": 23,
+    "Exp2_category_cyclist": 24,
+    "Exp3_context_static": 31,
+    "Exp3_context_same_direction": 32,
+    "Exp3_context_crossing": 33,
+    "Exp3_context_frontal_approaching": 34,
 }
 
 BASELINES = {
@@ -39,8 +47,53 @@ BASELINES = {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
         "guard_enabled": "true",
+        "experiment_label": "SEESM_Ours",
+    },
+    "Fixed_margin": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "Fixed_margin",
+        "beta_bar": {
+            "box": 0.4,
+            "adult": 0.4,
+            "pedestrian": 0.4,
+            "child": 0.4,
+            "child_like": 0.4,
+            "cyclist": 0.4,
+            "vehicle": 0.4,
+            "unknown": 0.4,
+        },
+        "mu_weights": {"bias": 1.0, "heading": 0.0, "ttc": 0.0, "density": 0.0},
+        "beta_bar_unknown": 0.4,
+    },
+    "Category_only": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "Category_only",
+        "mu_weights": {"bias": 1.0, "heading": 0.0, "ttc": 0.0, "density": 0.0},
+    },
+    "SEESM_Ours": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "SEESM_Ours",
     },
 }
+
+DEFAULT_BETA_BAR = {
+    "box": 0.1,
+    "adult": 0.4,
+    "pedestrian": 0.4,
+    "child": 0.7,
+    "child_like": 0.7,
+    "cyclist": 0.6,
+    "vehicle": 0.5,
+    "unknown": 0.4,
+}
+
+DEFAULT_MU_WEIGHTS = {"bias": 0.6, "heading": 0.2, "ttc": 0.15, "density": 0.1}
 
 
 def repo_root() -> Path:
@@ -58,6 +111,14 @@ def load_scenarios(config_path: Path) -> dict:
 def selected(values, requested):
     if requested == "all":
         return list(values)
+    if "," in requested:
+        result = []
+        for item in requested.split(","):
+            item = item.strip()
+            if item not in values:
+                raise ValueError(f"Unknown selection '{item}'. Valid values: {', '.join(values)} or all")
+            result.append(item)
+        return result
     if requested not in values:
         raise ValueError(f"Unknown selection '{requested}'. Valid values: {', '.join(values)} or all")
     return [requested]
@@ -74,14 +135,89 @@ def write_obstacle_params(run_dir: Path, obstacles: list) -> Path:
     return param_path
 
 
+def baseline_beta_bar(baseline_id: str) -> dict:
+    baseline = BASELINES[baseline_id]
+    values = dict(DEFAULT_BETA_BAR)
+    values.update(baseline.get("beta_bar", {}))
+    return values
+
+
+def baseline_mu_weights(baseline_id: str) -> dict:
+    baseline = BASELINES[baseline_id]
+    values = dict(DEFAULT_MU_WEIGHTS)
+    values.update(baseline.get("mu_weights", {}))
+    return values
+
+
+def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: dict,
+                   classes_arg: str, num_obs: int, duration_sec: int) -> Path:
+    meta_path = run_dir / "meta.yaml"
+    goal = scenario.get("goal", {})
+    map_cfg = scenario.get("map", {})
+    baseline = BASELINES[baseline_id]
+    meta = {
+        "experiment_id": (
+            "Exp2_category_aware" if scenario_id.startswith("Exp2_")
+            else "Exp3_context_modulation" if scenario_id.startswith("Exp3_")
+            else "Exp0_log_check"
+        ),
+        "run_id": run_dir.name,
+        "scenario": scenario_id,
+        "scenario_description": scenario.get("description", ""),
+        "method": baseline.get("experiment_label", baseline_id),
+        "baseline_id": baseline_id,
+        "map_name": "corridor_12m_x_6m" if scenario_id.startswith(("Exp2_", "Exp3_")) else "numerical_simulation",
+        "start": [0.0, 0.0, 0.0],
+        "goal": [float(goal.get("x", 0.0)), float(goal.get("y", 0.0)), 0.0],
+        "map_size": [
+            float(map_cfg.get("x", 50.0)),
+            float(map_cfg.get("y", 50.0)),
+            float(map_cfg.get("z", 3.0)),
+        ],
+        "robot_radius": 0.4,
+        "obstacle_radius": 0.4,
+        "obstacle_count": num_obs,
+        "obstacle_classes": classes_arg,
+        "beta_table": baseline_beta_bar(baseline_id),
+        "mu_weights": baseline_mu_weights(baseline_id),
+        "guard_eta": 0.10,
+        "guard_enable": baseline["guard_enabled"],
+        "guard_tau": 0.20,
+        "mpc_horizon": 20,
+        "dt": 0.10,
+        "random_seed": 1,
+        "duration_sec": duration_sec,
+        "safety_contract": {
+            "h_see": "||p_rel + tau v_rel|| - R_obs - R_robot - beta_i",
+            "guard_upper_bound": "min(beta_bar_i, max(0, h_EE - eta))",
+            "fixed_margin_baseline": "beta_i = d_safe",
+        },
+        "required_logs": [
+            "robot_log.csv",
+            "obstacle_log.csv",
+            "margin_guard_log.csv",
+            "planner_log.csv",
+            "timing_log.csv",
+            "event_log.csv",
+        ],
+    }
+    with meta_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(meta, f, sort_keys=False, allow_unicode=True)
+    return meta_path
+
+
 def obstacle_classes(obstacles: list) -> str:
     classes = [obs.get("semantic_class", "unknown") for obs in obstacles]
     return "[" + ",".join(classes) + "]"
 
 
 def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_params: Path,
-                   classes_arg: str, num_obs: int):
+                   classes_arg: str, num_obs: int, scenario: dict):
     baseline = BASELINES[baseline_id]
+    goal = scenario.get("goal", {})
+    map_cfg = scenario.get("map", {})
+    beta_bar = baseline_beta_bar(baseline_id)
+    mu_weights = baseline_mu_weights(baseline_id)
     common_start = [
         "roslaunch", "swarm_test", "start_test.launch",
         f"scenario_index:={SCENARIO_INDEX[scenario_id]}",
@@ -89,6 +225,9 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
         f"output_dir:={run_dir}",
         f"num_of_obs:={num_obs}",
         f"obstacle_params_file:={obstacle_params}",
+        f"obstacle_classes:={classes_arg}",
+        f"goal_x:={goal.get('x', 21.0)}",
+        f"goal_y:={goal.get('y', 0.0)}",
         "record_data:=true",
     ]
 
@@ -106,6 +245,23 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"guard_enabled:={baseline['guard_enabled']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
+            f"map_size_x:={map_cfg.get('x', 50.0)}",
+            f"map_size_y:={map_cfg.get('y', 50.0)}",
+            f"map_size_z:={map_cfg.get('z', 3.0)}",
+            f"goal_x:={goal.get('x', 10.0)}",
+            f"goal_y:={goal.get('y', 0.0)}",
+            f"beta_bar_box:={beta_bar['box']}",
+            f"beta_bar_adult:={beta_bar['adult']}",
+            f"beta_bar_pedestrian:={beta_bar['pedestrian']}",
+            f"beta_bar_child:={beta_bar['child']}",
+            f"beta_bar_child_like:={beta_bar['child_like']}",
+            f"beta_bar_cyclist:={beta_bar['cyclist']}",
+            f"beta_bar_vehicle:={beta_bar['vehicle']}",
+            f"beta_bar_unknown:={beta_bar['unknown']}",
+            f"mu_bias:={mu_weights['bias']}",
+            f"mu_heading:={mu_weights['heading']}",
+            f"mu_ttc:={mu_weights['ttc']}",
+            f"mu_density:={mu_weights['density']}",
         ]
 
     return planner, common_start
@@ -137,9 +293,9 @@ def stop_process(proc):
 
 
 def run_verify(run_dir: Path):
-    guard_log = run_dir / "guard_log.csv"
+    guard_log = guard_log_path(run_dir)
     if not guard_log.exists():
-        return False, "guard_log.csv not found"
+        return False, "margin_guard_log.csv not found"
     cmd = [
         sys.executable,
         str(repo_root() / "swarm_test/scripts/verify_safety_bound.py"),
@@ -201,11 +357,18 @@ def summarize_guard_log(guard_log: Path) -> dict:
     return metrics
 
 
+def guard_log_path(run_dir: Path) -> Path:
+    margin_log = run_dir / "margin_guard_log.csv"
+    if margin_log.exists():
+        return margin_log
+    return run_dir / "guard_log.csv"
+
+
 def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                   verify_passed, verify_note, duration_sec):
     summary_md = run_dir / "summary.md"
     summary_csv = run_dir / "summary.csv"
-    guard_log = run_dir / "guard_log.csv"
+    guard_log = guard_log_path(run_dir)
     data_summary = run_dir / "data_processor_summary.csv"
     data_distance = run_dir / "data_processor_distance.csv"
     guard_metrics = summarize_guard_log(guard_log)
@@ -214,7 +377,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"# {scenario_id} / {baseline_id}",
         "",
         f"- duration_sec: {duration_sec}",
-        f"- guard_log_exists: {guard_log.exists()}",
+        f"- margin_guard_log_exists: {guard_log.exists()}",
         f"- data_processor_summary_exists: {data_summary.exists()}",
         f"- data_processor_distance_exists: {data_distance.exists()}",
         f"- safety_bound_passed: {verify_passed}",
@@ -269,7 +432,7 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
     classes_arg = obstacle_classes(obstacles)
     obstacle_params = run_dir / "obstacles_param.yaml"
     planner_cmd, start_cmd = build_commands(
-        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles)
+        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
     )
 
     commands = [("planner", planner_cmd), ("start_test", start_cmd)]
@@ -283,8 +446,9 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
 
     run_dir.mkdir(parents=True, exist_ok=True)
     obstacle_params = write_obstacle_params(run_dir, obstacles)
+    write_run_meta(run_dir, scenario_id, baseline_id, scenario, classes_arg, len(obstacles), args.duration_sec)
     planner_cmd, start_cmd = build_commands(
-        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles)
+        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
     )
 
     processes = []
@@ -340,6 +504,7 @@ def main():
     parser.add_argument("--scenario", default="all")
     parser.add_argument("--baseline", default="all")
     parser.add_argument("--duration-sec", type=int, default=90)
+    parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--output-root", default=str(default_output))
     parser.add_argument("--roscore", choices=["auto", "external"], default="auto")
     parser.add_argument("--dry-run", action="store_true")
@@ -352,11 +517,13 @@ def main():
     scenarios = load_scenarios(Path(args.config))
     scenario_ids = selected(SCENARIO_INDEX.keys(), args.scenario)
     baseline_ids = selected(BASELINES.keys(), args.baseline)
-    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    for scenario_id in scenario_ids:
-        for baseline_id in baseline_ids:
-            run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp)
+    for repeat_idx in range(args.repeat):
+        timestamp = base_timestamp if args.repeat == 1 else f"{base_timestamp}_r{repeat_idx + 1:02d}"
+        for scenario_id in scenario_ids:
+            for baseline_id in baseline_ids:
+                run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,10 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <Eigen/Dense>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "mpc_secbf/mpc_secbf.h"
@@ -29,6 +32,10 @@ public:
         if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
             nh_.param("robot/radius", robot_radius, 0.4);
         }
+        std::string planner_log_path;
+        std::string timing_log_path;
+        nh_.param<std::string>("planner_log_path", planner_log_path, "");
+        nh_.param<std::string>("timing_log_path", timing_log_path, "");
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -38,6 +45,11 @@ public:
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius);
+
+        openCsv(planner_csv_, planner_log_path,
+                "t,mpc_status,cmd_v,cmd_w,obs_count,beta_count,used_fallback,slack,solve_time_ms\n");
+        openCsv(timing_csv_, timing_log_path,
+                "t,mpc_secbf_ms,total_loop_time_ms\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -61,7 +73,23 @@ public:
         ROS_INFO("MPC-SECBF node started. freq=%.1f Hz, N=%d, Ts=%.2f", mpc_freq, N, Ts);
     }
 
+    ~MpcSecbfNode() {
+        if (planner_csv_.is_open()) planner_csv_.close();
+        if (timing_csv_.is_open()) timing_csv_.close();
+    }
+
 private:
+    void openCsv(std::ofstream& file, const std::string& path, const std::string& header) {
+        if (path.empty()) return;
+        file.open(path, std::ios::out);
+        if (file.is_open()) {
+            file << std::fixed << std::setprecision(9);
+            file << header;
+        } else {
+            ROS_WARN("Failed to open CSV log path: %s", path.c_str());
+        }
+    }
+
     void odomCb(const nav_msgs::OdometryConstPtr& msg) {
         std::lock_guard<std::mutex> lock(odom_mutex_);
         Eigen::Quaterniond q(msg->pose.pose.orientation.w,
@@ -123,10 +151,13 @@ private:
         ros::Time t0 = ros::Time::now();
 
         // Solve MPC-SECBF
+        std::string mpc_status = "success";
+        bool used_fallback = false;
         bool success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
 
         if (!success) {
             // Fallback: try without CBF constraints (empty beta)
+            used_fallback = true;
             std::vector<double> empty_beta;
             Eigen::MatrixXd empty_obs(7, 0);
             success = solver_.solve(&cur_state_, &goal_state_, &empty_obs, empty_beta);
@@ -136,8 +167,11 @@ private:
                 ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Both SECBF and fallback infeasible, STOPPING");
                 cmd_vel_.linear.x = 0.0;
                 cmd_vel_.angular.z = 0.0;
+                double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+                writePlannerCsv("zero", used_fallback, cost_ms, 0.0);
                 return;
             } else {
+                mpc_status = "fallback";
                 ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
         }
@@ -157,7 +191,31 @@ private:
         }
 
         double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+        writePlannerCsv(mpc_status, used_fallback, cost_ms, 0.0);
         std::cout << "\033[38;2;0;200;100m MPC-SECBF replan_time =: \033[0m" << cost_ms << "ms" << std::endl;
+    }
+
+    void writePlannerCsv(const std::string& mpc_status, bool used_fallback, double solve_time_ms, double slack) {
+        const double t = ros::Time::now().toSec();
+        const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
+        if (planner_csv_.is_open()) {
+            planner_csv_ << t << ","
+                         << mpc_status << ","
+                         << cmd_vel_.linear.x << ","
+                         << cmd_vel_.angular.z << ","
+                         << obs_count << ","
+                         << beta_list_.size() << ","
+                         << (used_fallback ? 1 : 0) << ","
+                         << slack << ","
+                         << solve_time_ms << "\n";
+            planner_csv_.flush();
+        }
+        if (timing_csv_.is_open()) {
+            timing_csv_ << t << ","
+                        << solve_time_ms << ","
+                        << solve_time_ms << "\n";
+            timing_csv_.flush();
+        }
     }
 
     void chooseGoalState() {
@@ -230,6 +288,7 @@ private:
     std::vector<double> beta_list_;
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
+    std::ofstream planner_csv_, timing_csv_;
 };
 
 int main(int argc, char** argv) {

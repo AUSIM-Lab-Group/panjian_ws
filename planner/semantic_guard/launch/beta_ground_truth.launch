@@ -7,6 +7,18 @@
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
+  <arg name="beta_bar_box" default="0.1"/>
+  <arg name="beta_bar_adult" default="0.4"/>
+  <arg name="beta_bar_pedestrian" default="0.4"/>
+  <arg name="beta_bar_child" default="0.7"/>
+  <arg name="beta_bar_child_like" default="0.7"/>
+  <arg name="beta_bar_cyclist" default="0.6"/>
+  <arg name="beta_bar_vehicle" default="0.5"/>
+  <arg name="beta_bar_unknown" default="0.4"/>
+  <arg name="mu_bias" default="0.6"/>
+  <arg name="mu_heading" default="0.2"/>
+  <arg name="mu_ttc" default="0.15"/>
+  <arg name="mu_density" default="0.1"/>
 
   <node pkg="semantic_guard" type="beta_ground_truth_node" name="beta_ground_truth_node" output="screen">
     <rosparam file="$(arg config_file)" subst_value="true"/>
@@ -15,6 +27,18 @@
     <param name="guard/enabled" value="$(arg guard_enabled)"/>
     <param name="scenario_id" value="$(arg scenario_id)"/>
     <param name="baseline_id" value="$(arg baseline_id)"/>
+    <param name="beta_bar/box" value="$(arg beta_bar_box)"/>
+    <param name="beta_bar/adult" value="$(arg beta_bar_adult)"/>
+    <param name="beta_bar/pedestrian" value="$(arg beta_bar_pedestrian)"/>
+    <param name="beta_bar/child" value="$(arg beta_bar_child)"/>
+    <param name="beta_bar/child_like" value="$(arg beta_bar_child_like)"/>
+    <param name="beta_bar/cyclist" value="$(arg beta_bar_cyclist)"/>
+    <param name="beta_bar/vehicle" value="$(arg beta_bar_vehicle)"/>
+    <param name="beta_bar/unknown" value="$(arg beta_bar_unknown)"/>
+    <param name="mu_weights/bias" value="$(arg mu_bias)"/>
+    <param name="mu_weights/heading" value="$(arg mu_heading)"/>
+    <param name="mu_weights/ttc" value="$(arg mu_ttc)"/>
+    <param name="mu_weights/density" value="$(arg mu_density)"/>
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <rosparam param="obstacle_classes" subst_value="true">$(arg obstacle_classes)</rosparam>
   </node>

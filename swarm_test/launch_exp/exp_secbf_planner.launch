@@ -2,14 +2,15 @@
   <!-- MPC-SECBF 实车完整链路 -->
   <param name="/use_sim_time" value="false"/>
 
-  <arg name="mpc_frequency" value="10"/>
-  <arg name="pre_step"      value="20"/>
-  <arg name="step_time"     value="0.2"/>
-  <arg name="v_max"         value="0.5"/>
-  <arg name="gamma"         value="0.35"/>
-  <arg name="front_adsm"    value="true"/>
-  <arg name="static_path"   value="false"/>
-  <arg name="search_horizon" value="9.0"/>
+  <arg name="mpc_frequency" default="10"/>
+  <arg name="pre_step"      default="20"/>
+  <arg name="step_time"     default="0.2"/>
+  <arg name="v_max"         default="0.5"/>
+  <arg name="gamma"         default="0.35"/>
+  <arg name="front_adsm"    default="true"/>
+  <arg name="static_path"   default="false"/>
+  <arg name="search_horizon" default="9.0"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="map_size_x" default="50.0"/>
   <arg name="map_size_y" default="50.0"/>
   <arg name="map_size_z" default="3.0"/>
@@ -25,7 +26,7 @@
     <param name="mpc/gamma"         value="$(arg gamma)"/>
     <param name="mpc/beta_bar_unknown" value="0.4"/>
     <remap from="/Odometry" to="/Odometry"/>
-    <remap from="/cmd_vel"  to="/cmd_vel"/>
+    <remap from="/cmd_vel"  to="$(arg cmd_vel_topic)"/>
     <remap from="/globalFsm_by_adsm/obs_predict_pub" to="/globalFsm_by_adsm/obs_predict_pub"/>
   </node>
 

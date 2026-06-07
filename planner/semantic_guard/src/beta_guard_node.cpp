@@ -19,7 +19,9 @@ public:
     BetaGuardNode(ros::NodeHandle& nh) : nh_(nh) {
         // Load beta_bar from params
         nh_.param("beta_bar/pedestrian", beta_bar_["pedestrian"], 0.4);
+        nh_.param("beta_bar/adult",      beta_bar_["adult"],      0.4);
         nh_.param("beta_bar/child",      beta_bar_["child"],      0.7);
+        nh_.param("beta_bar/child_like", beta_bar_["child_like"], 0.7);
         nh_.param("beta_bar/cyclist",    beta_bar_["cyclist"],    0.6);
         nh_.param("beta_bar/vehicle",    beta_bar_["vehicle"],    0.5);
         nh_.param("beta_bar/box",        beta_bar_["box"],        0.1);
@@ -49,7 +51,7 @@ public:
                 csv_file_ << std::fixed << std::setprecision(9);
                 csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
                           << "guard_upper_bound,guard_passed,guard_status,"
-                          << "d_i,rel_v_norm,ttc,inv_ttc,cos_delta,rho_i,group_flag,"
+                          << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
                           << "h_ee,h_see,R_base,R_sem\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
             }
@@ -121,15 +123,16 @@ private:
             double ttc = (closing_speed > 1e-6) ? (d_i / closing_speed)
                                                 : std::numeric_limits<double>::infinity();
             double inv_ttc = std::isfinite(ttc) && ttc > 1e-6 ? 1.0 / ttc : 0.0;
+            double ttc_norm = obs.ttc_norm;
+            double rho_norm = obs.density_norm;
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
             double h_ee = lookahead_rel_pos.norm() - obs.radius - robot_radius_;
-            double guard_upper_bound = h_ee - eta_;
+            double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
 
-            // Step 3: Guard check: β̂ ≤ h_EE - η
-            // Ensures h_SEE = h_EE - β ≥ -η (feasibility guarantee)
+            // Step 3: Guard check against the feasible semantic-margin bound.
             bool guard_pass = guard_enabled_ ? (beta_hat <= guard_upper_bound) : true;
 
-            // Step 4: Apply with rate limiting
+            // Step 4: Apply rate limiting, projection, and last-value fallback.
             double beta_final;
             double beta_prev = getPrevBeta(obs.id);
             std::string guard_status;
@@ -137,18 +140,23 @@ private:
             if (!guard_enabled_) {
                 beta_final = beta_hat;
                 guard_status = "disabled";
-            } else if (guard_pass) {
-                double delta = beta_hat - beta_prev;
-                delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, delta));
-                beta_final = beta_prev + delta;
-                guard_status = (std::abs(delta - (beta_hat - beta_prev)) > 1e-9) ? "rate_limited" : "accept";
-            } else {
-                beta_final = beta_prev;  // Rollback
+            } else if (guard_upper_bound <= 1e-9) {
+                beta_final = 0.0;
                 total_rollbacks_++;
-                guard_status = "rollback";
+                guard_status = "zero";
+            } else if (guard_pass) {
+                double raw_delta = beta_hat - beta_prev;
+                double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta));
+                double beta_limited = beta_prev + delta;
+                beta_final = std::min(std::max(0.0, beta_limited), guard_upper_bound);
+                guard_status = (std::abs(beta_final - beta_hat) > 1e-9 ||
+                                std::abs(delta - raw_delta) > 1e-9) ? "project" : "accept";
+            } else {
+                beta_final = std::min(std::max(0.0, beta_prev), guard_upper_bound);
+                total_rollbacks_++;
+                guard_status = (beta_final > 1e-9) ? "fallback" : "zero";
             }
 
-            // Ensure non-negative
             beta_final = std::max(0.0, beta_final);
             double h_see = h_ee - beta_final;
             double r_base = obs.radius + robot_radius_;
@@ -174,8 +182,8 @@ private:
                           << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
                           << guard_status << ","
                           << d_i << "," << rel_v_norm << ","
-                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << inv_ttc << ","
-                          << cos_delta << "," << obs.density_norm << ",0,"
+                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << ttc_norm << "," << inv_ttc << ","
+                          << cos_delta << "," << obs.density_norm << "," << rho_norm << ",0,"
                           << h_ee << "," << h_see << ","
                           << r_base << "," << r_sem << "\n";
             }

@@ -27,7 +27,9 @@ public:
     BetaGroundTruthNode(ros::NodeHandle& nh) : nh_(nh) {
         // Load beta_bar
         nh_.param("beta_bar/pedestrian", beta_bar_["pedestrian"], 0.4);
+        nh_.param("beta_bar/adult",      beta_bar_["adult"],      0.4);
         nh_.param("beta_bar/child",      beta_bar_["child"],      0.7);
+        nh_.param("beta_bar/child_like", beta_bar_["child_like"], 0.7);
         nh_.param("beta_bar/cyclist",    beta_bar_["cyclist"],    0.6);
         nh_.param("beta_bar/vehicle",    beta_bar_["vehicle"],    0.5);
         nh_.param("beta_bar/box",        beta_bar_["box"],        0.1);
@@ -64,7 +66,7 @@ public:
                 csv_file_ << std::fixed << std::setprecision(9);
                 csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
                           << "guard_upper_bound,guard_passed,guard_status,"
-                          << "d_i,rel_v_norm,ttc,inv_ttc,cos_delta,rho_i,group_flag,"
+                          << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
                           << "h_ee,h_see,R_base,R_sem\n";
             }
         }
@@ -166,25 +168,31 @@ private:
             // h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
             double h_ee = lookahead_rel_pos.norm() - obs_r - robot_radius_;
-            double guard_upper_bound = h_ee - eta_;
+            double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
             bool guard_pass = guard_enabled_ ? (beta_hat <= guard_upper_bound) : true;
 
-            // Apply with rate limiting
+            // Apply rate limiting, projection, and last-value fallback.
             double beta_prev = getPrevBeta(idx);
             double beta_final;
             std::string guard_status;
             if (!guard_enabled_) {
                 beta_final = beta_hat;
                 guard_status = "disabled";
+            } else if (guard_upper_bound <= 1e-9) {
+                beta_final = 0.0;
+                total_rollbacks_++;
+                guard_status = "zero";
             } else if (guard_pass) {
                 double raw_delta = beta_hat - beta_prev;
                 double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta));
-                beta_final = beta_prev + delta;
-                guard_status = (std::abs(delta - raw_delta) > 1e-9) ? "rate_limited" : "accept";
+                double beta_limited = beta_prev + delta;
+                beta_final = std::min(std::max(0.0, beta_limited), guard_upper_bound);
+                guard_status = (std::abs(beta_final - beta_hat) > 1e-9 ||
+                                std::abs(delta - raw_delta) > 1e-9) ? "project" : "accept";
             } else {
-                beta_final = beta_prev;
+                beta_final = std::min(std::max(0.0, beta_prev), guard_upper_bound);
                 total_rollbacks_++;
-                guard_status = "rollback";
+                guard_status = (beta_final > 1e-9) ? "fallback" : "zero";
             }
             beta_final = std::max(0.0, beta_final);
             double h_see = h_ee - beta_final;
@@ -209,8 +217,8 @@ private:
                           << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
                           << guard_status << ","
                           << d_i << "," << rel_v_norm << ","
-                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << inv_ttc << ","
-                          << cos_delta << "," << density_norm << ",0,"
+                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << ttc_norm << "," << inv_ttc << ","
+                          << cos_delta << "," << density_norm << "," << density_norm << ",0,"
                           << h_ee << "," << h_see << ","
                           << r_base << "," << r_sem << "\n";
             }
@@ -232,7 +240,9 @@ private:
         // Color map per class: R, G, B
         auto getColor = [](const std::string& cls) -> std::tuple<float,float,float> {
             if (cls == "pedestrian") return {0.0, 1.0, 0.0};       // 绿色
+            if (cls == "adult")      return {0.0, 1.0, 0.0};       // 绿色
             if (cls == "child")      return {1.0, 0.5, 0.0};       // 橙色
+            if (cls == "child_like") return {1.0, 0.5, 0.0};       // 橙色
             if (cls == "cyclist")    return {1.0, 1.0, 0.0};       // 黄色
             if (cls == "vehicle")    return {1.0, 0.0, 0.0};       // 红色
             if (cls == "box")        return {0.5, 0.5, 0.5};       // 灰色
