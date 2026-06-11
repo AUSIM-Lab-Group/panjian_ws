@@ -328,6 +328,30 @@ static              0.265653
 
 回滚：
 - 删除 `.gitignore` 中本条新增模式，并从 memory 删除本条记录。
+
+### 2026-06-07 - 撰写 Exp2/Exp3 组件实验报告
+
+改动目的：
+- 用户要求分析 Phase 6.1 Exp2 类别感知实验和 Phase 6.2 Exp3 上下文调制实验结果，并写成实验报告。
+
+改动文件：
+- `experiments/Exp2_Exp3_实验报告.md`
+- `.kiro/specs/semantic-safety-margin/memory.md`
+
+关键内容：
+- 整理 Exp2 数据来源、实验目的、设置、运行命令、分析命令、结果表格和结论。
+- 明确 Exp2 当前为 4 类别 × 3 方法 × 1 次 sanity，`SEESM_Ours` 的 `beta_mean` 满足 `child_like > cyclist > adult > box`。
+- 整理 Exp3 数据来源、实验目的、设置、运行命令、分析命令、结果表格和结论。
+- 明确 Exp3 当前为 4 个上下文 × `SEESM_Ours` × 1 次 sanity，`beta_max` 满足 `frontal_approaching > crossing > same_direction > static`，但 `beta_mean` 中 crossing 与 same_direction 仍接近，需要多 seed 或更长统计窗口确认。
+- 报告中特别说明当前 sanity 的 `success=0` 不作为到达率结论，后续需延长仿真时间或调整到达判定。
+- 写入可用于论文的中英文保守表述。
+
+验证/证据：
+- 读取 `experiments/Exp2_category_aware/analysis/exp2_summary_stats.csv` 和 `experiments/Exp3_context_modulation/analysis/exp3_summary_stats.csv` 核对数值。
+- 后续通过路径存在性检查确认报告引用的 CSV 和 PNG 文件均存在。
+
+回滚：
+- 删除 `experiments/Exp2_Exp3_实验报告.md`，并删除本 memory 条目。
 - 当前 `论文公式.md` 在 git 状态中显示为未跟踪文件，后续提交前需确认是否加入版本控制。
 
 ### 2026-06-07 - 实验设置收缩为可执行投稿最小包
