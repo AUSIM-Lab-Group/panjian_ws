@@ -38,6 +38,11 @@ public:
         nh_.param("guard/eta",            eta_,            0.1);
         nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
         nh_.param("guard/tau",            tau_,            0.2);
+        nh_.param<std::string>("semantic_mode", semantic_mode_, "full");
+        nh_.param("guard/enable_rate_limit", enable_rate_limit_, true);
+        nh_.param("guard/enable_available_projection", enable_available_projection_, true);
+        nh_.param("guard/enable_guard_fallback", enable_guard_fallback_, true);
+        nh_.param("fixed_beta", fixed_beta_, 0.4);
 
         // Robot params
         nh_.param("robot/radius", robot_radius_, 0.4);
@@ -51,6 +56,7 @@ public:
                 csv_file_ << std::fixed << std::setprecision(9);
                 csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
                           << "guard_upper_bound,guard_passed,guard_status,"
+                          << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
                           << "h_ee,h_see,R_base,R_sem\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
@@ -68,8 +74,8 @@ public:
         total_rollbacks_ = 0;
         has_odom_ = false;
 
-        ROS_INFO("BetaGuardNode initialized. guard_enabled=%s, eta=%.2f, max_delta_beta=%.2f, tau=%.2f",
-                 guard_enabled_ ? "true" : "false", eta_, max_delta_beta_, tau_);
+        ROS_INFO("BetaGuardNode initialized. guard_enabled=%s, semantic_mode=%s, eta=%.2f, max_delta_beta=%.2f, tau=%.2f",
+                 guard_enabled_ ? "true" : "false", semantic_mode_.c_str(), eta_, max_delta_beta_, tau_);
     }
 
     ~BetaGuardNode() {
@@ -103,7 +109,7 @@ private:
                         + w_ttc_ * obs.ttc_norm
                         + w_density_ * obs.density_norm));
 
-            double beta_hat = beta_bar_val * mu;
+            double beta_hat = computeRequestedBeta(beta_bar_val, mu);
 
             // Step 2: Compute h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
             Eigen::Vector2d obs_pos(obs.position.x, obs.position.y);
@@ -130,34 +136,47 @@ private:
             double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
 
             // Step 3: Guard check against the feasible semantic-margin bound.
-            bool guard_pass = guard_enabled_ ? (beta_hat <= guard_upper_bound) : true;
+            bool guard_pass = guard_enabled_
+                ? (!enable_available_projection_ || !enable_guard_fallback_ || beta_hat <= guard_upper_bound)
+                : true;
 
             // Step 4: Apply rate limiting, projection, and last-value fallback.
             double beta_final;
             double beta_prev = getPrevBeta(obs.id);
+            double beta_before_projection = beta_hat;
             std::string guard_status;
+            bool rate_limit_active = false;
+            bool projection_active = false;
 
             if (!guard_enabled_) {
                 beta_final = beta_hat;
                 guard_status = "disabled";
-            } else if (guard_upper_bound <= 1e-9) {
+            } else if (enable_available_projection_ && enable_guard_fallback_ && guard_upper_bound <= 1e-9) {
                 beta_final = 0.0;
                 total_rollbacks_++;
                 guard_status = "zero";
             } else if (guard_pass) {
                 double raw_delta = beta_hat - beta_prev;
-                double delta = std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta));
+                double delta = enable_rate_limit_
+                    ? std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta))
+                    : raw_delta;
+                rate_limit_active = std::abs(delta - raw_delta) > 1e-9;
                 double beta_limited = beta_prev + delta;
-                beta_final = std::min(std::max(0.0, beta_limited), guard_upper_bound);
+                beta_before_projection = clampSemanticBeta(beta_limited, beta_bar_val);
+                beta_final = projectAvailable(beta_before_projection, guard_upper_bound);
+                projection_active = std::abs(beta_final - beta_before_projection) > 1e-9;
                 guard_status = (std::abs(beta_final - beta_hat) > 1e-9 ||
                                 std::abs(delta - raw_delta) > 1e-9) ? "project" : "accept";
             } else {
-                beta_final = std::min(std::max(0.0, beta_prev), guard_upper_bound);
+                beta_before_projection = clampSemanticBeta(beta_prev, beta_bar_val);
+                beta_final = projectAvailable(beta_before_projection, guard_upper_bound);
+                projection_active = std::abs(beta_final - beta_before_projection) > 1e-9;
                 total_rollbacks_++;
-                guard_status = (beta_final > 1e-9) ? "fallback" : "zero";
+                guard_status = enable_guard_fallback_ && beta_final > 1e-9 ? "fallback" : "zero";
             }
 
             beta_final = std::max(0.0, beta_final);
+            double delta_beta = std::max(0.0, beta_final - beta_prev);
             double h_see = h_ee - beta_final;
             double r_base = obs.radius + robot_radius_;
             double r_sem = r_base + beta_final;
@@ -181,6 +200,9 @@ private:
                           << beta_hat << "," << beta_final << ","
                           << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
                           << guard_status << ","
+                          << semantic_mode_ << "," << delta_beta << ","
+                          << (rate_limit_active ? 1 : 0) << ","
+                          << (projection_active ? 1 : 0) << ","
                           << d_i << "," << rel_v_norm << ","
                           << (std::isfinite(ttc) ? ttc : -1.0) << "," << ttc_norm << "," << inv_ttc << ","
                           << cos_delta << "," << obs.density_norm << "," << rho_norm << ",0,"
@@ -197,7 +219,30 @@ private:
 
     double getPrevBeta(uint32_t id) {
         if (beta_prev_.count(id)) return beta_prev_[id];
-        return beta_bar_["unknown"];  // First time: use unknown default
+        return 0.0;
+    }
+
+    double computeRequestedBeta(double beta_bar_val, double mu) const {
+        if (semantic_mode_ == "none") return 0.0;
+        if (semantic_mode_ == "fixed") return fixed_beta_;
+        if (semantic_mode_ == "category_only") return beta_bar_val;
+        if (semantic_mode_ == "context_only") {
+            auto it = beta_bar_.find("unknown");
+            double context_beta_bar = (it != beta_bar_.end()) ? it->second : 0.4;
+            return context_beta_bar * mu;
+        }
+        return beta_bar_val * mu;
+    }
+
+    double clampSemanticBeta(double beta, double beta_bar_val) const {
+        double upper = semantic_mode_ == "fixed" ? std::max(fixed_beta_, beta_bar_val) : beta_bar_val;
+        if (semantic_mode_ == "none") upper = 0.0;
+        return std::min(std::max(0.0, beta), upper);
+    }
+
+    double projectAvailable(double beta, double guard_upper_bound) const {
+        if (!enable_available_projection_) return beta;
+        return std::min(std::max(0.0, beta), guard_upper_bound);
     }
 
     ros::NodeHandle nh_;
@@ -207,9 +252,10 @@ private:
     // Config
     std::map<std::string, double> beta_bar_;
     double w_bias_, w_head_, w_ttc_, w_density_;
-    double eta_, max_delta_beta_, tau_;
+    double eta_, max_delta_beta_, tau_, fixed_beta_;
     double robot_radius_;
-    bool guard_enabled_;
+    bool guard_enabled_, enable_rate_limit_, enable_available_projection_, enable_guard_fallback_;
+    std::string semantic_mode_;
 
     // State
     Eigen::Vector3d robot_pos_;

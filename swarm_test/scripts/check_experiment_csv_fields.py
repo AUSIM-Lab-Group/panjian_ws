@@ -13,8 +13,13 @@ FILE_FIELDS = {
     "margin_guard_log.csv": {
         "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
         "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
     },
-    "planner_log.csv": {"t", "mpc_status", "cmd_v", "cmd_w", "slack", "solve_time_ms"},
+    "planner_log.csv": {
+        "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
+        "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
+        "solve_time_ms", "mpc_feasibility_guard_used",
+    },
     "timing_log.csv": {"t", "mpc_secbf_ms", "total_loop_time_ms"},
     "event_log.csv": {"t", "event", "detail"},
 }
@@ -30,11 +35,13 @@ PAPER_FIELDS = {
     "beta_bar": [("margin_guard_log.csv", "beta_bar")],
     "beta_hat": [("margin_guard_log.csv", "beta_requested")],
     "beta": [("margin_guard_log.csv", "beta_applied")],
+    "delta_beta": [("margin_guard_log.csv", "delta_beta")],
     "guard_upper_bound": [("margin_guard_log.csv", "guard_upper_bound")],
     "h_EE": [("obstacle_log.csv", "h_EE"), ("margin_guard_log.csv", "h_ee")],
     "h_SEE": [("margin_guard_log.csv", "h_see")],
-    "slack": [("planner_log.csv", "slack")],
+    "slack": [("planner_log.csv", "slack"), ("planner_log.csv", "slack_max")],
     "mpc_status": [("planner_log.csv", "mpc_status")],
+    "mpc_feasibility_guard_used": [("planner_log.csv", "mpc_feasibility_guard_used")],
 }
 
 

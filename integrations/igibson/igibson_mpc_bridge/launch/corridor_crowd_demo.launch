@@ -1,0 +1,64 @@
+<launch>
+  <arg name="start_igibson_demo" default="false"/>
+  <arg name="igibson_mode" default="gui_non_interactive"/>
+  <arg name="config_file" default="$(find igibson_mpc_bridge)/config/corridor_crowd.yaml"/>
+  <arg name="frame_id" default="odom"/>
+
+  <arg name="cmd_vel_input" default="/cmd_vel_secbf_dryrun"/>
+  <arg name="cmd_vel_output" default="/mobile_base/commands/velocity"/>
+  <arg name="max_linear" default="0.3"/>
+  <arg name="max_angular" default="0.8"/>
+
+  <arg name="scripted_state_topic" default="/scripted_pedestrian_states"/>
+  <arg name="pedestrian_state_topic" default="/pedestrian_states"/>
+  <arg name="pedestrian_marker_topic" default="/pedestrian_markers"/>
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="personal_space_threshold" default="1.2"/>
+  <arg name="robot_radius" default="0.35"/>
+  <arg name="log_dir" default="$(optenv PANJIAN_WS /home/lxr20/lxr/panjian_ws)/integrations/igibson/logs"/>
+  <arg name="run_health_check" default="false"/>
+
+  <group if="$(arg start_igibson_demo)">
+    <include file="$(find igibson_mpc_bridge)/launch/igibson_corridor_crowd_sim.launch">
+      <arg name="config_file" value="$(arg config_file)"/>
+      <arg name="mode" value="$(arg igibson_mode)"/>
+      <arg name="pedestrian_state_topic" value="$(arg pedestrian_state_topic)"/>
+    </include>
+  </group>
+
+  <include file="$(find igibson_mpc_bridge)/launch/igibson_minimal_bridge.launch">
+    <arg name="igibson_odom_topic" value="/odom"/>
+    <arg name="igibson_rgb_topic" value="/gibson_ros/camera/rgb/image"/>
+    <arg name="igibson_depth_topic" value="/gibson_ros/camera/depth/image"/>
+    <arg name="igibson_points_topic" value="/gibson_ros/lidar/points"/>
+    <arg name="odom_topic" value="$(arg odom_topic)"/>
+    <arg name="cmd_vel_input" value="$(arg cmd_vel_input)"/>
+    <arg name="cmd_vel_output" value="$(arg cmd_vel_output)"/>
+    <arg name="max_linear" value="$(arg max_linear)"/>
+    <arg name="max_angular" value="$(arg max_angular)"/>
+    <arg name="run_health_check" value="$(arg run_health_check)"/>
+  </include>
+
+  <node pkg="igibson_mpc_bridge" type="scripted_pedestrian_manager.py"
+        name="scripted_pedestrian_manager" output="screen">
+    <param name="config" value="$(arg config_file)"/>
+    <param name="state_topic" value="$(arg scripted_state_topic)"/>
+  </node>
+
+  <node pkg="igibson_mpc_bridge" type="pedestrian_state_publisher.py"
+        name="pedestrian_state_publisher" output="screen">
+    <param name="input_topic" value="$(arg scripted_state_topic)"/>
+    <param name="output_topic" value="$(arg pedestrian_state_topic)"/>
+    <param name="marker_topic" value="$(arg pedestrian_marker_topic)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+  </node>
+
+  <node pkg="igibson_mpc_bridge" type="corridor_metrics_logger.py"
+        name="corridor_metrics_logger" output="screen">
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="states_topic" value="$(arg pedestrian_state_topic)"/>
+    <param name="robot_radius" value="$(arg robot_radius)" type="double"/>
+    <param name="personal_space_threshold" value="$(arg personal_space_threshold)" type="double"/>
+    <param name="log_dir" value="$(arg log_dir)"/>
+  </node>
+</launch>

@@ -1,0 +1,2 @@
+This directory contains optional iGibson integration assets.
+Do not build it in the main panjian_ws catkin workspace.

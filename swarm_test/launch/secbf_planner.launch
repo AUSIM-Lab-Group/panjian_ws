@@ -20,6 +20,14 @@
   <arg name="scenario_id" default="S4_mixed"/>
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
+  <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="semantic_mode" default="full"/>
+  <arg name="enable_rate_limit" default="true"/>
+  <arg name="enable_available_projection" default="true"/>
+  <arg name="enable_guard_fallback" default="true"/>
+  <arg name="fixed_beta" default="0.4"/>
+  <arg name="epsilon_max" default="0.05"/>
+  <arg name="slack_weight" default="1000.0"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
   <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
   <arg name="beta_bar_box" default="0.1"/>
@@ -80,6 +88,11 @@
     <arg name="log_path" value="$(arg output_dir)/margin_guard_log.csv"/>
     <arg name="pre_step" value="$(arg pre_step)"/>
     <arg name="guard_enabled" value="$(arg guard_enabled)"/>
+    <arg name="semantic_mode" value="$(arg semantic_mode)"/>
+    <arg name="enable_rate_limit" value="$(arg enable_rate_limit)"/>
+    <arg name="enable_available_projection" value="$(arg enable_available_projection)"/>
+    <arg name="enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
+    <arg name="fixed_beta" value="$(arg fixed_beta)"/>
     <arg name="scenario_id" value="$(arg scenario_id)"/>
     <arg name="baseline_id" value="$(arg baseline_id)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
@@ -107,6 +120,9 @@
     <arg name="gamma" value="$(arg gamma)"/>
     <arg name="beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
     <arg name="robot_radius" value="0.4"/>
+    <arg name="epsilon_max" value="$(arg epsilon_max)"/>
+    <arg name="slack_weight" value="$(arg slack_weight)"/>
+    <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="cmd_vel_topic" value="/cmd_vel1"/>
     <arg name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub"/>

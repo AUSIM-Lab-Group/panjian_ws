@@ -1,0 +1,14 @@
+<launch>
+  <arg name="config_file" default="$(find igibson_mpc_bridge)/config/corridor_crowd.yaml"/>
+  <arg name="igibson_config" default=""/>
+  <arg name="mode" default="gui_non_interactive"/>
+  <arg name="pedestrian_state_topic" default="/pedestrian_states"/>
+
+  <node pkg="igibson_mpc_bridge" type="igibson_corridor_crowd_sim.py"
+        name="igibson_corridor_crowd_sim" output="screen">
+    <param name="config" value="$(arg config_file)"/>
+    <param name="igibson_config" value="$(arg igibson_config)"/>
+    <param name="mode" value="$(arg mode)"/>
+    <param name="pedestrian_state_topic" value="$(arg pedestrian_state_topic)"/>
+  </node>
+</launch>

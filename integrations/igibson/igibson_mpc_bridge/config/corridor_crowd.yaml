@@ -1,0 +1,65 @@
+corridor:
+  frame_id: odom
+  length: 8.0
+  width: 2.0
+
+robot:
+  start: [-3.5, 0.0, 0.0]
+  goal: [3.5, 0.0, 0.0]
+  radius: 0.35
+  max_linear_speed: 0.8
+
+visualization:
+  mode: marker_cylinder
+  marker_height: 1.7
+
+igibson:
+  mode: gui_non_interactive
+  optimized_renderer: false
+
+igibson_humanoids:
+  z_offset: 0.05
+  fallback_height: 1.7
+  mesh_yaw_offset: 0.0
+  disable_robot_collision: true
+  mesh_styles:
+    normal: 0
+    hurried: 1
+    stop_go: 2
+
+publisher:
+  update_rate_hz: 20.0
+  scripted_state_topic: /scripted_pedestrian_states
+  pedestrian_state_topic: /pedestrian_states
+  pedestrian_marker_topic: /pedestrian_markers
+
+metrics:
+  personal_space_threshold: 1.2
+  log_rate_hz: 10.0
+
+pedestrians:
+  - id: 1
+    behavior: normal
+    class_id: 1
+    radius: 0.39
+    speed: 1.0
+    start: [-3.0, -0.65]
+    goal: [3.0, -0.65]
+
+  - id: 2
+    behavior: hurried
+    class_id: 1
+    radius: 0.39
+    speed: 1.3
+    start: [3.0, 0.0]
+    goal: [-3.0, 0.0]
+
+  - id: 3
+    behavior: stop_go
+    class_id: 1
+    radius: 0.39
+    speed: 0.8
+    start: [-2.5, 0.65]
+    goal: [2.5, 0.65]
+    stop_after: 3.0
+    stop_duration: 2.0

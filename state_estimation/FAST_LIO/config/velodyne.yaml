@@ -30,6 +30,15 @@ publish:
     dense_publish_en: true       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
 
+self_filter:
+    enable: true                 # remove robot body / antenna self returns before publishing /fastLIO/non_ground_points
+    min_x: -0.45
+    max_x: 0.30
+    min_y: -0.45
+    max_y: 0.45
+    min_z: -0.40
+    max_z: 1.80
+
 pcd_save:
     pcd_save_en: true
     interval: -1                 # how many LiDAR frames saved in each pcd file; 

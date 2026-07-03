@@ -4,6 +4,7 @@
 import argparse
 import csv
 import datetime as dt
+import math
 import os
 from pathlib import Path
 import signal
@@ -21,6 +22,7 @@ SCENARIO_INDEX = {
     "S1_pedestrian_crossing": 1,
     "S2_child_sudden": 2,
     "S3_feasibility_critical": 3,
+    "S3_feasibility_stress": 35,
     "S4_mixed": 4,
     "Exp2_category_box": 21,
     "Exp2_category_adult": 22,
@@ -42,6 +44,11 @@ BASELINES = {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
         "guard_enabled": "false",
+        "mpc_feasibility_guard_enabled": "false",
+        "enable_rate_limit": "false",
+        "enable_available_projection": "false",
+        "enable_guard_fallback": "false",
+        "experiment_label": "Unguarded_SEESM",
     },
     "B3_SECBF_with_guard": {
         "planner": "secbf_planner.launch",
@@ -66,6 +73,8 @@ BASELINES = {
         },
         "mu_weights": {"bias": 1.0, "heading": 0.0, "ttc": 0.0, "density": 0.0},
         "beta_bar_unknown": 0.4,
+        "semantic_mode": "fixed",
+        "fixed_beta": 0.4,
     },
     "Category_only": {
         "planner": "secbf_planner.launch",
@@ -73,6 +82,52 @@ BASELINES = {
         "guard_enabled": "true",
         "experiment_label": "Category_only",
         "mu_weights": {"bias": 1.0, "heading": 0.0, "ttc": 0.0, "density": 0.0},
+        "semantic_mode": "category_only",
+    },
+    "Context_only": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "Context_only",
+        "semantic_mode": "context_only",
+    },
+    "No_rate_limit": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "No_rate_limit",
+        "enable_rate_limit": "false",
+    },
+    "No_projection": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "No_projection",
+        "enable_available_projection": "false",
+    },
+    "No_mpc_guard": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "No_mpc_guard",
+        "mpc_feasibility_guard_enabled": "false",
+    },
+    "No_semantic": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "No_semantic",
+        "semantic_mode": "none",
+    },
+    "Unguarded_SEESM": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "false",
+        "experiment_label": "Unguarded_SEESM",
+        "mpc_feasibility_guard_enabled": "false",
+        "enable_rate_limit": "false",
+        "enable_available_projection": "false",
+        "enable_guard_fallback": "false",
     },
     "SEESM_Ours": {
         "planner": "secbf_planner.launch",
@@ -94,6 +149,17 @@ DEFAULT_BETA_BAR = {
 }
 
 DEFAULT_MU_WEIGHTS = {"bias": 0.6, "heading": 0.2, "ttc": 0.15, "density": 0.1}
+
+DEFAULT_EXPERIMENT_SWITCHES = {
+    "semantic_mode": "full",
+    "enable_rate_limit": "true",
+    "enable_available_projection": "true",
+    "enable_guard_fallback": "true",
+    "mpc_feasibility_guard_enabled": "true",
+    "fixed_beta": 0.4,
+    "epsilon_max": 0.05,
+    "slack_weight": 1000.0,
+}
 
 
 def repo_root() -> Path:
@@ -142,10 +208,37 @@ def baseline_beta_bar(baseline_id: str) -> dict:
     return values
 
 
+def scenario_beta_bar(baseline_id: str, scenario: dict) -> dict:
+    values = baseline_beta_bar(baseline_id)
+    values.update(scenario.get("beta_bar", {}))
+    return values
+
+
 def baseline_mu_weights(baseline_id: str) -> dict:
     baseline = BASELINES[baseline_id]
     values = dict(DEFAULT_MU_WEIGHTS)
     values.update(baseline.get("mu_weights", {}))
+    return values
+
+
+def scenario_mu_weights(baseline_id: str, scenario: dict) -> dict:
+    values = baseline_mu_weights(baseline_id)
+    values.update(scenario.get("mu_weights", {}))
+    return values
+
+
+def baseline_switches(baseline_id: str) -> dict:
+    baseline = BASELINES[baseline_id]
+    values = dict(DEFAULT_EXPERIMENT_SWITCHES)
+    for key in values:
+        if key in baseline:
+            values[key] = baseline[key]
+    return values
+
+
+def scenario_switches(baseline_id: str, scenario: dict) -> dict:
+    values = baseline_switches(baseline_id)
+    values.update(scenario.get("experiment_switches", {}))
     return values
 
 
@@ -155,6 +248,7 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
     goal = scenario.get("goal", {})
     map_cfg = scenario.get("map", {})
     baseline = BASELINES[baseline_id]
+    switches = scenario_switches(baseline_id, scenario)
     meta = {
         "experiment_id": (
             "Exp2_category_aware" if scenario_id.startswith("Exp2_")
@@ -178,10 +272,18 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "obstacle_radius": 0.4,
         "obstacle_count": num_obs,
         "obstacle_classes": classes_arg,
-        "beta_table": baseline_beta_bar(baseline_id),
-        "mu_weights": baseline_mu_weights(baseline_id),
+        "beta_table": scenario_beta_bar(baseline_id, scenario),
+        "mu_weights": scenario_mu_weights(baseline_id, scenario),
         "guard_eta": 0.10,
         "guard_enable": baseline["guard_enabled"],
+        "semantic_mode": switches["semantic_mode"],
+        "enable_rate_limit": switches["enable_rate_limit"],
+        "enable_available_projection": switches["enable_available_projection"],
+        "enable_guard_fallback": switches["enable_guard_fallback"],
+        "mpc_feasibility_guard_enabled": switches["mpc_feasibility_guard_enabled"],
+        "fixed_beta": switches["fixed_beta"],
+        "epsilon_max": switches["epsilon_max"],
+        "slack_weight": switches["slack_weight"],
         "guard_tau": 0.20,
         "mpc_horizon": 20,
         "dt": 0.10,
@@ -216,8 +318,9 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
     baseline = BASELINES[baseline_id]
     goal = scenario.get("goal", {})
     map_cfg = scenario.get("map", {})
-    beta_bar = baseline_beta_bar(baseline_id)
-    mu_weights = baseline_mu_weights(baseline_id)
+    beta_bar = scenario_beta_bar(baseline_id, scenario)
+    mu_weights = scenario_mu_weights(baseline_id, scenario)
+    switches = scenario_switches(baseline_id, scenario)
     common_start = [
         "roslaunch", "swarm_test", "start_test.launch",
         f"scenario_index:={SCENARIO_INDEX[scenario_id]}",
@@ -243,6 +346,14 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"scenario_id:={scenario_id}",
             f"baseline_id:={baseline_id}",
             f"guard_enabled:={baseline['guard_enabled']}",
+            f"semantic_mode:={switches['semantic_mode']}",
+            f"enable_rate_limit:={switches['enable_rate_limit']}",
+            f"enable_available_projection:={switches['enable_available_projection']}",
+            f"enable_guard_fallback:={switches['enable_guard_fallback']}",
+            f"mpc_feasibility_guard_enabled:={switches['mpc_feasibility_guard_enabled']}",
+            f"fixed_beta:={switches['fixed_beta']}",
+            f"epsilon_max:={switches['epsilon_max']}",
+            f"slack_weight:={switches['slack_weight']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
             f"map_size_x:={map_cfg.get('x', 50.0)}",
@@ -267,7 +378,19 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
     return planner, common_start
 
 
-def start_process(cmd, log_path: Path):
+def process_env(run_dir: Path):
+    env = os.environ.copy()
+    ros_home = run_dir / ".ros"
+    ros_log = run_dir / "ros_log"
+    ros_home.mkdir(parents=True, exist_ok=True)
+    ros_log.mkdir(parents=True, exist_ok=True)
+    env["ROS_HOME"] = str(ros_home)
+    env["ROS_LOG_DIR"] = str(ros_log)
+    env.setdefault("ROS_HOSTNAME", "localhost")
+    return env
+
+
+def start_process(cmd, log_path: Path, env=None):
     log_file = log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
@@ -275,6 +398,7 @@ def start_process(cmd, log_path: Path):
         stderr=subprocess.STDOUT,
         preexec_fn=os.setsid,
         text=True,
+        env=env,
     )
     return proc, log_file
 
@@ -292,7 +416,7 @@ def stop_process(proc):
         pass
 
 
-def run_verify(run_dir: Path):
+def run_verify(run_dir: Path, epsilon_max=0.05, delta_bar_beta=0.3):
     guard_log = guard_log_path(run_dir)
     if not guard_log.exists():
         return False, "margin_guard_log.csv not found"
@@ -301,8 +425,8 @@ def run_verify(run_dir: Path):
         str(repo_root() / "swarm_test/scripts/verify_safety_bound.py"),
         "--csv", str(guard_log),
         "--gamma", "0.35",
-        "--eps_max", "0.05",
-        "--delta_bar_beta", "0.3",
+        "--eps_max", str(epsilon_max),
+        "--delta_bar_beta", str(delta_bar_beta),
     ]
     result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (run_dir / "verify_safety_bound.txt").write_text(result.stdout, encoding="utf-8")
@@ -317,6 +441,7 @@ def summarize_guard_log(guard_log: Path) -> dict:
         "beta_applied_max": "",
         "h_ee_min": "",
         "h_see_min": "",
+        "delta_beta_max": "",
         "guard_rollback_count": "",
         "guard_rollback_rate": "",
     }
@@ -340,6 +465,7 @@ def summarize_guard_log(guard_log: Path) -> dict:
     beta_applied = floats("beta_applied")
     h_ee = floats("h_ee")
     h_see = floats("h_see")
+    delta_beta = floats("delta_beta")
     guard_failed = sum(1 for row in rows if row.get("guard_passed") in {"0", "False", "false"})
     classes = sorted({row.get("class", "") for row in rows if row.get("class", "")})
 
@@ -352,8 +478,246 @@ def summarize_guard_log(guard_log: Path) -> dict:
         metrics["h_ee_min"] = f"{min(h_ee):.6f}"
     if h_see:
         metrics["h_see_min"] = f"{min(h_see):.6f}"
+    if delta_beta:
+        metrics["delta_beta_max"] = f"{max(delta_beta):.6f}"
+    elif beta_applied:
+        max_delta = 0.0
+        rows_by_obs = {}
+        for row in rows:
+            rows_by_obs.setdefault(row.get("obs_id", ""), []).append(row)
+        for obs_rows in rows_by_obs.values():
+            prev = None
+            for row in obs_rows:
+                try:
+                    beta = float(row["beta_applied"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if prev is not None:
+                    max_delta = max(max_delta, max(0.0, beta - prev))
+                prev = beta
+        metrics["delta_beta_max"] = f"{max_delta:.6f}"
     metrics["guard_rollback_count"] = guard_failed
     metrics["guard_rollback_rate"] = f"{guard_failed / len(rows):.6f}"
+    return metrics
+
+
+def summarize_planner_log(planner_log: Path) -> dict:
+    metrics = {
+        "planner_records": 0,
+        "first_infeasible_count": "",
+        "first_infeasible_rate": "",
+        "mpc_guard_used_count": "",
+        "mpc_guard_used_rate": "",
+        "no_cbf_fallback_count": "",
+        "no_cbf_fallback_rate": "",
+        "slack_max": "",
+        "slack_mean": "",
+        "solve_time_mean_ms": "",
+        "solve_time_max_ms": "",
+    }
+    if not planner_log.exists():
+        return metrics
+    with planner_log.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return metrics
+
+    def floats(name):
+        out = []
+        for row in rows:
+            try:
+                out.append(float(row[name]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        return out
+
+    total = len(rows)
+    first_infeasible = sum(1 for row in rows if row.get("first_attempt_status") == "infeasible")
+    guard_used = sum(1 for row in rows if row.get("mpc_feasibility_guard_used") in {"1", "True", "true"})
+    no_cbf = sum(1 for row in rows if row.get("accepted_beta_source") == "no_cbf" or row.get("used_fallback") in {"1", "True", "true"})
+    slack_max = floats("slack_max") or floats("slack")
+    slack_mean = floats("slack_mean")
+    solve_time = floats("solve_time_ms")
+
+    metrics["planner_records"] = total
+    metrics["first_infeasible_count"] = first_infeasible
+    metrics["first_infeasible_rate"] = f"{first_infeasible / total:.6f}"
+    metrics["mpc_guard_used_count"] = guard_used
+    metrics["mpc_guard_used_rate"] = f"{guard_used / total:.6f}"
+    metrics["no_cbf_fallback_count"] = no_cbf
+    metrics["no_cbf_fallback_rate"] = f"{no_cbf / total:.6f}"
+    if slack_max:
+        metrics["slack_max"] = f"{max(slack_max):.6f}"
+    if slack_mean:
+        metrics["slack_mean"] = f"{sum(slack_mean) / len(slack_mean):.6f}"
+    if solve_time:
+        metrics["solve_time_mean_ms"] = f"{sum(solve_time) / len(solve_time):.6f}"
+        metrics["solve_time_max_ms"] = f"{max(solve_time):.6f}"
+    return metrics
+
+
+def summarize_data_processor(data_summary: Path, duration_sec: int) -> dict:
+    metrics = {
+        "nav_records": 0,
+        "nav_finished_before_timeout": "",
+        "nav_path_length_m": "",
+        "nav_travel_time_s": "",
+        "nav_mean_vel_ms": "",
+        "nav_mean_ang_rads": "",
+        "nav_var_vel": "",
+        "nav_var_ang": "",
+        "nav_collision_count": "",
+        "nav_min_distance_m": "",
+    }
+    if not data_summary.exists():
+        return metrics
+
+    rows = []
+    with data_summary.open("r", newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            clean = [cell.strip() for cell in row]
+            if any(clean):
+                rows.append(clean)
+    if not rows:
+        return metrics
+
+    metrics["nav_records"] = len(rows)
+    row = rows[-1]
+    # data_processor.cpp writes:
+    # empty, scenario, controller, path_length, travel_time, mean_vel,
+    # mean_ang, var_vel, var_ang, collision_count, min_distance.
+    if row and row[0] == "":
+        row = row[1:]
+    values = row[2:]
+    names = [
+        "nav_path_length_m",
+        "nav_travel_time_s",
+        "nav_mean_vel_ms",
+        "nav_mean_ang_rads",
+        "nav_var_vel",
+        "nav_var_ang",
+        "nav_collision_count",
+        "nav_min_distance_m",
+    ]
+    for name, value in zip(names, values):
+        metrics[name] = value
+
+    try:
+        travel_time = float(metrics["nav_travel_time_s"])
+        # If the data processor kept updating until the runner timeout, this
+        # is not a confirmed arrival. Leave a little shutdown margin.
+        finished = travel_time > 0.0 and travel_time < max(0.0, duration_sec - 2.0)
+        metrics["nav_finished_before_timeout"] = int(finished)
+    except (TypeError, ValueError):
+        pass
+
+    return metrics
+
+
+def summarize_phase5_logs(run_dir: Path) -> dict:
+    metrics = {
+        "success": "",
+        "robot_records": 0,
+        "robot_path_length_m": "",
+        "robot_travel_time_s": "",
+        "robot_final_goal_distance_m": "",
+        "robot_mean_abs_v": "",
+        "robot_mean_abs_w": "",
+        "robot_velocity_smoothness": "",
+        "robot_control_effort": "",
+        "log_min_distance_m": "",
+        "log_min_h_ee": "",
+    }
+
+    meta_path = run_dir / "meta.yaml"
+    goal = None
+    robot_radius = 0.4
+    if yaml is not None and meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                meta = yaml.safe_load(f) or {}
+            goal_raw = meta.get("goal", [])
+            if len(goal_raw) >= 2:
+                goal = (float(goal_raw[0]), float(goal_raw[1]))
+            robot_radius = float(meta.get("robot_radius", robot_radius))
+        except (TypeError, ValueError, yaml.YAMLError):
+            goal = None
+
+    robot_log = run_dir / "robot_log.csv"
+    if robot_log.exists():
+        with robot_log.open("r", newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        metrics["robot_records"] = len(rows)
+        positions = []
+        abs_v = []
+        abs_w = []
+        controls = []
+        times = []
+        for row in rows:
+            try:
+                x = float(row["x"])
+                y = float(row["y"])
+                positions.append((x, y))
+                times.append(float(row["t"]))
+                abs_v.append(abs(float(row.get("v", 0.0))))
+                abs_w.append(abs(float(row.get("w", 0.0))))
+                cmd_v = float(row.get("cmd_v", 0.0))
+                cmd_w = float(row.get("cmd_w", 0.0))
+                controls.append(cmd_v * cmd_v + cmd_w * cmd_w)
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        if len(positions) >= 2:
+            path_length = 0.0
+            step_lengths = []
+            for idx in range(1, len(positions)):
+                step = math.hypot(
+                    positions[idx][0] - positions[idx - 1][0],
+                    positions[idx][1] - positions[idx - 1][1],
+                )
+                path_length += step
+                step_lengths.append(step)
+            metrics["robot_path_length_m"] = f"{path_length:.6f}"
+            if times:
+                metrics["robot_travel_time_s"] = f"{max(times) - min(times):.6f}"
+            if goal is not None:
+                final_dist = math.hypot(positions[-1][0] - goal[0], positions[-1][1] - goal[1])
+                metrics["robot_final_goal_distance_m"] = f"{final_dist:.6f}"
+                metrics["success"] = int(final_dist <= 0.55)
+            if len(step_lengths) >= 2:
+                diffs = [step_lengths[i] - step_lengths[i - 1] for i in range(1, len(step_lengths))]
+                smoothness = math.sqrt(sum(diff * diff for diff in diffs) / len(diffs))
+                metrics["robot_velocity_smoothness"] = f"{smoothness:.6f}"
+        if abs_v:
+            metrics["robot_mean_abs_v"] = f"{sum(abs_v) / len(abs_v):.6f}"
+        if abs_w:
+            metrics["robot_mean_abs_w"] = f"{sum(abs_w) / len(abs_w):.6f}"
+        if controls:
+            metrics["robot_control_effort"] = f"{sum(controls) / len(controls):.6f}"
+
+    obstacle_log = run_dir / "obstacle_log.csv"
+    if obstacle_log.exists():
+        min_distance = None
+        min_h_ee = None
+        with obstacle_log.open("r", newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                try:
+                    d_i = float(row["d_i"])
+                    radius = float(row["radius"])
+                    distance = d_i - radius - robot_radius
+                    min_distance = distance if min_distance is None else min(min_distance, distance)
+                except (KeyError, TypeError, ValueError):
+                    pass
+                try:
+                    h_ee = float(row["h_EE"])
+                    min_h_ee = h_ee if min_h_ee is None else min(min_h_ee, h_ee)
+                except (KeyError, TypeError, ValueError):
+                    pass
+        if min_distance is not None:
+            metrics["log_min_distance_m"] = f"{min_distance:.6f}"
+        if min_h_ee is not None:
+            metrics["log_min_h_ee"] = f"{min_h_ee:.6f}"
+
     return metrics
 
 
@@ -371,7 +735,11 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     guard_log = guard_log_path(run_dir)
     data_summary = run_dir / "data_processor_summary.csv"
     data_distance = run_dir / "data_processor_distance.csv"
+    planner_log = run_dir / "planner_log.csv"
     guard_metrics = summarize_guard_log(guard_log)
+    planner_metrics = summarize_planner_log(planner_log)
+    nav_metrics = summarize_data_processor(data_summary, duration_sec)
+    phase5_metrics = summarize_phase5_logs(run_dir)
 
     lines = [
         f"# {scenario_id} / {baseline_id}",
@@ -380,6 +748,15 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- margin_guard_log_exists: {guard_log.exists()}",
         f"- data_processor_summary_exists: {data_summary.exists()}",
         f"- data_processor_distance_exists: {data_distance.exists()}",
+        f"- nav_finished_before_timeout: {nav_metrics['nav_finished_before_timeout']}",
+        f"- nav_path_length_m: {nav_metrics['nav_path_length_m']}",
+        f"- nav_travel_time_s: {nav_metrics['nav_travel_time_s']}",
+        f"- nav_collision_count: {nav_metrics['nav_collision_count']}",
+        f"- nav_min_distance_m: {nav_metrics['nav_min_distance_m']}",
+        f"- success: {phase5_metrics['success']}",
+        f"- robot_path_length_m: {phase5_metrics['robot_path_length_m']}",
+        f"- robot_final_goal_distance_m: {phase5_metrics['robot_final_goal_distance_m']}",
+        f"- log_min_distance_m: {phase5_metrics['log_min_distance_m']}",
         f"- safety_bound_passed: {verify_passed}",
         f"- verification_note: {verify_note}",
         f"- guard_records: {guard_metrics['guard_records']}",
@@ -388,8 +765,15 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- beta_applied_max: {guard_metrics['beta_applied_max']}",
         f"- h_ee_min: {guard_metrics['h_ee_min']}",
         f"- h_see_min: {guard_metrics['h_see_min']}",
+        f"- delta_beta_max: {guard_metrics['delta_beta_max']}",
         f"- guard_rollback_count: {guard_metrics['guard_rollback_count']}",
         f"- guard_rollback_rate: {guard_metrics['guard_rollback_rate']}",
+        f"- first_infeasible_rate: {planner_metrics['first_infeasible_rate']}",
+        f"- mpc_guard_used_rate: {planner_metrics['mpc_guard_used_rate']}",
+        f"- no_cbf_fallback_rate: {planner_metrics['no_cbf_fallback_rate']}",
+        f"- slack_max: {planner_metrics['slack_max']}",
+        f"- slack_mean: {planner_metrics['slack_mean']}",
+        f"- solve_time_mean_ms: {planner_metrics['solve_time_mean_ms']}",
         "",
         "## Commands",
         "",
@@ -404,9 +788,22 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             fieldnames=[
                 "scenario", "baseline", "duration_sec", "guard_log_exists",
                 "data_processor_summary_exists", "data_processor_distance_exists",
+                "nav_records", "nav_finished_before_timeout",
+                "nav_path_length_m", "nav_travel_time_s", "nav_mean_vel_ms",
+                "nav_mean_ang_rads", "nav_var_vel", "nav_var_ang",
+                "nav_collision_count", "nav_min_distance_m",
+                "success", "robot_records", "robot_path_length_m",
+                "robot_travel_time_s", "robot_final_goal_distance_m",
+                "robot_mean_abs_v", "robot_mean_abs_w",
+                "robot_velocity_smoothness", "robot_control_effort",
+                "log_min_distance_m", "log_min_h_ee",
                 "safety_bound_passed", "guard_records", "semantic_classes",
                 "beta_applied_mean", "beta_applied_max", "h_ee_min", "h_see_min",
-                "guard_rollback_count", "guard_rollback_rate", "output_dir",
+                "delta_beta_max", "guard_rollback_count", "guard_rollback_rate",
+                "planner_records", "first_infeasible_count", "first_infeasible_rate",
+                "mpc_guard_used_count", "mpc_guard_used_rate", "no_cbf_fallback_count",
+                "no_cbf_fallback_rate", "slack_max", "slack_mean",
+                "solve_time_mean_ms", "solve_time_max_ms", "output_dir",
             ],
         )
         writer.writeheader()
@@ -417,10 +814,41 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             "guard_log_exists": guard_log.exists(),
             "data_processor_summary_exists": data_summary.exists(),
             "data_processor_distance_exists": data_distance.exists(),
+            **nav_metrics,
+            **phase5_metrics,
             "safety_bound_passed": verify_passed,
             **guard_metrics,
+            **planner_metrics,
             "output_dir": str(run_dir),
         })
+
+
+def write_aggregate_summary(output_root: Path, run_dirs: list):
+    rows = []
+    fieldnames = None
+    for run_dir in run_dirs:
+        summary_csv = run_dir / "summary.csv"
+        if not summary_csv.exists():
+            continue
+        with summary_csv.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if fieldnames is None:
+                fieldnames = reader.fieldnames
+            try:
+                rows.append(next(reader))
+            except StopIteration:
+                continue
+
+    if not rows or not fieldnames:
+        return None
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    aggregate_csv = output_root / "summary.csv"
+    with aggregate_csv.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return aggregate_csv
 
 
 def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp: str):
@@ -442,7 +870,7 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         print(f"obstacle_classes: {classes_arg}")
         for name, cmd in commands:
             print(f"{name}: {' '.join(cmd)}")
-        return
+        return None
 
     run_dir.mkdir(parents=True, exist_ok=True)
     obstacle_params = write_obstacle_params(run_dir, obstacles)
@@ -454,16 +882,17 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
     processes = []
     roscore = None
     roscore_log = None
+    env = process_env(run_dir)
     try:
         if args.roscore == "auto":
-            roscore, roscore_log = start_process(["roscore"], run_dir / "roscore.log")
+            roscore, roscore_log = start_process(["roscore"], run_dir / "roscore.log", env=env)
             time.sleep(3.0)
 
-        planner, planner_log = start_process(planner_cmd, run_dir / "planner.log")
+        planner, planner_log = start_process(planner_cmd, run_dir / "planner.log", env=env)
         processes.append((planner, planner_log))
         time.sleep(3.0)
 
-        starter, starter_log = start_process(start_cmd, run_dir / "start_test.log")
+        starter, starter_log = start_process(start_cmd, run_dir / "start_test.log", env=env)
         processes.append((starter, starter_log))
 
         deadline = time.time() + args.duration_sec
@@ -483,7 +912,12 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
     if baseline_id == "B1_ACBF_fixed":
         verify_passed, verify_note = None, "B1 has no Guard log"
     else:
-        verify_passed, verify_note = run_verify(run_dir)
+        switches = scenario_switches(baseline_id, scenario)
+        verify_passed, verify_note = run_verify(
+            run_dir,
+            epsilon_max=switches["epsilon_max"],
+            delta_bar_beta=scenario.get("theory", {}).get("delta_bar_beta", 0.3),
+        )
 
     write_summary(
         run_dir,
@@ -495,6 +929,7 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         args.duration_sec,
     )
     print(f"Completed {scenario_id} / {baseline_id}: {run_dir}")
+    return run_dir
 
 
 def main():
@@ -513,17 +948,27 @@ def main():
         default=str(root / "swarm_test/config/secbf_scenarios.yaml"),
     )
     args = parser.parse_args()
+    args.output_root = str(Path(args.output_root).expanduser().resolve())
+    args.config = str(Path(args.config).expanduser().resolve())
 
     scenarios = load_scenarios(Path(args.config))
     scenario_ids = selected(SCENARIO_INDEX.keys(), args.scenario)
     baseline_ids = selected(BASELINES.keys(), args.baseline)
     base_timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    completed_runs = []
 
     for repeat_idx in range(args.repeat):
         timestamp = base_timestamp if args.repeat == 1 else f"{base_timestamp}_r{repeat_idx + 1:02d}"
         for scenario_id in scenario_ids:
             for baseline_id in baseline_ids:
-                run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp)
+                run_dir = run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp)
+                if run_dir is not None:
+                    completed_runs.append(run_dir)
+
+    if completed_runs:
+        aggregate_csv = write_aggregate_summary(Path(args.output_root), completed_runs)
+        if aggregate_csv is not None:
+            print(f"Wrote aggregate summary: {aggregate_csv}")
 
 
 if __name__ == "__main__":

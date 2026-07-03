@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>igibson_mpc_bridge</name>
+  <version>0.1.0</version>
+  <description>Minimal ROS bridge from iGibson topics to the MPC-SECBF control interface.</description>
+  <maintainer email="1147975692@qq.com">Rechardluxry</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>topic_tools</depend>
+  <depend>visualization_msgs</depend>
+
+  <export>
+  </export>
+</package>

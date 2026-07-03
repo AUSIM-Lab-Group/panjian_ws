@@ -6,6 +6,9 @@
   <arg name="gamma" default="0.35"/>
   <arg name="beta_bar_unknown" default="0.4"/>
   <arg name="robot_radius" default="0.4"/>
+  <arg name="epsilon_max" default="0.05"/>
+  <arg name="slack_weight" default="1000.0"/>
+  <arg name="mpc_feasibility_guard_enabled" default="true"/>
   <arg name="v_min" default="0.3"/>
   <arg name="o_max" default="0.8"/>
   <arg name="odom_topic" default="/Odometry"/>
@@ -26,6 +29,9 @@
     <param name="mpc/gamma" value="$(arg gamma)"/>
     <param name="mpc/beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
     <param name="mpc/robot_radius" value="$(arg robot_radius)"/>
+    <param name="mpc/epsilon_max" value="$(arg epsilon_max)"/>
+    <param name="mpc/slack_weight" value="$(arg slack_weight)"/>
+    <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
     <param name="planner_log_path" value="$(arg planner_log_path)"/>
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
 

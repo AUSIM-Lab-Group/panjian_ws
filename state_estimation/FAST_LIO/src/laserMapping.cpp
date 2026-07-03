@@ -100,6 +100,9 @@ int    iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudVal
 bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
+bool   self_filter_en = false;
+double self_filter_min_x = -0.45, self_filter_min_y = -0.45, self_filter_min_z = -0.40;
+double self_filter_max_x =  0.30, self_filter_max_y =  0.45, self_filter_max_z =  1.80;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -862,6 +865,13 @@ int main(int argc, char** argv)
     nh.param<bool>("publish/scan_publish_en",scan_pub_en, true);
     nh.param<bool>("publish/dense_publish_en",dense_pub_en, true);
     nh.param<bool>("publish/scan_bodyframe_pub_en",scan_body_pub_en, true);
+    nh.param<bool>("self_filter/enable", self_filter_en, false);
+    nh.param<double>("self_filter/min_x", self_filter_min_x, -0.45);
+    nh.param<double>("self_filter/min_y", self_filter_min_y, -0.45);
+    nh.param<double>("self_filter/min_z", self_filter_min_z, -0.40);
+    nh.param<double>("self_filter/max_x", self_filter_max_x, 0.30);
+    nh.param<double>("self_filter/max_y", self_filter_max_y, 0.45);
+    nh.param<double>("self_filter/max_z", self_filter_max_z, 1.80);
     nh.param<int>("max_iteration",NUM_MAX_ITERATIONS,4);
     nh.param<string>("map_file_path",map_file_path,"");
     nh.param<string>("common/lid_topic",lid_topic,"/livox/lidar");
@@ -1104,6 +1114,16 @@ int main(int argc, char** argv)
 
             boxFilter.setInputCloud(nonground_points);
             boxFilter.filter(*nonground_points);
+
+            if (self_filter_en)
+            {
+                pcl::CropBox<pcl::PointXYZI> selfFilter;
+                selfFilter.setMin(Eigen::Vector4f(self_filter_min_x, self_filter_min_y, self_filter_min_z, 1.0));
+                selfFilter.setMax(Eigen::Vector4f(self_filter_max_x, self_filter_max_y, self_filter_max_z, 1.0));
+                selfFilter.setNegative(true);
+                selfFilter.setInputCloud(nonground_points);
+                selfFilter.filter(*nonground_points);
+            }
 
             publishWorldPoints(pubNonGroundPoints, nonground_points);       // 发布非地面点云
 

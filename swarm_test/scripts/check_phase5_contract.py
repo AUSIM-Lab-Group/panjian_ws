@@ -21,6 +21,16 @@ def check_guard_source(rel_path: str) -> None:
     src = read(rel_path)
     for status in ['"accept"', '"project"', '"fallback"', '"zero"']:
         require(status in src, f"{rel_path}: missing guard status {status}")
+    for param in [
+        "semantic_mode_",
+        "enable_rate_limit_",
+        "enable_available_projection_",
+        "enable_guard_fallback_",
+        "fixed_beta_",
+    ]:
+        require(param in src, f"{rel_path}: missing ablation parameter {param}")
+    for field in ["semantic_mode", "delta_beta", "rate_limit_active", "projection_active"]:
+        require(field in src, f"{rel_path}: margin guard CSV missing field {field}")
     for obsolete in ['"rollback"', '"rate_limited"']:
         require(obsolete not in src, f"{rel_path}: obsolete guard status {obsolete} still present")
     require(
@@ -39,6 +49,8 @@ def check_guard_source(rel_path: str) -> None:
 
 def check_mpc_source() -> None:
     src = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    header = read("planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h")
+    node = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
     require("safe_dist" not in src, "mpc_secbf.cpp: safe_dist should not be used")
     require("R_safe" not in src, "mpc_secbf.cpp: R_safe should not be used")
     require(
@@ -49,6 +61,18 @@ def check_mpc_source() -> None:
         "h_SEE = h_EE - beta_i" in src,
         "mpc_secbf.cpp: h_SEE must subtract beta_i from h_EE",
     )
+    for symbol in ["last_slack_sum", "last_slack_mean", "last_slack_max"]:
+        require(symbol in header or symbol in src, f"mpc_secbf: missing slack metric {symbol}")
+    require("epsilon" in src, "mpc_secbf.cpp: SECBF constraints must use explicit slack variables")
+    for field in ["first_attempt_status", "final_status", "accepted_beta_source", "slack_max"]:
+        require(field in node, f"mpc_secbf_node.cpp: planner CSV missing field {field}")
+
+
+def check_safety_verifier() -> None:
+    src = read("swarm_test/scripts/verify_safety_bound.py")
+    require("h_see" in src, "verify_safety_bound.py: theoretical bound must check h_see/H_i,t")
+    require("positive_delta_beta" in src or "delta_beta_pos" in src,
+            "verify_safety_bound.py: must compute positive beta increments")
 
 
 def main() -> int:
@@ -56,6 +80,7 @@ def main() -> int:
         lambda: check_guard_source("planner/semantic_guard/src/beta_guard_node.cpp"),
         lambda: check_guard_source("planner/semantic_guard/src/beta_ground_truth_node.cpp"),
         check_mpc_source,
+        check_safety_verifier,
     ]
     for check in checks:
         check()

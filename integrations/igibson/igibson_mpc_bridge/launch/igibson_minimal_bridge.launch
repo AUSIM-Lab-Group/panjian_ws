@@ -1,0 +1,36 @@
+<launch>
+  <arg name="igibson_odom_topic" default="/odom"/>
+  <arg name="igibson_rgb_topic" default="/gibson_ros/camera/rgb/image"/>
+  <arg name="igibson_depth_topic" default="/gibson_ros/camera/rgb/depth"/>
+  <arg name="igibson_points_topic" default="/gibson_ros/lidar/points"/>
+
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="rgb_topic" default="/camera/color/image_raw"/>
+  <arg name="depth_topic" default="/camera/depth/image_raw"/>
+  <arg name="points_topic" default="/fastLIO/non_ground_points"/>
+
+  <arg name="cmd_vel_input" default="/cmd_vel_secbf_dryrun"/>
+  <arg name="cmd_vel_output" default="/mobile_base/commands/velocity"/>
+  <arg name="max_linear" default="0.3"/>
+  <arg name="max_angular" default="0.8"/>
+  <arg name="run_health_check" default="false"/>
+
+  <node pkg="topic_tools" type="relay" name="relay_igibson_odom"
+        args="$(arg igibson_odom_topic) $(arg odom_topic)" output="screen"/>
+  <node pkg="topic_tools" type="relay" name="relay_igibson_rgb"
+        args="$(arg igibson_rgb_topic) $(arg rgb_topic)" output="screen"/>
+  <node pkg="topic_tools" type="relay" name="relay_igibson_depth"
+        args="$(arg igibson_depth_topic) $(arg depth_topic)" output="screen"/>
+  <node pkg="topic_tools" type="relay" name="relay_igibson_points"
+        args="$(arg igibson_points_topic) $(arg points_topic)" output="screen"/>
+
+  <node pkg="igibson_mpc_bridge" type="cmd_vel_relay.py" name="igibson_cmd_vel_relay" output="screen">
+    <param name="input_topic" value="$(arg cmd_vel_input)"/>
+    <param name="output_topic" value="$(arg cmd_vel_output)"/>
+    <param name="max_linear" value="$(arg max_linear)" type="double"/>
+    <param name="max_angular" value="$(arg max_angular)" type="double"/>
+  </node>
+
+  <node if="$(arg run_health_check)" pkg="igibson_mpc_bridge" type="topic_health_check.py"
+        name="igibson_topic_health_check" output="screen"/>
+</launch>

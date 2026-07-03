@@ -19,7 +19,9 @@ public:
     MpcSecbfNode(ros::NodeHandle& nh) : nh_(nh) {
         // Parameters
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
+        double epsilon_max, slack_weight;
         int N;
+        bool mpc_feasibility_guard_enabled;
         double v_max, v_min, o_max;
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
         nh_.param("mpc/step_time", Ts, 0.2);
@@ -29,6 +31,9 @@ public:
         nh_.param("mpc/o_max", o_max, 0.8);
         nh_.param("mpc/gamma", gamma, 0.35);
         nh_.param("mpc/beta_bar_unknown", beta_unknown, 0.4);
+        nh_.param("mpc/epsilon_max", epsilon_max, 0.05);
+        nh_.param("mpc/slack_weight", slack_weight, 1000.0);
+        nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
         if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
             nh_.param("robot/radius", robot_radius, 0.4);
         }
@@ -42,12 +47,16 @@ public:
 
         N_ = N;
         Ts_ = Ts;
+        mpc_feasibility_guard_enabled_ = mpc_feasibility_guard_enabled;
 
         // Initialize solver
-        solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius);
+        solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
+                            epsilon_max, slack_weight);
 
         openCsv(planner_csv_, planner_log_path,
-                "t,mpc_status,cmd_v,cmd_w,obs_count,beta_count,used_fallback,slack,solve_time_ms\n");
+                "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
+                "cmd_v,cmd_w,obs_count,beta_count,used_fallback,mpc_feasibility_guard_used,"
+                "slack,slack_sum,slack_mean,slack_max,solve_time_ms\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
 
@@ -152,8 +161,45 @@ private:
 
         // Solve MPC-SECBF
         std::string mpc_status = "success";
+        std::string first_attempt_status = "not_run";
+        std::string final_status = "not_run";
+        std::string accepted_beta_source = "candidate";
         bool used_fallback = false;
+        bool mpc_guard_used = false;
         bool success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
+        first_attempt_status = success ? "success" : "infeasible";
+        final_status = first_attempt_status;
+
+        if (!success) {
+            if (mpc_feasibility_guard_enabled_) {
+                mpc_guard_used = true;
+                if (!accepted_beta_list_.empty()) {
+                    success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, accepted_beta_list_);
+                    if (success) {
+                        mpc_status = "guard_previous";
+                        final_status = "success";
+                        accepted_beta_source = "previous";
+                    }
+                }
+
+                if (!success && !beta_list_.empty()) {
+                    std::vector<double> zero_beta(beta_list_.size(), 0.0);
+                    success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, zero_beta);
+                    if (success) {
+                        mpc_status = "guard_zero";
+                        final_status = "success";
+                        accepted_beta_source = "zero";
+                        accepted_beta_list_ = zero_beta;
+                    }
+                }
+            }
+
+            if (success && accepted_beta_source == "previous") {
+                // Keep the previous accepted beta list unchanged.
+            } else if (success && accepted_beta_source == "zero") {
+                // accepted_beta_list_ was set above.
+            }
+        }
 
         if (!success) {
             // Fallback: try without CBF constraints (empty beta)
@@ -168,12 +214,17 @@ private:
                 cmd_vel_.linear.x = 0.0;
                 cmd_vel_.angular.z = 0.0;
                 double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
-                writePlannerCsv("zero", used_fallback, cost_ms, 0.0);
+                writePlannerCsv("zero", first_attempt_status, "zero", "none",
+                                used_fallback, mpc_guard_used, cost_ms);
                 return;
             } else {
-                mpc_status = "fallback";
+                mpc_status = "no_cbf_fallback";
+                final_status = "success";
+                accepted_beta_source = "no_cbf";
                 ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
+        } else if (accepted_beta_source == "candidate") {
+            accepted_beta_list_ = beta_list_;
         }
 
         // Extract first control
@@ -191,22 +242,36 @@ private:
         }
 
         double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
-        writePlannerCsv(mpc_status, used_fallback, cost_ms, 0.0);
+        writePlannerCsv(mpc_status, first_attempt_status, final_status, accepted_beta_source,
+                        used_fallback, mpc_guard_used, cost_ms);
         std::cout << "\033[38;2;0;200;100m MPC-SECBF replan_time =: \033[0m" << cost_ms << "ms" << std::endl;
     }
 
-    void writePlannerCsv(const std::string& mpc_status, bool used_fallback, double solve_time_ms, double slack) {
+    void writePlannerCsv(const std::string& mpc_status,
+                         const std::string& first_attempt_status,
+                         const std::string& final_status,
+                         const std::string& accepted_beta_source,
+                         bool used_fallback,
+                         bool mpc_guard_used,
+                         double solve_time_ms) {
         const double t = ros::Time::now().toSec();
         const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
         if (planner_csv_.is_open()) {
             planner_csv_ << t << ","
                          << mpc_status << ","
+                         << first_attempt_status << ","
+                         << final_status << ","
+                         << accepted_beta_source << ","
                          << cmd_vel_.linear.x << ","
                          << cmd_vel_.angular.z << ","
                          << obs_count << ","
                          << beta_list_.size() << ","
                          << (used_fallback ? 1 : 0) << ","
-                         << slack << ","
+                         << (mpc_guard_used ? 1 : 0) << ","
+                         << solver_.last_slack_max << ","
+                         << solver_.last_slack_sum << ","
+                         << solver_.last_slack_mean << ","
+                         << solver_.last_slack_max << ","
                          << solve_time_ms << "\n";
             planner_csv_.flush();
         }
@@ -286,8 +351,10 @@ private:
     Eigen::MatrixXd goal_state_;
     Eigen::MatrixXd obs_matrix_;
     std::vector<double> beta_list_;
+    std::vector<double> accepted_beta_list_;
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
+    bool mpc_feasibility_guard_enabled_;
     std::ofstream planner_csv_, timing_csv_;
 };
 

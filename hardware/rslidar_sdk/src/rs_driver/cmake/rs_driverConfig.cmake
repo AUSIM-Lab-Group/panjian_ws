@@ -19,11 +19,11 @@ if(${ENABLE_TRANSFORM})
   add_definitions("-DENABLE_TRANSFORM")
 endif(${ENABLE_TRANSFORM})
 
-set(rs_driver_INCLUDE_DIRS "/home/lxr20/catkin_ws/src/hardware/rslidar_sdk/src/rs_driver/src;/usr/local/Project/include")
-set(RS_DRIVER_INCLUDE_DIRS "/home/lxr20/catkin_ws/src/hardware/rslidar_sdk/src/rs_driver/src;/usr/local/Project/include")
+set(rs_driver_INCLUDE_DIRS "/home/lxr20/lxr/panjian_ws/hardware/rslidar_sdk/src/rs_driver/src;/usr/local/Project/include")
+set(RS_DRIVER_INCLUDE_DIRS "/home/lxr20/lxr/panjian_ws/hardware/rslidar_sdk/src/rs_driver/src;/usr/local/Project/include")
 
-set(rs_driver_LIBRARIES "optimized;/usr/lib/x86_64-linux-gnu/libboost_system.so.1.71.0;debug;/usr/lib/x86_64-linux-gnu/libboost_system.so;/usr/lib/x86_64-linux-gnu/libboost_date_time.so;/usr/lib/x86_64-linux-gnu/libboost_regex.so;pcap")
-set(RS_DRIVER_LIBRARIES "optimized;/usr/lib/x86_64-linux-gnu/libboost_system.so.1.71.0;debug;/usr/lib/x86_64-linux-gnu/libboost_system.so;/usr/lib/x86_64-linux-gnu/libboost_date_time.so;/usr/lib/x86_64-linux-gnu/libboost_regex.so;pcap")
+set(rs_driver_LIBRARIES "/usr/lib/x86_64-linux-gnu/libboost_system.so;/usr/lib/x86_64-linux-gnu/libboost_date_time.so;/usr/lib/x86_64-linux-gnu/libboost_regex.so;pcap")
+set(RS_DRIVER_LIBRARIES "/usr/lib/x86_64-linux-gnu/libboost_system.so;/usr/lib/x86_64-linux-gnu/libboost_date_time.so;/usr/lib/x86_64-linux-gnu/libboost_regex.so;pcap")
 
 set(rs_driver_FOUND true)
 set(RS_DRIVER_FOUND true)

@@ -3,6 +3,11 @@
   <arg name="log_path" default=""/>
   <arg name="pre_step" default="20"/>
   <arg name="guard_enabled" default="true"/>
+  <arg name="semantic_mode" default="full"/>
+  <arg name="enable_rate_limit" default="true"/>
+  <arg name="enable_available_projection" default="true"/>
+  <arg name="enable_guard_fallback" default="true"/>
+  <arg name="fixed_beta" default="0.4"/>
   <arg name="scenario_id" default="manual"/>
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="odom_topic" default="/Odometry"/>
@@ -25,6 +30,11 @@
     <param name="log_path" value="$(arg log_path)"/>
     <param name="mpc/pre_step" value="$(arg pre_step)"/>
     <param name="guard/enabled" value="$(arg guard_enabled)"/>
+    <param name="semantic_mode" value="$(arg semantic_mode)"/>
+    <param name="guard/enable_rate_limit" value="$(arg enable_rate_limit)"/>
+    <param name="guard/enable_available_projection" value="$(arg enable_available_projection)"/>
+    <param name="guard/enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
+    <param name="fixed_beta" value="$(arg fixed_beta)"/>
     <param name="scenario_id" value="$(arg scenario_id)"/>
     <param name="baseline_id" value="$(arg baseline_id)"/>
     <param name="beta_bar/box" value="$(arg beta_bar_box)"/>

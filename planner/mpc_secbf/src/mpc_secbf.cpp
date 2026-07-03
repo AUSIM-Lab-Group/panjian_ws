@@ -6,7 +6,8 @@
 
 void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                                    std::vector<double> Q, std::vector<double> R,
-                                   double gamma, double beta_bar_unknown, double robot_radius) {
+                                   double gamma, double beta_bar_unknown, double robot_radius,
+                                   double epsilon_max, double slack_weight) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -17,10 +18,12 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     gamma_ = gamma;
     beta_bar_unknown_ = beta_bar_unknown;
     robot_radius_ = robot_radius;
+    epsilon_max_ = epsilon_max;
+    slack_weight_ = slack_weight;
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f",
-             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_);
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f",
+             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_);
 }
 
 bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
@@ -28,6 +31,9 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     cur_state_ptr_ = cur_state;
     goal_state_ptr_ = goal_state;
     obs_matrix_ptr_ = obs_matrix;
+    last_slack_sum = 0.0;
+    last_slack_mean = 0.0;
+    last_slack_max = 0.0;
 
     int obs_num = (N_ > 0 && obs_matrix->cols() > 0) ? (obs_matrix->cols() / N_) : 0;
 
@@ -35,6 +41,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     casadi::Opti prob;
     X_k_ = prob.variable(5, N_ + 1);
     U_k_ = prob.variable(2, N_);
+    casadi::MX epsilon = prob.variable(3, std::max(1, N_ - 1));
 
     casadi::MX v = U_k_(0, casadi::Slice());
     casadi::MX omega = U_k_(1, casadi::Slice());
@@ -79,12 +86,13 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     // Terminal cost
     casadi::MX X_err_e = X_k_(casadi::Slice(0, 3), N_) - X_ref(casadi::Slice(), N_ - 1);
     cost += casadi::MX::mtimes({X_err_e.T(), 1.1 * Q_mat, X_err_e});
-    prob.minimize(cost);
+    cost += slack_weight_ * casadi::MX::sumsqr(epsilon);
 
     // Control bounds
     // 允许小幅倒车 (-0.2 m/s) 用于紧急避障, 但不鼓励长距离倒车
     prob.subject_to(prob.bounded(-0.2, v, v_max_));
     prob.subject_to(prob.bounded(-omega_max_, omega, omega_max_));
+    prob.subject_to(prob.bounded(0.0, epsilon, epsilon_max_));
 
     // Kinematic constraints
     for (int i = 0; i < N_; i++) {
@@ -121,12 +129,14 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
             casadi::MX hk = h_secbf(X_cur, obs_k, beta_i);
             casadi::MX hk1 = h_secbf(X_nxt, obs_k1, beta_i);
 
-            // CBF constraint: -h_{k+1} + (1-γ)h_k ≤ 0
+            // Soft CBF constraint: -h_{k+1} + (1-γ)h_k ≤ ε
             casadi::MX cbf = -hk1 + (1.0 - gamma_) * hk;
-            prob.subject_to(cbf <= 0);
+            prob.subject_to(cbf <= epsilon(choose_num, i));
         }
         choose_num++;
     }
+
+    prob.minimize(cost);
 
     // Warm start
     if (!predict_u.empty()) {
@@ -161,6 +171,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         predict_u.clear();
         casadi::DM state_sol = solution_->value(X_k_);
         casadi::DM ctrl_sol = solution_->value(U_k_);
+        casadi::DM epsilon_sol = solution_->value(epsilon);
 
         for (int i = 0; i < N_ + 1; i++) {
             for (int j = 0; j < 5; j++)
@@ -169,6 +180,18 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         for (int i = 0; i < N_; i++) {
             predict_u.push_back(static_cast<double>(ctrl_sol(0, i)));
             predict_u.push_back(static_cast<double>(ctrl_sol(1, i)));
+        }
+        int slack_count = 0;
+        for (int row = 0; row < static_cast<int>(epsilon_sol.size1()); row++) {
+            for (int col = 0; col < static_cast<int>(epsilon_sol.size2()); col++) {
+                double value = std::max(0.0, static_cast<double>(epsilon_sol(row, col)));
+                last_slack_sum += value;
+                last_slack_max = std::max(last_slack_max, value);
+                slack_count++;
+            }
+        }
+        if (slack_count > 0) {
+            last_slack_mean = last_slack_sum / static_cast<double>(slack_count);
         }
         return true;
 

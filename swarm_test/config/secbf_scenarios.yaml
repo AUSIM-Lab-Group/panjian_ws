@@ -36,6 +36,33 @@ scenarios:
       B2_expected: "h enters negative (no Guard, β too large for feasibility)"
       B3_expected: "Guard rollback keeps h > theoretical_bound"
 
+  # S3-stress: Guard/MPC feasibility 消融压力测试
+  # fixed-poses simulator uses A=scale_x/6 and v≈-2A/slower.
+  # This starts near x≈2.2m with about 1.6m/s closing speed.
+  S3_feasibility_stress:
+    description: "stress: child-like short-TTC head-on obstacle, high semantic beta, tight MPC slack"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    obstacles:
+      - {x: 0.0, y: 0.0, z: 0.75, offset: 0.0, slower: 2.75,
+         scale_x: 13.2, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+    goal: {x: 10.0, y: 0.0}
+    beta_bar:
+      child: 1.05
+      child_like: 1.05
+      cyclist: 0.90
+      pedestrian: 0.75
+      adult: 0.75
+      vehicle: 0.80
+      unknown: 0.75
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    expected_beta_hat: 1.0
+    guard_trigger_condition: "short-TTC β̂ can exceed h_EE-η; projection/rate-limit/MPC guard should keep β feasible"
+    theory:
+      delta_bar_beta: 0.3
+
   # S4: 混合场景 (行人 + 车辆 + 纸箱)
   S4_mixed:
     description: "pedestrian + vehicle + box, different β for each"

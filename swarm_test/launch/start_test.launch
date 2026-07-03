@@ -30,7 +30,7 @@
   <node pkg="swarm_test" type="data_processor_node" name="data_processor_node" output="screen">
     <remap from="/trajs_predicted"  to="/obstacle_prediction_node/obstacle_prediction/trajs_predicted"/>
     <remap from="/trajs"    to="/Dyn_Obs_trajs"/>
-    <!-- <remap from="/odometry" to="/robot1/odom"/> -->
+    <remap from="/odometry" to="/robot1/odom"/>
     <param name="obs_manager/use_GroundTruth"  value="true"  type="bool"/>
     <param name="scenario" value="$(arg scenario_index)" type="int" />
     <param name="controller" value="$(arg controller_index)" type="int" />

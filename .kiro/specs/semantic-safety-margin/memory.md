@@ -536,3 +536,63 @@ static              0.265653
 - `论文公式.md` 当前为未跟踪文件。
 - `swarm_test/launch_exp/exp_secbf_planner.launch` 当前还有未提交修改，需确认是否属于用户已有改动或后续任务范围。
 - `swarm_test/output/secbf_runs/` 下存在大量未跟踪实验输出，提交前需要决定是否保留、归档或加入 ignore。
+
+### 2026-06-15 - 实车论文方法 dry-run bring-up
+
+改动文件：
+- `.kiro/specs/semantic-safety-margin/memory.md`
+
+关键内容：
+- 用户开机后执行实车链路 bring-up；出于安全原因，本轮没有把规划输出接到真实 `/cmd_vel`，而是重映射到 `/cmd_vel_secbf_dryrun`。
+- 首次启动 `all_demo.launch` 失败，根因为硬件链路源码包存在但未编译进当前 `devel`，导致 `rslidar_sdk_node`、`rs_to_velodyne`、`sbg_device`、`fastlio_mapping`、`realsense2_camera` 插件找不到。
+- 使用非标准 workspace 源码根 `--source .` 补编硬件链路包：`rslidar_sdk`、`rs_to_velodyne`、`sbg_driver`、`fast_lio`、`realsense2_camera`，随后 `all_demo.launch` 成功启动 LiDAR、SBG IMU、FAST-LIO 和 RealSense D435I。
+- `dynamic_perception` 同样未生成节点，补编后 `start_perception.launch use_sim_time:=false show_rviz:=false` 成功启动 `ri_dbscan_node`、`L_shape_fitting`、`obstacle_prediction_node`。
+- 启动 `semantic_detection yolo.launch image_topic:=/camera/color/image_raw device:=cuda:0 confidence:=0.5` 成功，YOLOv8n 在 `cuda:0` 上发布 `/yolo/detections`。
+- 启动 `exp_secbf_planner.launch cmd_vel_topic:=/cmd_vel_secbf_dryrun v_max:=0.3` 成功，MPC-SECBF、全局 FSM、语义融合、Beta Guard 均在线。
+- 发现 RealSense TF 树与 FAST-LIO TF 树未连接：FAST-LIO 为 `world -> camera_init -> body -> base_link`，RealSense 为 `camera_link -> camera_*`。本轮用临时静态 TF `body -> camera_link` 接通，仅用于 dry-run 验证；后续实车实验必须替换为真实相机-车体外参。
+- TF 接通后 `/semantic_obstacles` 出现 `pedestrian` 类别，证明 YOLO 语义可以进入语义融合；`/safety_margin/beta` 正常发布。
+- 向 `/move_base_simple/goal` 发布短距离目标 `(3.0, 0.0)` 后，全局 FSM 生成 `/global_path`，并将真实障碍预测转发到 `/globalFsm_by_adsm/obs_predict_pub`。
+- `/cmd_vel_secbf_dryrun` 出现非零输出，典型值约 `linear.x=0.30`、`angular.z=-0.80`，说明“实车感知/定位 -> 几何预测 -> YOLO 语义 -> semantic fusion -> Beta Guard -> global FSM -> MPC-SECBF dry-run cmd”闭环已跑通。
+- 当前仍不能直接切到真实底盘：`can0` 仍为 DOWN，未启动 scout base；MPC-SECBF 主优化多次 `Infeasible_Problem_Detected`，依赖 fallback 输出；相机外参仍是临时 identity 桥；需要实测外参、底盘急停/架空/限速确认后再接真实 `/cmd_vel`。
+
+验证/证据：
+- 设备层：`/dev/ttyUSB0`、`/dev/video0..5` 存在；`enp89s0=192.168.4.102/24`；`ping 192.168.4.200` 丢包 0%；`can0` 为 DOWN。
+- ROS master：手动启动 `roscore` 成功。
+- 编译硬件链路：
+  `catkin_make --source . --only-pkg-with-deps rslidar_sdk rs_to_velodyne sbg_driver fast_lio realsense2_camera -DCMAKE_CXX_STANDARD=14 -DCMAKE_PREFIX_PATH=/home/lxr20/lxr/local/casadi-3.7.0\;/opt/ros/noetic` 通过。
+- 编译几何感知：
+  `catkin_make --source . --only-pkg-with-deps dynamic_perception -DCMAKE_CXX_STANDARD=14 -DCMAKE_PREFIX_PATH=/home/lxr20/lxr/local/casadi-3.7.0\;/opt/ros/noetic` 通过。
+- 话题频率：`/rslidar_points` 约 10 Hz，`/velodyne_points` 约 10 Hz，`/Odometry` 约 10 Hz，`/fastLIO/non_ground_points` 约 10 Hz，`/imu_raw` 约 200 Hz，`/camera/color/image_raw` 约 30 Hz。
+- 几何感知：`/clustering/cluster_array` 约 10 Hz，`/l_shape_fitting/jsk_bbox_array` 约 10 Hz，`/obstacle_prediction_node/obstacle_prediction/trajs_predicted` 约 26--30 Hz。
+- YOLO：`/yolo/detections` 约 30 Hz。
+- 语义与 Guard：`/semantic_obstacles` 约 10 Hz，`/safety_margin/beta` 约 10 Hz；TF 接通后 `/semantic_obstacles` 中出现 `semantic_class: "pedestrian"`。
+- 规划与控制 dry-run：`/global_path` 有 path 输出，`/globalFsm_by_adsm/obs_predict_pub` 有预测数组输出，`/cmd_vel_secbf_dryrun` 约 100 Hz 且有非零速度。
+
+回滚：
+- 停止本轮启动的 `roscore`、`all_demo.launch`、`start_perception.launch`、`yolo.launch`、`exp_secbf_planner.launch` 和临时 `body -> camera_link` 静态 TF。
+- 删除本条 memory 记录。
+- 若需要恢复此前构建白名单，重新按 Phase 5/Exp2 使用的白名单执行 `catkin_make --source .`。
+
+### 2026-06-15 - FAST-LIO non-ground 自车/天线点云过滤
+
+改动文件：
+- `state_estimation/FAST_LIO/src/laserMapping.cpp`
+- `state_estimation/FAST_LIO/config/velodyne.yaml`
+- `.kiro/specs/semantic-safety-margin/memory.md`
+
+关键内容：
+- 用户在 RViz 中发现雷达后方近距离约 0.15 m 处有两根天线遮挡，近车体点云进入 `/fastLIO/non_ground_points`，随后可能被建图膨胀层和动态障碍感知当作真实障碍。
+- 该现象与规划报错 `open set empty, no path! use node num: 1` 一致：A* 只弹出起点节点，说明起点附近的第一圈扩展很可能被占据/膨胀障碍阻断。
+- 在 FAST-LIO 发布 `/fastLIO/non_ground_points` 前增加可配置 `self_filter` CropBox；默认开启后滤掉车体/天线附近点云，避免自车结构进入后续 `sdf_map`、clustering、prediction 和 MPC-SECBF。
+- 当前默认过滤框为 `x=[-0.45, 0.30]`、`y=[-0.45, 0.45]`、`z=[-0.40, 1.80]`。若后方天线仍可见，可优先把 `min_x` 调到 `-0.70`；若左右边缘仍残留，可加宽 `min_y/max_y`。
+
+验证/证据：
+- 编译命令通过：
+  `catkin_make --source . --only-pkg-with-deps fast_lio -DCMAKE_CXX_STANDARD=14 -DCMAKE_PREFIX_PATH=/home/lxr20/lxr/local/casadi-3.7.0\;/opt/ros/noetic`
+- 编译目标完成：`[100%] Built target fastlio_mapping`。
+- 运行验证需重启 FAST-LIO 所在的 `all_demo.launch`，在 RViz 同时查看 `/fastLIO/non_ground_points` 与 `/sdf_map/occupancy_inflate`，确认雷达近车体天线/车身点云不再生成围绕机器人自身的膨胀障碍。
+- 过滤生效后先用 dry-run 目标测试：`x=0.5`、`x=1.0`、`x=3.0`，仍然只观察 `/cmd_vel_secbf_dryrun`，不要直接切真实 `/cmd_vel`。
+
+回滚：
+- 在 `state_estimation/FAST_LIO/config/velodyne.yaml` 中把 `self_filter.enable` 改为 `false`。
+- 或删除 `laserMapping.cpp` 中 `self_filter` 参数读取与 CropBox 过滤逻辑，并恢复本条 memory 记录前的状态。
