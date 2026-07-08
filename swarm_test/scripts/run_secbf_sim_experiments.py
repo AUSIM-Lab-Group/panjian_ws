@@ -19,11 +19,22 @@ except ImportError:
 
 
 SCENARIO_INDEX = {
-    "S1_pedestrian_crossing": 1,
-    "S2_child_sudden": 2,
-    "S3_feasibility_critical": 3,
-    "S3_feasibility_stress": 35,
-    "S4_mixed": 4,
+    "head_on_context_bl": 101,
+    "head_on_context_int": 102,
+    "head_on_context_ext": 103,
+    "crossing_context_bl": 111,
+    "crossing_context_int": 112,
+    "crossing_context_ext": 113,
+    "local_crowding_context_bl": 121,
+    "local_crowding_context_int": 122,
+    "local_crowding_context_ext": 123,
+    "avocado_head_on_coop": 201,
+    "avocado_head_on_noncoop": 202,
+    "avocado_circle": 203,
+    "drmpc_scene_1_circle": 211,
+    "drmpc_scene_2_corridor": 212,
+    "drmpc_scene_3_circle_dense": 213,
+    "drmpc_scene_4_corridor_dense": 214,
     "Exp2_category_box": 21,
     "Exp2_category_adult": 22,
     "Exp2_category_child_like": 23,
@@ -190,12 +201,44 @@ def selected(values, requested):
     return [requested]
 
 
+def legacy_obstacle_for_simulator(obs: dict) -> dict:
+    """Convert paper-style obstacle declarations to dynamic_simulator params."""
+    if obs.get("motion_type") != "line":
+        return {
+            "x": float(obs.get("x", 0.0)),
+            "y": float(obs.get("y", 0.0)),
+            "z": float(obs.get("z", 0.75)),
+            "offset": float(obs.get("offset", 0.0)),
+            "slower": float(obs.get("slower", 999.0)),
+            "scale_x": float(obs.get("scale_x", 0.0)),
+            "scale_y": float(obs.get("scale_y", 0.0)),
+            "scale_z": float(obs.get("scale_z", 0.0)),
+        }
+
+    start = obs.get("start", {})
+    goal = obs.get("goal", {})
+    sx = float(start.get("x", 0.0))
+    sy = float(start.get("y", 0.0))
+    gx = float(goal.get("x", sx))
+    gy = float(goal.get("y", sy))
+    z = float(start.get("z", obs.get("z", 0.75)))
+    return {
+        "x": 0.5 * (sx + gx),
+        "y": 0.5 * (sy + gy),
+        "z": z,
+        "offset": float(obs.get("offset", 0.0)),
+        "slower": float(obs.get("travel_time", obs.get("slower", 8.0))),
+        "scale_x": 3.0 * (sx - gx),
+        "scale_y": 2.5 * (sy - gy),
+        "scale_z": float(obs.get("scale_z", 0.0)),
+    }
+
+
 def write_obstacle_params(run_dir: Path, obstacles: list) -> Path:
     param_path = run_dir / "obstacles_param.yaml"
     clean_obstacles = []
     for obs in obstacles:
-        clean = {k: v for k, v in obs.items() if k != "semantic_class"}
-        clean_obstacles.append(clean)
+        clean_obstacles.append(legacy_obstacle_for_simulator(obs))
     with param_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump({"obstacle_params": clean_obstacles}, f, sort_keys=False)
     return param_path
@@ -253,14 +296,22 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "experiment_id": (
             "Exp2_category_aware" if scenario_id.startswith("Exp2_")
             else "Exp3_context_modulation" if scenario_id.startswith("Exp3_")
-            else "Exp0_log_check"
+            else "Exp1_teacher_main_simulation"
         ),
         "run_id": run_dir.name,
         "scenario": scenario_id,
         "scenario_description": scenario.get("description", ""),
+        "scenario_family": scenario.get("scenario_family", ""),
+        "context_level": scenario.get("context_level", ""),
+        "paper_role": scenario.get("paper_role", scenario.get("expected_role", "")),
+        "scene_source": scenario.get("scene_source", "teacher_canonical"),
         "method": baseline.get("experiment_label", baseline_id),
         "baseline_id": baseline_id,
-        "map_name": "corridor_12m_x_6m" if scenario_id.startswith(("Exp2_", "Exp3_")) else "numerical_simulation",
+        "map_name": (
+            "corridor_12m_x_6m" if scenario_id.startswith(("Exp2_", "Exp3_"))
+            else "paper_style_supplementary_2d" if scenario_id.startswith(("avocado_", "drmpc_"))
+            else "teacher_canonical_2d"
+        ),
         "start": [0.0, 0.0, 0.0],
         "goal": [float(goal.get("x", 0.0)), float(goal.get("y", 0.0)), 0.0],
         "map_size": [
@@ -272,6 +323,7 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "obstacle_radius": 0.4,
         "obstacle_count": num_obs,
         "obstacle_classes": classes_arg,
+        "obstacles": scenario.get("obstacles", []),
         "beta_table": scenario_beta_bar(baseline_id, scenario),
         "mu_weights": scenario_mu_weights(baseline_id, scenario),
         "guard_eta": 0.10,

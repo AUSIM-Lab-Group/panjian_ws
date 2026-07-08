@@ -1,0 +1,19 @@
+{
+  "contexts": [
+    "head-on",
+    "crossing",
+    "moving-away",
+    "crowded"
+  ],
+  "max_beta_i": 0.395312,
+  "min_beta_i": 0.0325,
+  "rows": 24,
+  "semantic_classes": [
+    "child",
+    "cyclist",
+    "vehicle",
+    "pedestrian",
+    "unknown",
+    "box"
+  ]
+}

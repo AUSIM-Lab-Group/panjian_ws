@@ -17,7 +17,7 @@
   <arg name="map_size_z" default="3.0"/>
   <arg name="goal_x" default="10.0"/>
   <arg name="goal_y" default="0.0"/>
-  <arg name="scenario_id" default="S4_mixed"/>
+  <arg name="scenario_id" default="head_on_context_ext"/>
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
@@ -29,7 +29,7 @@
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
-  <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
+  <arg name="obstacle_classes" default="[child_like]"/>
   <arg name="beta_bar_box" default="0.1"/>
   <arg name="beta_bar_adult" default="0.4"/>
   <arg name="beta_bar_pedestrian" default="0.4"/>

@@ -1,0 +1,82 @@
+{
+  "context_level": "context_ext",
+  "controller_type": "horizon_mpc_secbf",
+  "dt": 0.1,
+  "horizon_steps": 4,
+  "images": [
+    "local_crowding_qp_trajectory.png",
+    "local_crowding_qp_safety_timeseries.png"
+  ],
+  "method_metrics": {
+    "EESM-MPC-ECBF": {
+      "collision_proxy": true,
+      "goal_error": 0.0,
+      "max_beta_applied": 0.0,
+      "max_command_step": 0.86228,
+      "max_delta_beta": 0.0,
+      "max_slack": 0.502207,
+      "mean_command_step": 0.14917927499999997,
+      "min_clearance": -0.000219,
+      "min_h_cbf": -0.458367,
+      "min_h_see": -0.458367,
+      "path_length": 6.367376,
+      "slack_active_steps": 36,
+      "solve_time_p95_ms": 5.436846,
+      "solver_success_rate": 1.0
+    },
+    "Proposed MPC-SECBF": {
+      "collision_proxy": false,
+      "goal_error": 0.0,
+      "max_beta_applied": 0.229232,
+      "max_command_step": 1.118949,
+      "max_delta_beta": 0.05,
+      "max_slack": 0.06615,
+      "mean_command_step": 0.08884440833333335,
+      "min_clearance": 0.230781,
+      "min_h_cbf": -0.052011,
+      "min_h_see": -0.052011,
+      "path_length": 4.644416,
+      "slack_active_steps": 10,
+      "solve_time_p95_ms": 3.408659,
+      "solver_success_rate": 1.0
+    },
+    "SEESM w/o Feasibility-Preserving Update": {
+      "collision_proxy": false,
+      "goal_error": 0.0,
+      "max_beta_applied": 0.75,
+      "max_command_step": 0.975067,
+      "max_delta_beta": 0.440833,
+      "max_slack": 0.646384,
+      "mean_command_step": 0.20418034166666674,
+      "min_clearance": 0.406777,
+      "min_h_cbf": -0.62277,
+      "min_h_see": -0.62277,
+      "path_length": 7.765613,
+      "slack_active_steps": 55,
+      "solve_time_p95_ms": 5.854333,
+      "solver_success_rate": 1.0
+    },
+    "Standard MPC-CBF": {
+      "collision_proxy": true,
+      "goal_error": 0.0,
+      "max_beta_applied": 0.0,
+      "max_command_step": 0.630354,
+      "max_delta_beta": 0.0,
+      "max_slack": 0.000415,
+      "mean_command_step": 0.031143316666666657,
+      "min_clearance": -0.000221,
+      "min_h_cbf": -0.000221,
+      "min_h_see": -0.000221,
+      "path_length": 4.605906,
+      "slack_active_steps": 8,
+      "solve_time_p95_ms": 4.286022,
+      "solver_success_rate": 1.0
+    }
+  },
+  "rows": 480,
+  "scenario": "local_crowding",
+  "semantic_switch_step": 9,
+  "semantic_switch_time": 0.9,
+  "solver_backend": "osqp",
+  "steps_per_method": 120
+}

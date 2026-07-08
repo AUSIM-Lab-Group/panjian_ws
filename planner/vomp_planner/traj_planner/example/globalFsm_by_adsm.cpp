@@ -3,6 +3,7 @@
 #include <eigen3/Eigen/Eigen>
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Float64.h>
+#include <cmath>
 
 #include "plan_manage/plan_manager.h"
 
@@ -14,7 +15,7 @@ ros::Publisher mpc_traj_pub_;
 ros::Publisher search_time_pub_;
 
 bool static_path;
-bool is_odom_rcv_, is_target_rcv_, plan_success;
+bool is_odom_rcv_, is_target_rcv_, has_target_endpoint, plan_success;
 nav_msgs::Odometry odom_;
 std::vector<Eigen::Vector2d> trajlist;
 std::vector<ros::Time> timelist;
@@ -33,6 +34,24 @@ std::vector<double> time_list;
 
 // 状态机标志位0-init, 1-wait_target, 2-gen_new_traj, 3-exec_traj, 4-replan_traj
 int _fsm_sign;
+
+void appendTargetEndpointIfNeeded(nav_msgs::Path& global_path,
+                                  const geometry_msgs::PoseStamped& pose_template)
+{
+  if (!has_target_endpoint || global_path.poses.empty()) return;
+
+  const geometry_msgs::Point& last = global_path.poses.back().pose.position;
+  const double dx = last.x - end_pt_.x();
+  const double dy = last.y - end_pt_.y();
+  if (std::hypot(dx, dy) <= 0.05) return;
+
+  geometry_msgs::PoseStamped target_pose = pose_template;
+  target_pose.header.seq = static_cast<unsigned int>(global_path.poses.size());
+  target_pose.pose.position.x = end_pt_.x();
+  target_pose.pose.position.y = end_pt_.y();
+  target_pose.pose.position.z = 0.0;
+  global_path.poses.push_back(target_pose);
+}
 
 void odomCallback(const nav_msgs::Odometry& msg) 
 {
@@ -65,6 +84,7 @@ void waypointCallback(const geometry_msgs::PoseStamped& msg)
     end_vel_.setZero();
 
     is_target_rcv_ = true;
+    has_target_endpoint = true;
 }
 
 void globalPathPub_Callback(const ros::TimerEvent& e) 
@@ -91,6 +111,7 @@ void globalPathPub_Callback(const ros::TimerEvent& e)
 
     global_path.poses.push_back(pose_stamped);
   }
+  appendTargetEndpointIfNeeded(global_path, pose_stamped);
   mpc_traj_pub_.publish(global_path);
 } 
 
@@ -242,6 +263,7 @@ int main(int argc, char** argv){
     average_time= 0.0;
     total_time  = 0.0;
     _fsm_sign   = 0;
+    has_target_endpoint = false;
     time_list.clear();
     planner_manager_.initPlanManage(nh);
 
@@ -274,4 +296,3 @@ int main(int argc, char** argv){
 
     return 0;
 }
-

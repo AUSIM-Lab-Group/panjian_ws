@@ -1,0 +1,20 @@
+{
+  "max_delta_beta_by_method": {
+    "G0_Category_only": 0.36,
+    "G1_Context_only": 0.36,
+    "G2_No_increment_limit": 0.1,
+    "G3_No_projection": 0.02,
+    "G4_No_feasibility_guard": 0.02,
+    "G5_Full_guard": 0.02
+  },
+  "methods": [
+    "G0_Category_only",
+    "G1_Context_only",
+    "G2_No_increment_limit",
+    "G3_No_projection",
+    "G4_No_feasibility_guard",
+    "G5_Full_guard"
+  ],
+  "rows": 30,
+  "scenario": "semantic_switch_unknown_to_child"
+}

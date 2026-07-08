@@ -84,13 +84,15 @@ class Phase5CsvLogger:
     def obs_cb(self, msg):
         if self.pre_step <= 0 or not msg.data:
             return
-        obs_count = len(msg.data) // (7 * self.pre_step)
+        obs_count = len(msg.data) // 7
+        if self.classes:
+            obs_count = min(obs_count, len(self.classes))
         if obs_count <= 0:
             return
 
         t = rospy.Time.now().to_sec()
         for idx in range(obs_count):
-            base = 7 * self.pre_step * idx
+            base = 7 * idx
             if base + 6 >= len(msg.data):
                 continue
             x = float(msg.data[base + 0])
