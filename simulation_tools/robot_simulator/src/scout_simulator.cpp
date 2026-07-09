@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cmath>
 #include <math.h>
 #include <random>
 #include <eigen3/Eigen/Dense>
@@ -19,7 +20,7 @@ ros::Timer tf_timer_;
 
 nav_msgs::Odometry last_odom;
 
-double p_init_x, p_init_y, p_init_z;
+double p_init_x, p_init_y, p_init_z, p_init_yaw;
 
 double time_resolution = 0.02;
 double L = 608.54e-3;
@@ -177,6 +178,7 @@ int main (int argc, char** argv)
 	nh.param("p_init_x", p_init_x, 0.0);
 	nh.param("p_init_y", p_init_y, 0.0);
 	nh.param("p_init_z", p_init_z, 0.0);
+	nh.param("p_init_yaw", p_init_yaw, 0.0);
 	
 	velocity_cmdsub  = nh.subscribe("command", 1, rcvVelCmdCallBack );
 	odom_pub  = nh.advertise<nav_msgs::Odometry>("odometry", 1);
@@ -187,10 +189,10 @@ int main (int argc, char** argv)
 	last_odom.pose.pose.position.x = p_init_x;
 	last_odom.pose.pose.position.y = p_init_y;
 	last_odom.pose.pose.position.z = p_init_z;
-	last_odom.pose.pose.orientation.w = 1;
+	last_odom.pose.pose.orientation.w = std::cos(p_init_yaw / 2.0);
 	last_odom.pose.pose.orientation.x = 0;
 	last_odom.pose.pose.orientation.y = 0;
-	last_odom.pose.pose.orientation.z = 0;
+	last_odom.pose.pose.orientation.z = std::sin(p_init_yaw / 2.0);
 	last_odom.twist.twist.linear.x = 0.0; last_odom.twist.twist.linear.y = 0.0; last_odom.twist.twist.linear.z = 0.0;
 	last_odom.twist.twist.angular.x = 0.0; last_odom.twist.twist.angular.y = 0.0; last_odom.twist.twist.angular.z = 0.0;
 

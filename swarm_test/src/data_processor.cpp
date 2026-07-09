@@ -3,6 +3,7 @@
 #include <ros/ros.h>
 #include <eigen3/Eigen/Dense>
 #include <fstream>
+#include <geometry_msgs/PoseStamped.h>
 #include <iomanip>
 #include <nav_msgs/Odometry.h>
 #include <sstream>
@@ -34,6 +35,7 @@ Eigen::Vector2d end_pt_;
 bool start_sign = false;
 bool end_sign   = false;
 bool record_sign, record_sign1;
+bool use_fixed_final_goal = false;
 
 std::vector<std::string> controller_ls = {
     "None",
@@ -255,7 +257,9 @@ void waypointCallback(const geometry_msgs::PoseStamped& msg)
 {
   std::cout<< "----------receive goal----------"<< std::endl;
   if (!start_sign){
-    end_pt_<< msg.pose.position.x, msg.pose.position.y; 
+    if (!use_fixed_final_goal) {
+      end_pt_<< msg.pose.position.x, msg.pose.position.y;
+    }
     start_sign = true;
     plan_time_start = ros::Time::now();      // 记录开始时间
   }
@@ -332,11 +336,20 @@ int main (int argc, char** argv) {
   }
   pnh.param("output_csv", file_name, std::string("data.csv"));
   pnh.param("output_csv_dist", file_name1, std::string("distance.csv"));
+  pnh.param("use_fixed_final_goal", use_fixed_final_goal, false);
 
   if (controller_ < 0 || controller_ >= static_cast<int>(controller_ls.size())) {
     controller_ = 0;
   }
   controller_name = controller_ls[controller_];
+  end_pt_ = Eigen::Vector2d::Zero();
+  if (use_fixed_final_goal) {
+    double final_goal_x = 0.0;
+    double final_goal_y = 0.0;
+    pnh.param("final_goal_x", final_goal_x, 0.0);
+    pnh.param("final_goal_y", final_goal_y, 0.0);
+    end_pt_ << final_goal_x, final_goal_y;
+  }
   // std::cout<< "Controller_name := "<< controller_name<< std::endl;
   // 初始化障碍物管理对象
   obs_Manager_.reset(new Obs_Manager);

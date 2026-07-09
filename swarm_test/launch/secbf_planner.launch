@@ -17,6 +17,9 @@
   <arg name="map_size_z" default="3.0"/>
   <arg name="goal_x" default="10.0"/>
   <arg name="goal_y" default="0.0"/>
+  <arg name="init_x" default="0.0"/>
+  <arg name="init_y" default="0.0"/>
+  <arg name="init_yaw" default="0.0"/>
   <arg name="scenario_id" default="head_on_context_ext"/>
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
@@ -58,9 +61,10 @@
   <include file="$(find robot_simulator)/launch/scout_simulator.xml">
     <arg name="ugv_id"         value="1"/>
     <arg name="time_res_"      value="0.02"/>
-    <arg name="init_x_"        value="0.0"/>
-    <arg name="init_y_"        value="0.0"/>
+    <arg name="init_x_"        value="$(arg init_x)"/>
+    <arg name="init_y_"        value="$(arg init_y)"/>
     <arg name="init_z_"        value="0.2"/>
+    <arg name="init_yaw_"      value="$(arg init_yaw)"/>
     <arg name="map_size_x_"    value="$(arg map_size_x)"/>
     <arg name="map_size_y_"    value="$(arg map_size_y)"/>
     <arg name="map_size_z_"    value="$(arg map_size_z)"/>

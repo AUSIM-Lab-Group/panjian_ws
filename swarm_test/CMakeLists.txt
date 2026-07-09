@@ -51,3 +51,9 @@ target_link_libraries(obs_vis_node ${catkin_LIBRARIES})
 
 add_executable (rosbag_trans_color_node src/rosbag_trans_color.cpp )
 target_link_libraries(rosbag_trans_color_node ${catkin_LIBRARIES})
+
+catkin_install_python(PROGRAMS
+  scripts/reference_path_waypoints.py
+  scripts/reference_path_goal_publisher.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

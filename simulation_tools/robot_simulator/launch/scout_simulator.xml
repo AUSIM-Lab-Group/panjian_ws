@@ -2,6 +2,7 @@
   <arg name="init_x_"/>
   <arg name="init_y_"/>
   <arg name="init_z_"/>
+  <arg name="init_yaw_"/>
   <arg name="map_size_x_"/>
   <arg name="map_size_y_"/>
   <arg name="map_size_z_"/> 
@@ -21,6 +22,7 @@
     <param name="p_init_x" value="$(arg init_x_)" type="double"/>
     <param name="p_init_y" value="$(arg init_y_)" type="double"/>
     <param name="p_init_z" value="$(arg init_z_)" type="double"/>
+    <param name="p_init_yaw" value="$(arg init_yaw_)" type="double"/>
 
     <remap from="~command" to="$(arg cmd_topic)"/>
     <remap from="~odometry" to="$(arg odometry_topic)"/>
