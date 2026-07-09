@@ -7,7 +7,8 @@
 void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                                    std::vector<double> Q, std::vector<double> R,
                                    double gamma, double beta_bar_unknown, double robot_radius,
-                                   double epsilon_max, double slack_weight) {
+                                   double epsilon_max, double slack_weight,
+                                   int max_cbf_obstacles) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -20,10 +21,11 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     robot_radius_ = robot_radius;
     epsilon_max_ = epsilon_max;
     slack_weight_ = slack_weight;
+    max_cbf_obstacles_ = std::max(1, max_cbf_obstacles);
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f",
-             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_);
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d",
+             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_, max_cbf_obstacles_);
 }
 
 bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
@@ -34,6 +36,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     last_slack_sum = 0.0;
     last_slack_mean = 0.0;
     last_slack_max = 0.0;
+    last_constrained_obs_count = 0;
 
     int obs_num = (N_ > 0 && obs_matrix->cols() > 0) ? (obs_matrix->cols() / N_) : 0;
 
@@ -41,7 +44,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     casadi::Opti prob;
     X_k_ = prob.variable(5, N_ + 1);
     U_k_ = prob.variable(2, N_);
-    casadi::MX epsilon = prob.variable(3, std::max(1, N_ - 1));
+    casadi::MX epsilon = prob.variable(max_cbf_obstacles_, std::max(1, N_ - 1));
 
     casadi::MX v = U_k_(0, casadi::Slice());
     casadi::MX omega = U_k_(1, casadi::Slice());
@@ -105,26 +108,41 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         prob.subject_to(x_next == X_k_(casadi::Slice(), i + 1));
     }
 
-    // SECBF constraints (per-obstacle with semantic β)
-    int choose_num = 0;
-    for (int idx = 0; idx < obs_num && choose_num < 3; idx++) {
-        // Check if obstacle is relevant (in front, within range)
+    // SECBF constraints (per-obstacle with semantic β). Rank candidates first
+    // so the limited CBF budget covers the nearest relevant obstacles.
+    struct ObstacleCandidate {
+        int original_idx;
+        double distance;
+    };
+    std::vector<ObstacleCandidate> candidates;
+    candidates.reserve(obs_num);
+    for (int idx = 0; idx < obs_num; idx++) {
         Eigen::VectorXd obs_first = obs_matrix->col(idx * N_);
         Eigen::Vector2d obs_p = obs_first.head<2>();
         Eigen::Vector2d rob_p = cur_state->head<2>();
         double dist = (obs_p - rob_p).norm();
         if (dist > 8.0) continue;  // Too far, skip
+        candidates.push_back({idx, dist});
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const ObstacleCandidate& lhs, const ObstacleCandidate& rhs) {
+                  return lhs.distance < rhs.distance;
+              });
 
+    int choose_num = 0;
+    for (const auto& candidate : candidates) {
+        if (choose_num >= max_cbf_obstacles_) break;
+        const int original_idx = candidate.original_idx;
         // Get β for this obstacle
-        double beta_i = (idx < (int)beta_list.size()) ? beta_list[idx] : beta_bar_unknown_;
+        double beta_i = (original_idx < (int)beta_list.size()) ? beta_list[original_idx] : beta_bar_unknown_;
 
         // Add CBF constraints
         for (int i = 0; i < N_ - 1; i++) {
             casadi::MX X_cur = X_k_(casadi::Slice(), i);
             casadi::MX X_nxt = X_k_(casadi::Slice(), i + 1);
 
-            Eigen::VectorXd obs_k = obs_matrix->col(idx * N_ + i);
-            Eigen::VectorXd obs_k1 = obs_matrix->col(idx * N_ + i + 1);
+            Eigen::VectorXd obs_k = obs_matrix->col(original_idx * N_ + i);
+            Eigen::VectorXd obs_k1 = obs_matrix->col(original_idx * N_ + i + 1);
 
             casadi::MX hk = h_secbf(X_cur, obs_k, beta_i);
             casadi::MX hk1 = h_secbf(X_nxt, obs_k1, beta_i);
@@ -135,6 +153,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         }
         choose_num++;
     }
+    last_constrained_obs_count = choose_num;
 
     prob.minimize(cost);
 

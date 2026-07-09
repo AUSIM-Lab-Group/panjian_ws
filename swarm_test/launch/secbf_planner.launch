@@ -28,6 +28,7 @@
   <arg name="fixed_beta" default="0.4"/>
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
+  <arg name="max_cbf_obstacles" default="6"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
   <arg name="obstacle_classes" default="[child_like]"/>
   <arg name="beta_bar_box" default="0.1"/>
@@ -122,6 +123,7 @@
     <arg name="robot_radius" value="0.4"/>
     <arg name="epsilon_max" value="$(arg epsilon_max)"/>
     <arg name="slack_weight" value="$(arg slack_weight)"/>
+    <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="cmd_vel_topic" value="/cmd_vel1"/>

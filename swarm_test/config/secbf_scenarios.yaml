@@ -359,6 +359,45 @@ scenarios:
       slack_weight: 5000.0
     paper_role: "SEESM high-density corridor stress for guard activation and practical executability"
 
+  drmpc_scene_4_corridor_spread6:
+    description: "DR-MPC-style Scene 4 visual spread: six separated semantic obstacles for clear paper figures"
+    scenario_family: "DR-MPC Style Corridor"
+    context_level: "Supplementary"
+    scene_source: "DR-MPC-inspired layout"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    obstacles:
+      - {x: 3.0, y: -1.6, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {x: 4.2, y: 1.4, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {x: 5.5, y: -1.2, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {x: 6.8, y: 1.2, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {x: 8.0, y: -0.7, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box", cooperation_type: "static"}
+      - {x: 9.0, y: 0.9, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box", cooperation_type: "static"}
+    goal: {x: 10.0, y: 0.0}
+    beta_bar:
+      box: 0.20
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    paper_role: "SEESM six-obstacle visualization evidence with clearly separated semantic risks"
+
   # Exp2: 类别感知单障碍物 sweep，固定几何与运动，只改变类别
   Exp2_category_box:
     description: "Exp2 category-aware sanity: single static box on path"

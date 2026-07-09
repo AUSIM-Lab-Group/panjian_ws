@@ -21,6 +21,7 @@ public:
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         double epsilon_max, slack_weight;
         int N;
+        int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
         double v_max, v_min, o_max;
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
@@ -33,6 +34,7 @@ public:
         nh_.param("mpc/beta_bar_unknown", beta_unknown, 0.4);
         nh_.param("mpc/epsilon_max", epsilon_max, 0.05);
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
+        nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
         if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
             nh_.param("robot/radius", robot_radius, 0.4);
@@ -51,11 +53,11 @@ public:
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
-                            epsilon_max, slack_weight);
+                            epsilon_max, slack_weight, max_cbf_obstacles);
 
         openCsv(planner_csv_, planner_log_path,
                 "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
-                "cmd_v,cmd_w,obs_count,beta_count,used_fallback,mpc_feasibility_guard_used,"
+                "cmd_v,cmd_w,obs_count,constrained_obs_count,beta_count,used_fallback,mpc_feasibility_guard_used,"
                 "slack,slack_sum,slack_mean,slack_max,solve_time_ms\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
@@ -79,7 +81,8 @@ public:
         has_odom_ = false;
         has_path_ = false;
 
-        ROS_INFO("MPC-SECBF node started. freq=%.1f Hz, N=%d, Ts=%.2f", mpc_freq, N, Ts);
+        ROS_INFO("MPC-SECBF node started. freq=%.1f Hz, N=%d, Ts=%.2f, max_cbf_obstacles=%d",
+                 mpc_freq, N, Ts, max_cbf_obstacles);
     }
 
     ~MpcSecbfNode() {
@@ -256,6 +259,7 @@ private:
                          double solve_time_ms) {
         const double t = ros::Time::now().toSec();
         const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
+        const int constrained_obs_count = solver_.last_constrained_obs_count;
         if (planner_csv_.is_open()) {
             planner_csv_ << t << ","
                          << mpc_status << ","
@@ -265,6 +269,7 @@ private:
                          << cmd_vel_.linear.x << ","
                          << cmd_vel_.angular.z << ","
                          << obs_count << ","
+                         << constrained_obs_count << ","
                          << beta_list_.size() << ","
                          << (used_fallback ? 1 : 0) << ","
                          << (mpc_guard_used ? 1 : 0) << ","

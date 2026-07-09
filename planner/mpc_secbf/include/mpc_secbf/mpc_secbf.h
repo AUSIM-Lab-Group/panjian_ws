@@ -21,7 +21,8 @@ public:
     void init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                      std::vector<double> Q, std::vector<double> R,
                      double gamma, double beta_bar_unknown, double robot_radius,
-                     double epsilon_max = 0.05, double slack_weight = 1000.0);
+                     double epsilon_max = 0.05, double slack_weight = 1000.0,
+                     int max_cbf_obstacles = 6);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -40,6 +41,7 @@ public:
     double last_slack_sum = 0.0;
     double last_slack_mean = 0.0;
     double last_slack_max = 0.0;
+    int last_constrained_obs_count = 0;
 
 private:
     // SECBF barrier function: h = ||p_obs - p_robot|| - R_obs - R_robot - β_i
@@ -62,6 +64,7 @@ private:
     double robot_radius_ = 0.4;
     double epsilon_max_ = 0.05;
     double slack_weight_ = 1000.0;
+    int max_cbf_obstacles_ = 6;
     std::vector<double> Q_, R_;
 
     // CasADi objects

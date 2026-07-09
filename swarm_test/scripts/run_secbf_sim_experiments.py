@@ -35,6 +35,7 @@ SCENARIO_INDEX = {
     "drmpc_scene_2_corridor": 212,
     "drmpc_scene_3_circle_dense": 213,
     "drmpc_scene_4_corridor_dense": 214,
+    "drmpc_scene_4_corridor_spread6": 215,
     "Exp2_category_box": 21,
     "Exp2_category_adult": 22,
     "Exp2_category_child_like": 23,
@@ -170,6 +171,7 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "fixed_beta": 0.4,
     "epsilon_max": 0.05,
     "slack_weight": 1000.0,
+    "max_cbf_obstacles": 6,
 }
 
 
@@ -336,6 +338,7 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "fixed_beta": switches["fixed_beta"],
         "epsilon_max": switches["epsilon_max"],
         "slack_weight": switches["slack_weight"],
+        "max_cbf_obstacles": switches["max_cbf_obstacles"],
         "guard_tau": 0.20,
         "mpc_horizon": 20,
         "dt": 0.10,
@@ -406,6 +409,7 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"fixed_beta:={switches['fixed_beta']}",
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",
+            f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
             f"map_size_x:={map_cfg.get('x', 50.0)}",
@@ -556,6 +560,8 @@ def summarize_guard_log(guard_log: Path) -> dict:
 def summarize_planner_log(planner_log: Path) -> dict:
     metrics = {
         "planner_records": 0,
+        "constrained_obs_count_mean": "",
+        "constrained_obs_count_max": "",
         "first_infeasible_count": "",
         "first_infeasible_rate": "",
         "mpc_guard_used_count": "",
@@ -587,11 +593,15 @@ def summarize_planner_log(planner_log: Path) -> dict:
     first_infeasible = sum(1 for row in rows if row.get("first_attempt_status") == "infeasible")
     guard_used = sum(1 for row in rows if row.get("mpc_feasibility_guard_used") in {"1", "True", "true"})
     no_cbf = sum(1 for row in rows if row.get("accepted_beta_source") == "no_cbf" or row.get("used_fallback") in {"1", "True", "true"})
+    constrained_obs_count = floats("constrained_obs_count")
     slack_max = floats("slack_max") or floats("slack")
     slack_mean = floats("slack_mean")
     solve_time = floats("solve_time_ms")
 
     metrics["planner_records"] = total
+    if constrained_obs_count:
+        metrics["constrained_obs_count_mean"] = f"{sum(constrained_obs_count) / len(constrained_obs_count):.6f}"
+        metrics["constrained_obs_count_max"] = f"{max(constrained_obs_count):.6f}"
     metrics["first_infeasible_count"] = first_infeasible
     metrics["first_infeasible_rate"] = f"{first_infeasible / total:.6f}"
     metrics["mpc_guard_used_count"] = guard_used
@@ -820,6 +830,8 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- delta_beta_max: {guard_metrics['delta_beta_max']}",
         f"- guard_rollback_count: {guard_metrics['guard_rollback_count']}",
         f"- guard_rollback_rate: {guard_metrics['guard_rollback_rate']}",
+        f"- constrained_obs_count_mean: {planner_metrics['constrained_obs_count_mean']}",
+        f"- constrained_obs_count_max: {planner_metrics['constrained_obs_count_max']}",
         f"- first_infeasible_rate: {planner_metrics['first_infeasible_rate']}",
         f"- mpc_guard_used_rate: {planner_metrics['mpc_guard_used_rate']}",
         f"- no_cbf_fallback_rate: {planner_metrics['no_cbf_fallback_rate']}",
@@ -852,7 +864,8 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "safety_bound_passed", "guard_records", "semantic_classes",
                 "beta_applied_mean", "beta_applied_max", "h_ee_min", "h_see_min",
                 "delta_beta_max", "guard_rollback_count", "guard_rollback_rate",
-                "planner_records", "first_infeasible_count", "first_infeasible_rate",
+                "planner_records", "constrained_obs_count_mean", "constrained_obs_count_max",
+                "first_infeasible_count", "first_infeasible_rate",
                 "mpc_guard_used_count", "mpc_guard_used_rate", "no_cbf_fallback_count",
                 "no_cbf_fallback_rate", "slack_max", "slack_mean",
                 "solve_time_mean_ms", "solve_time_max_ms", "output_dir",
