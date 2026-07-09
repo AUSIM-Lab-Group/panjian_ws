@@ -258,22 +258,48 @@ scenarios:
     paper_role: "SEESM symmetric-conflict evidence for reciprocal dance and center crowding"
 
   drmpc_scene_1_circle:
-    description: "DR-MPC-style Scene 1: sparse circle exchange around the robot path"
+    description: "DR-MPC-style Scene 1: twelve-agent circle exchange around the robot path"
     scenario_family: "DR-MPC Style Circle"
     context_level: "Supplementary"
     scene_source: "DR-MPC-inspired layout"
     map: {x: 12.0, y: 10.0, z: 3.0}
     obstacles:
-      - {motion_type: "line", start: {x: 8.0, y: 0.0, z: 0.75}, goal: {x: 0.0, y: 0.0}, travel_time: 26.0,
+      - {motion_type: "line", start: {x: 7.6, y: 1.4, z: 0.75}, goal: {x: 0.4, y: -1.4}, travel_time: 26.0,
          semantic_class: "adult", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 4.0, y: 3.6, z: 0.75}, goal: {x: 4.0, y: -3.6}, travel_time: 24.0,
+      - {motion_type: "line", start: {x: 7.1, y: 2.4, z: 0.75}, goal: {x: 0.9, y: -2.4}, travel_time: 27.0,
          semantic_class: "pedestrian", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 7.1, y: 1.8, z: 0.75}, goal: {x: 0.9, y: -1.8}, travel_time: 25.0,
+      - {motion_type: "line", start: {x: 6.2, y: 3.2, z: 0.75}, goal: {x: 1.8, y: -3.2}, travel_time: 28.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 4.8, y: 3.7, z: 0.75}, goal: {x: 3.2, y: -3.7}, travel_time: 24.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 3.2, y: 3.7, z: 0.75}, goal: {x: 4.8, y: -3.7}, travel_time: 25.0,
          semantic_class: "adult", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 7.1, y: -1.8, z: 0.75}, goal: {x: 0.9, y: 1.8}, travel_time: 24.0,
+      - {motion_type: "line", start: {x: 1.8, y: 3.2, z: 0.75}, goal: {x: 6.2, y: -3.2}, travel_time: 28.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 0.9, y: 2.4, z: 0.75}, goal: {x: 7.1, y: -2.4}, travel_time: 29.0,
          semantic_class: "pedestrian", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 0.4, y: 1.4, z: 0.75}, goal: {x: 7.6, y: -1.4}, travel_time: 30.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 0.4, y: -1.4, z: 0.75}, goal: {x: 7.6, y: 1.4}, travel_time: 30.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 1.8, y: -3.2, z: 0.75}, goal: {x: 6.2, y: 3.2}, travel_time: 28.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 4.8, y: -3.7, z: 0.75}, goal: {x: 3.2, y: 3.7}, travel_time: 24.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 7.1, y: -2.4, z: 0.75}, goal: {x: 0.9, y: 2.4}, travel_time: 27.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
     goal: {x: 8.0, y: 0.0}
-    paper_role: "SEESM smoothness and deadlock-avoidance display in sparse symmetric flow"
+    beta_bar:
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    paper_role: "SEESM multi-obstacle stress display in twelve-agent symmetric circle exchange"
 
   drmpc_scene_2_corridor:
     description: "DR-MPC-style Scene 2: corridor crossings with one static narrowing object"
