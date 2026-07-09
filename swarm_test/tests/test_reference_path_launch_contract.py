@@ -10,6 +10,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 START_LAUNCH = REPO_ROOT / "swarm_test/launch/start_test.launch"
 PLANNER_LAUNCH = REPO_ROOT / "swarm_test/launch/secbf_planner.launch"
 DATA_PROCESSOR = REPO_ROOT / "swarm_test/src/data_processor.cpp"
+PACKAGE_XML = REPO_ROOT / "swarm_test/package.xml"
+CMAKELISTS = REPO_ROOT / "swarm_test/CMakeLists.txt"
 SCOUT_XML = REPO_ROOT / "simulation_tools/robot_simulator/launch/scout_simulator.xml"
 SCOUT_SOURCE = (
     REPO_ROOT / "simulation_tools/robot_simulator/src/scout_simulator.cpp"
@@ -64,6 +66,8 @@ def test_launch_and_source_contracts_exist():
     start_launch = START_LAUNCH.read_text(encoding="utf-8")
     planner_launch = PLANNER_LAUNCH.read_text(encoding="utf-8")
     data_processor_source = DATA_PROCESSOR.read_text(encoding="utf-8")
+    package_xml = PACKAGE_XML.read_text(encoding="utf-8")
+    cmakelists = CMAKELISTS.read_text(encoding="utf-8")
     scout_xml = SCOUT_XML.read_text(encoding="utf-8")
     scout_source = SCOUT_SOURCE.read_text(encoding="utf-8")
 
@@ -79,6 +83,10 @@ def test_launch_and_source_contracts_exist():
     assert "p_init_yaw" in scout_xml
     assert 'nh.param("p_init_yaw"' in scout_source
     assert "use_fixed_final_goal" in data_processor_source
+    assert "geometry_msgs" in cmakelists
+    assert "<build_depend>geometry_msgs</build_depend>" in package_xml
+    assert "<build_export_depend>geometry_msgs</build_export_depend>" in package_xml
+    assert "<exec_depend>geometry_msgs</exec_depend>" in package_xml
 
 
 def test_goal_publisher_rejects_yaml_without_waypoints(tmp_path):
@@ -91,6 +99,31 @@ def test_goal_publisher_rejects_yaml_without_waypoints(tmp_path):
             encoding="utf-8",
         )
         with pytest.raises(ValueError, match="waypoints"):
+            module.load_reference_path_config(config_path)
+    finally:
+        clear_stub_modules()
+
+
+def test_goal_publisher_rejects_mismatched_final_goal(tmp_path):
+    stub_ros_modules()
+    try:
+        module = load_goal_publisher()
+        config_path = tmp_path / "reference_path.yaml"
+        config_path.write_text(
+            "\n".join(
+                [
+                    "waypoints:",
+                    "  - [0.0, 0.0]",
+                    "  - [1.0, 0.0]",
+                    "threshold: 0.3",
+                    "start_delay: 0.0",
+                    "final_goal: [1.2, 0.0]",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="final_goal"):
             module.load_reference_path_config(config_path)
     finally:
         clear_stub_modules()

@@ -73,7 +73,7 @@ class WaypointProgress:
         if math.dist(position, self.current) <= self._threshold:
             if self._index < len(self._waypoints) - 1:
                 self._index += 1
-            if self._index >= len(self._waypoints) - 1:
+            else:
                 self.complete = True
             return True
         return False

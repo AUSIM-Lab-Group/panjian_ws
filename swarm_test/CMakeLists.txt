@@ -5,6 +5,7 @@ set(CMAKE_BUILD_TYPE "Release")
 ADD_COMPILE_OPTIONS(-std=c++14 )
 
 find_package(catkin REQUIRED COMPONENTS
+  geometry_msgs
   roscpp
   rospy
   nav_msgs
@@ -17,7 +18,7 @@ find_package(Eigen3 REQUIRED)
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES swarm_test
- CATKIN_DEPENDS roscpp rospy dynamic_simulator visualization_msgs
+ CATKIN_DEPENDS geometry_msgs roscpp rospy dynamic_simulator visualization_msgs
 )
 
 include_directories(

@@ -14,6 +14,7 @@ from reference_path_waypoints import WaypointProgress
 
 
 ODOM_TIMEOUT_SECONDS = 5.0
+FINAL_GOAL_TOLERANCE = 1e-6
 
 
 def load_reference_path_config(path_file):
@@ -29,6 +30,8 @@ def load_reference_path_config(path_file):
     final_goal = tuple(map(float, config["final_goal"]))
     if len(final_goal) != 2:
         raise ValueError("reference path final_goal must contain exactly two values")
+    if math.dist(final_goal, waypoints[-1]) > FINAL_GOAL_TOLERANCE:
+        raise ValueError("reference path final_goal must match the final waypoint")
 
     return {
         "waypoints": waypoints,

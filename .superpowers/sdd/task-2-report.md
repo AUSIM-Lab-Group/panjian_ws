@@ -99,3 +99,41 @@ but this checkout is not laid out as a standard catkin root, and the command fai
 - `The specified source space "/home/lxr20/lxr/panjian_ws/src" does not exist`
 
 So the Python layer is verified, but I could not get a local catkin compile pass from this directory structure alone.
+
+## Review Fixes
+
+Applied the follow-up review fixes without touching SEESM / Guard / MPC logic:
+
+- declared `geometry_msgs` as a direct dependency in both `swarm_test/CMakeLists.txt` and `swarm_test/package.xml`
+- tightened `load_reference_path_config(...)` so `final_goal` must match `waypoints[-1]` within a small tolerance, otherwise it raises `ValueError`
+- updated the `WaypointProgress` behavior test so completion stays `false` after the first advance to the intermediate waypoint and flips to `true` only after the robot reaches the final waypoint
+- added a focused test that rejects a mismatched `final_goal`
+
+### Review RED
+
+Before the fix, this command failed:
+
+```bash
+pytest -q swarm_test/tests/test_reference_path_waypoints.py swarm_test/tests/test_reference_path_launch_contract.py
+```
+
+Observed failures:
+
+- `WaypointProgress.complete` became `true` immediately after advancing onto the last waypoint instead of only after reaching it
+- `load_reference_path_config(...)` accepted a mismatched `final_goal`
+
+### Review Verification
+
+Requested verification commands:
+
+```bash
+pytest -q swarm_test/tests/test_reference_path_waypoints.py swarm_test/tests/test_reference_path_launch_contract.py
+python3 -m py_compile swarm_test/scripts/reference_path_goal_publisher.py
+```
+
+Outputs:
+
+- `pytest -q swarm_test/tests/test_reference_path_waypoints.py swarm_test/tests/test_reference_path_launch_contract.py`
+  - `12 passed in 0.07s`
+- `python3 -m py_compile swarm_test/scripts/reference_path_goal_publisher.py`
+  - exit `0`

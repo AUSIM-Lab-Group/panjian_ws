@@ -95,9 +95,11 @@ def test_waypoint_progress_advances_only_inside_threshold():
         [(0.0, 0.0), (0.4, 0.0), (0.8, 0.0)], threshold=0.35
     )
     assert progress.current == (0.4, 0.0)
+    assert not progress.complete
     assert not progress.update((0.0, 0.0))
     assert progress.update((0.1, 0.0))
     assert progress.current == (0.8, 0.0)
+    assert not progress.complete
     assert progress.update((0.8, 0.0))
     assert progress.complete
 
