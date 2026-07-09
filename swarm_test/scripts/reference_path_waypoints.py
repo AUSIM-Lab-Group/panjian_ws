@@ -5,10 +5,6 @@
 import math
 
 
-def _point(x, y):
-    return (round(x, 12), round(y, 12))
-
-
 def generate_waypoints(path):
     spacing = float(path.get("spacing", 0.4))
     if spacing <= 0.0:
@@ -19,7 +15,7 @@ def generate_waypoints(path):
         length = math.dist(start, goal)
         count = max(1, math.ceil(length / spacing))
         return [
-            _point(
+            (
                 start[0] + (goal[0] - start[0]) * index / count,
                 start[1] + (goal[1] - start[1]) * index / count,
             )
@@ -38,7 +34,7 @@ def generate_waypoints(path):
             delta += 2.0 * math.pi
         count = max(1, math.ceil(abs(delta) * radius / spacing))
         return [
-            _point(
+            (
                 center[0] + radius * math.cos(start_angle + delta * index / count),
                 center[1] + radius * math.sin(start_angle + delta * index / count),
             )
