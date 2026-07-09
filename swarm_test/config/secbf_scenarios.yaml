@@ -264,29 +264,29 @@ scenarios:
     scene_source: "DR-MPC-inspired layout"
     map: {x: 12.0, y: 10.0, z: 3.0}
     obstacles:
-      - {motion_type: "line", start: {x: 7.6, y: 1.4, z: 0.75}, goal: {x: 0.4, y: -1.4}, travel_time: 26.0,
+      - {motion_type: "line", start: {x: 7.6, y: 1.4, z: 0.75}, goal: {x: 0.4, y: -1.4}, travel_time: 26.0, start_delay: 2.8,
          semantic_class: "adult", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 7.1, y: 2.4, z: 0.75}, goal: {x: 0.9, y: -2.4}, travel_time: 27.0,
+      - {motion_type: "line", start: {x: 7.1, y: 2.4, z: 0.75}, goal: {x: 0.9, y: -2.4}, travel_time: 27.0, start_delay: 2.8,
          semantic_class: "pedestrian", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 6.2, y: 3.2, z: 0.75}, goal: {x: 1.8, y: -3.2}, travel_time: 28.0,
+      - {motion_type: "line", start: {x: 6.2, y: 3.2, z: 0.75}, goal: {x: 1.8, y: -3.2}, travel_time: 28.0, start_delay: 2.8,
          semantic_class: "cyclist", cooperation_type: "partial"}
-      - {motion_type: "line", start: {x: 4.8, y: 3.7, z: 0.75}, goal: {x: 3.2, y: -3.7}, travel_time: 24.0,
+      - {motion_type: "line", start: {x: 4.8, y: 3.7, z: 0.75}, goal: {x: 3.2, y: -3.7}, travel_time: 24.0, start_delay: 2.8,
          semantic_class: "pedestrian", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 3.2, y: 3.7, z: 0.75}, goal: {x: 4.8, y: -3.7}, travel_time: 25.0,
+      - {motion_type: "line", start: {x: 3.2, y: 3.7, z: 0.75}, goal: {x: 4.8, y: -3.7}, travel_time: 25.0, start_delay: 2.8,
          semantic_class: "adult", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 1.8, y: 3.2, z: 0.75}, goal: {x: 6.2, y: -3.2}, travel_time: 28.0,
+      - {motion_type: "line", start: {x: 1.8, y: 3.2, z: 0.75}, goal: {x: 6.2, y: -3.2}, travel_time: 28.0, start_delay: 2.8,
          semantic_class: "child_like", cooperation_type: "noncooperative"}
-      - {motion_type: "line", start: {x: 0.9, y: 2.4, z: 0.75}, goal: {x: 7.1, y: -2.4}, travel_time: 29.0,
+      - {motion_type: "line", start: {x: 0.9, y: 2.4, z: 0.75}, goal: {x: 7.1, y: -2.4}, travel_time: 29.0, start_delay: 2.8,
          semantic_class: "pedestrian", cooperation_type: "partial"}
-      - {motion_type: "line", start: {x: 0.4, y: 1.4, z: 0.75}, goal: {x: 7.6, y: -1.4}, travel_time: 30.0,
+      - {motion_type: "line", start: {x: 0.4, y: 1.4, z: 0.75}, goal: {x: 7.6, y: -1.4}, travel_time: 30.0, start_delay: 2.8,
          semantic_class: "adult", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 0.4, y: -1.4, z: 0.75}, goal: {x: 7.6, y: 1.4}, travel_time: 30.0,
+      - {motion_type: "line", start: {x: 0.4, y: -1.4, z: 0.75}, goal: {x: 7.6, y: 1.4}, travel_time: 30.0, start_delay: 2.8,
          semantic_class: "cyclist", cooperation_type: "partial"}
-      - {motion_type: "line", start: {x: 1.8, y: -3.2, z: 0.75}, goal: {x: 6.2, y: 3.2}, travel_time: 28.0,
+      - {motion_type: "line", start: {x: 1.8, y: -3.2, z: 0.75}, goal: {x: 6.2, y: 3.2}, travel_time: 28.0, start_delay: 2.8,
          semantic_class: "child_like", cooperation_type: "noncooperative"}
-      - {motion_type: "line", start: {x: 4.8, y: -3.7, z: 0.75}, goal: {x: 3.2, y: 3.7}, travel_time: 24.0,
+      - {motion_type: "line", start: {x: 4.8, y: -3.7, z: 0.75}, goal: {x: 3.2, y: 3.7}, travel_time: 24.0, start_delay: 2.8,
          semantic_class: "pedestrian", cooperation_type: "cooperative"}
-      - {motion_type: "line", start: {x: 7.1, y: -2.4, z: 0.75}, goal: {x: 0.9, y: 2.4}, travel_time: 27.0,
+      - {motion_type: "line", start: {x: 7.1, y: -2.4, z: 0.75}, goal: {x: 0.9, y: 2.4}, travel_time: 27.0, start_delay: 2.8,
          semantic_class: "cyclist", cooperation_type: "partial"}
     goal: {x: 8.0, y: 0.0}
     beta_bar:

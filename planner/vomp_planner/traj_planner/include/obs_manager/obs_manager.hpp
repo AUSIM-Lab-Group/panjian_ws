@@ -26,6 +26,7 @@ struct obstacle_traj
   Eigen::Vector2d pos_xy_;  // 轨迹参数
   double slower_;           // 轨迹参数
   double offset_;           // 轨迹参数
+  double start_delay_;      // 轨迹启动延迟，用于同步机器人和障碍物启动
 
   /* 预测轨迹参数: 二次多项式 */
   double Time0;              // 预测轨迹开始时间
@@ -113,9 +114,17 @@ public:
         // radius_lists.push_back(traj_iter->second.circle_R_);
 
         // for janedipan's model
-        double tmpc_X = fmod((rel_time +traj_iter->second.offset_), 2*traj_iter->second.slower_);
-        sfunc(traj_iter->second.scale_.x(), traj_iter->second.slower_, tmpc_X, cur_posVel[0], cur_posVel[2], traj_iter->second.pos_xy_.x());
-        sfunc(traj_iter->second.scale_.y(), traj_iter->second.slower_, tmpc_X, cur_posVel[1], cur_posVel[3], traj_iter->second.pos_xy_.y());
+        double delayed_rel_time = rel_time - traj_iter->second.start_delay_;
+        if (delayed_rel_time < 0.0) {
+          sfunc(traj_iter->second.scale_.x(), traj_iter->second.slower_, 0.0, cur_posVel[0], cur_posVel[2], traj_iter->second.pos_xy_.x());
+          sfunc(traj_iter->second.scale_.y(), traj_iter->second.slower_, 0.0, cur_posVel[1], cur_posVel[3], traj_iter->second.pos_xy_.y());
+          cur_posVel[2] = 0.0;
+          cur_posVel[3] = 0.0;
+        } else {
+          double tmpc_X = fmod((delayed_rel_time + traj_iter->second.offset_), 2*traj_iter->second.slower_);
+          sfunc(traj_iter->second.scale_.x(), traj_iter->second.slower_, tmpc_X, cur_posVel[0], cur_posVel[2], traj_iter->second.pos_xy_.x());
+          sfunc(traj_iter->second.scale_.y(), traj_iter->second.slower_, tmpc_X, cur_posVel[1], cur_posVel[3], traj_iter->second.pos_xy_.y());
+        }
         posVel_list.push_back(cur_posVel);
         radius_lists.push_back(traj_iter->second.circle_R_);
       }
@@ -428,6 +437,7 @@ private:
     tmp_obs.pos_xy_  << msg.s_num[3], msg.s_num[4];
     tmp_obs.slower_ = msg.s_num[6];
     tmp_obs.offset_ = msg.s_num[7];
+    tmp_obs.start_delay_ = (msg.s_num.size() > 8) ? msg.s_num[8] : 0.0;
     tmp_obs.bbox_ << msg.bbox[0], msg.bbox[1];
 
     Eigen::Vector2d bbox_half = tmp_obs.bbox_ / 2.0;  // 取bbox外接圆半径

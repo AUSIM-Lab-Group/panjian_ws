@@ -50,7 +50,9 @@ class DynCorridor:
             dynamic_trajectory_msg.pos.y = y    # 障碍物初始位置y
             dynamic_trajectory_msg.pos.z = z    # 障碍物初始位置z
             dynamic_trajectory_msg.id = 4000 + i
-            dynamic_trajectory_msg.s_num = [s_num[0], s_num[1], s_num[2], s_num[3], s_num[4], s_num[5], s_num[6], s_num[7]]
+            dynamic_trajectory_msg.s_num = [
+                s_num[0], s_num[1], s_num[2], s_num[3], s_num[4], s_num[5], s_num[6], s_num[7], s_num[8]
+            ]
 
             self.all_dyn_traj.append(dynamic_trajectory_msg)
 
@@ -71,9 +73,12 @@ class DynCorridor:
         z      = self.obstacle_params[i]['z']
         offset = self.obstacle_params[i]['offset']
         slower = self.obstacle_params[i]['slower']
+        start_delay = self.obstacle_params[i].get('start_delay', 0.0)
         scale = [self.obstacle_params[i]['scale_x'], self.obstacle_params[i]['scale_y'], self.obstacle_params[i]['scale_z']]
 
-        [x_string, y_string, z_string, s_num] = self.trefoil(x,y,z, scale[0], scale[1], scale[2], offset, slower, start_time)
+        [x_string, y_string, z_string, s_num] = self.trefoil(
+            x, y, z, scale[0], scale[1], scale[2], offset, slower, start_time, start_delay
+        )
         return [x_string, y_string, z_string, s_num, x, y, z, self.available_meshes_dynamic[0], self.bbox_dynamic]
 
     def generateMarker(self, mesh, bbox, i):
@@ -110,8 +115,13 @@ class DynCorridor:
             # y = eval(self.all_dyn_traj[i].s_mean[1])
             # z = eval(self.all_dyn_traj[i].s_mean[2])
             # for janedipan's model
-            #   s_num: scale_x/6.0, scale_y/5.0, scale_z/2.0, x, y, z, slower,  offset
-            tt = (t - self.start_time_ + self.all_dyn_traj[i].s_num[7])%(2*self.all_dyn_traj[i].s_num[6])
+            #   s_num: scale_x/6.0, scale_y/5.0, scale_z/2.0, x, y, z, slower, offset, start_delay
+            start_delay = self.all_dyn_traj[i].s_num[8] if len(self.all_dyn_traj[i].s_num) > 8 else 0.0
+            elapsed = t - self.start_time_
+            if elapsed < start_delay:
+                tt = 0.0
+            else:
+                tt = (elapsed - start_delay + self.all_dyn_traj[i].s_num[7])%(2*self.all_dyn_traj[i].s_num[6])
             x = self.sfunc(self.all_dyn_traj[i].s_num[0], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[3]
             y = self.sfunc(self.all_dyn_traj[i].s_num[1], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[4]
             z = self.sfunc(self.all_dyn_traj[i].s_num[2], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[5]
@@ -138,15 +148,15 @@ class DynCorridor:
         else:
             return k * tt -3*A
     
-    def trefoil(self,x,y,z,scale_x, scale_y, scale_z, offset, slower, start_time):
+    def trefoil(self,x,y,z,scale_x, scale_y, scale_z, offset, slower, start_time, start_delay=0.0):
 
-        tt='(t - ' + str(start_time) + ')/' + str(slower)+' + '
+        tt='(max(t - ' + str(start_time) + ' - ' + str(start_delay) + ', 0))/' + str(slower)+' + '
 
         x_string=str(scale_x/6.0)+' *(sin('+tt +str(offset)+' )+2*sin(2*'+tt +str(offset)+' ))' +'+ ' + str(x)
         y_string=str(scale_y/5.0)+' *(cos('+tt +str(offset)+' )-2*cos(2*'+tt +str(offset)+' ))' +'+ ' + str(y)
         z_string=str(scale_z/2.0)+' *(-sin(3*'+tt +str(offset)+ '))' + '+ ' + str(z)
 
-        s_num = [scale_x/6.0, scale_y/5.0, scale_z/2.0, x, y, z, slower,  offset]
+        s_num = [scale_x/6.0, scale_y/5.0, scale_z/2.0, x, y, z, slower, offset, start_delay]
 
         return [x_string, y_string, z_string, s_num]
 
@@ -203,7 +213,11 @@ def startNode(gazebo):
         z = obstacle['z']
         offset = obstacle['offset']
         slower = obstacle['slower']
-        rospy.loginfo('Obstacles param: (x: %f, y: %f, z: %f, offset: %f, slower: %f)', x, y, z, offset, slower)
+        start_delay = obstacle.get('start_delay', 0.0)
+        rospy.loginfo(
+            'Obstacles param: (x: %f, y: %f, z: %f, offset: %f, slower: %f, start_delay: %f)',
+            x, y, z, offset, slower, start_delay
+        )
 
     c = DynCorridor(gazebo, obstacle_params)
 
