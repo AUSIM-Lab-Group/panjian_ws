@@ -13,14 +13,17 @@
   <build_depend>std_msgs</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>visualization_msgs</build_depend>
+  <build_depend>semantic_guard</build_depend>
   <build_depend>semantic_fusion</build_depend>
 
   <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>semantic_guard</build_export_depend>
 
   <exec_depend>roscpp</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>semantic_guard</exec_depend>
   <exec_depend>semantic_fusion</exec_depend>
 </package>

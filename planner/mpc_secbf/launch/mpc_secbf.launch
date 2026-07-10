@@ -17,6 +17,8 @@
   <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="local_path_topic" default="/local_path"/>
   <arg name="obs_predict_topic" default="/globalFsm_by_adsm/obs_predict_pub"/>
+  <arg name="obs_predict_ids_topic" default="/globalFsm_by_adsm/obs_predict_ids"/>
+  <arg name="beta_applied_final_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="planner_log_path" default=""/>
   <arg name="timing_log_path" default=""/>
 
@@ -42,5 +44,7 @@
     <remap from="/cmd_vel" to="$(arg cmd_vel_topic)"/>
     <remap from="/local_path" to="$(arg local_path_topic)"/>
     <remap from="/globalFsm_by_adsm/obs_predict_pub" to="$(arg obs_predict_topic)"/>
+    <remap from="/globalFsm_by_adsm/obs_predict_ids" to="$(arg obs_predict_ids_topic)"/>
+    <remap from="/safety_margin/beta_applied_final" to="$(arg beta_applied_final_topic)"/>
   </node>
 </launch>

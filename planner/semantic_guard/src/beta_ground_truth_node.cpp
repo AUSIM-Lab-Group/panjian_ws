@@ -1,5 +1,6 @@
 #include <ros/ros.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/UInt32MultiArray.h>
 #include <nav_msgs/Odometry.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <Eigen/Dense>
@@ -79,6 +80,7 @@ public:
 
         // Subscribers
         sub_obs_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_pub", 10, &BetaGroundTruthNode::obsCb, this);
+        sub_obs_ids_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_ids", 10, &BetaGroundTruthNode::obsIdsCb, this);
         sub_odom_ = nh_.subscribe("/Odometry", 1, &BetaGroundTruthNode::odomCb, this);
 
         // Publishers
@@ -102,6 +104,10 @@ public:
     }
 
 private:
+    void obsIdsCb(const std_msgs::UInt32MultiArrayConstPtr& msg) {
+        obstacle_ids_ = msg->data;
+    }
+
     void odomCb(const nav_msgs::OdometryConstPtr& msg) {
         robot_pos_ << msg->pose.pose.position.x,
                       msg->pose.pose.position.y;
@@ -115,14 +121,25 @@ private:
 
         // Parse obstacle count from message
         int total_floats = msg->data.size();
-        int obs_num = (N_ > 0) ? (total_floats / (7 * N_)) : 0;
+        if (N_ <= 0 || total_floats % (7 * N_) != 0) {
+            ROS_ERROR_THROTTLE(1.0, "[beta_ground_truth] Invalid obstacle payload size=%d for N=%d",
+                               total_floats, N_);
+            return;
+        }
+        int obs_num = total_floats / (7 * N_);
         if (obs_num == 0) return;
+        if (obstacle_ids_.size() != static_cast<size_t>(obs_num)) {
+            ROS_ERROR_THROTTLE(1.0, "[beta_ground_truth] obs/id count mismatch: obs=%d ids=%zu",
+                               obs_num, obstacle_ids_.size());
+            return;
+        }
 
         std_msgs::Float32MultiArray beta_msg;
         semantic_guard::GuardLog log_msg;
         log_msg.header.stamp = ros::Time::now();
 
         for (int idx = 0; idx < obs_num; idx++) {
+            const uint32_t obstacle_id = obstacle_ids_[idx];
             // Get obstacle position (first timestep)
             double obs_x = msg->data[7 * N_ * idx + 0];
             double obs_y = msg->data[7 * N_ * idx + 1];
@@ -180,7 +197,7 @@ private:
                 : true;
 
             // Apply rate limiting, projection, and last-value fallback.
-            double beta_prev = getPrevBeta(idx);
+            double beta_prev = getPrevBeta(obstacle_id);
             double beta_before_projection = beta_hat;
             double beta_final;
             std::string guard_status;
@@ -217,12 +234,12 @@ private:
             double h_see = h_ee - beta_final;
             double r_base = obs_r + robot_radius_;
             double r_sem = r_base + beta_final;
-            beta_prev_[idx] = beta_final;
+            beta_prev_[obstacle_id] = beta_final;
 
             beta_msg.data.push_back(static_cast<float>(beta_final));
 
             // Log
-            log_msg.obstacle_ids.push_back(idx);
+            log_msg.obstacle_ids.push_back(obstacle_id);
             log_msg.beta_requested.push_back(beta_hat);
             log_msg.beta_applied.push_back(beta_final);
             log_msg.h_ee_values.push_back(h_ee);
@@ -230,7 +247,7 @@ private:
 
             if (csv_file_.is_open()) {
                 csv_file_ << ros::Time::now().toSec() << ","
-                          << idx << "," << cls << ","
+                          << obstacle_id << "," << cls << ","
                           << beta_bar_val << "," << mu << ","
                           << beta_hat << "," << beta_final << ","
                           << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
@@ -258,6 +275,7 @@ private:
         visualization_msgs::MarkerArray markers;
         int total_floats = msg->data.size();
         int obs_num = (N_ > 0) ? (total_floats / (7 * N_)) : 0;
+        if (obstacle_ids_.size() != static_cast<size_t>(obs_num)) return;
 
         // Color map per class: R, G, B
         auto getColor = [](const std::string& cls) -> std::tuple<float,float,float> {
@@ -275,9 +293,10 @@ private:
             double obs_x = msg->data[7 * N_ * idx + 0];
             double obs_y = msg->data[7 * N_ * idx + 1];
             double obs_r = msg->data[7 * N_ * idx + 2];
+            uint32_t obstacle_id = obstacle_ids_[idx];
             std::string cls = (idx < (int)obstacle_classes_.size()) ?
                               obstacle_classes_[idx] : "unknown";
-            double beta_i = (idx < (int)beta_prev_.size()) ? beta_prev_[idx] : 0.4;
+            double beta_i = getPrevBeta(obstacle_id);
 
             auto color = getColor(cls);
             float r = std::get<0>(color);
@@ -385,7 +404,7 @@ private:
     }
 
     ros::NodeHandle nh_;
-    ros::Subscriber sub_obs_, sub_odom_;
+    ros::Subscriber sub_obs_, sub_obs_ids_, sub_odom_;
     ros::Publisher pub_beta_, pub_guard_log_, pub_vis_;
 
     std::map<std::string, double> beta_bar_;
@@ -396,6 +415,7 @@ private:
     int N_;
 
     std::vector<std::string> obstacle_classes_;
+    std::vector<uint32_t> obstacle_ids_;
     Eigen::Vector2d robot_pos_, robot_vel_;
     bool has_odom_;
     std::map<int, double> beta_prev_;

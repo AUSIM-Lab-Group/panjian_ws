@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   visualization_msgs
+  semantic_guard
   semantic_fusion
 )
 
@@ -25,7 +26,7 @@ endif()
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS roscpp nav_msgs std_msgs geometry_msgs visualization_msgs semantic_fusion
+  CATKIN_DEPENDS roscpp nav_msgs std_msgs geometry_msgs visualization_msgs semantic_guard semantic_fusion
 )
 
 include_directories(

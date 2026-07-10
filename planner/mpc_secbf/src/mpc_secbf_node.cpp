@@ -4,6 +4,7 @@
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/UInt32MultiArray.h>
 #include <Eigen/Dense>
 #include <fstream>
 #include <iomanip>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "mpc_secbf/mpc_secbf.h"
+#include "semantic_guard/AppliedMarginArray.h"
 #include "semantic_fusion/SemanticObstacleArray.h"
 
 class MpcSecbfNode {
@@ -67,10 +69,13 @@ public:
         sub_path_ = nh_.subscribe("/global_path", 10, &MpcSecbfNode::pathCb, this);
         sub_beta_ = nh_.subscribe("/safety_margin/beta", 10, &MpcSecbfNode::betaCb, this);
         sub_obs_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_pub", 100, &MpcSecbfNode::obsCb, this);
+        sub_obs_ids_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_ids", 100, &MpcSecbfNode::obsIdsCb, this);
 
         // Publishers
         pub_cmd_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
         pub_local_path_ = nh_.advertise<nav_msgs::Path>("/local_path", 10);
+        pub_beta_applied_final_ =
+            nh_.advertise<semantic_guard::AppliedMarginArray>("/safety_margin/beta_applied_final", 10);
 
         // Timers
         timer_replan_ = nh_.createTimer(ros::Duration(1.0 / mpc_freq), &MpcSecbfNode::replanCb, this);
@@ -136,12 +141,23 @@ private:
 
     void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
         std::lock_guard<std::mutex> lock(obs_mutex_);
-        int obs_num = msg->data.size() / 7;
-        obs_matrix_.resize(7, obs_num);
-        for (int i = 0; i < obs_num; i++) {
+        if (N_ <= 0 || msg->data.size() % (7 * N_) != 0) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Invalid obstacle payload size=%zu for N=%d",
+                               msg->data.size(), N_);
+            obs_matrix_.resize(7, 0);
+            return;
+        }
+        int obs_cols = msg->data.size() / 7;
+        obs_matrix_.resize(7, obs_cols);
+        for (int i = 0; i < obs_cols; i++) {
             for (int j = 0; j < 7; j++)
                 obs_matrix_(j, i) = msg->data[7 * i + j];
         }
+    }
+
+    void obsIdsCb(const std_msgs::UInt32MultiArrayConstPtr& msg) {
+        std::lock_guard<std::mutex> lock(obs_mutex_);
+        obstacle_ids_ = msg->data;
     }
 
     void cmdCb(const ros::TimerEvent&) {
@@ -155,6 +171,14 @@ private:
         std::lock_guard<std::mutex> lock_obs(obs_mutex_);
 
         if (!has_odom_ || !has_path_) return;
+        if (!validateObstacleContractLocked()) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting cycle because obstacle payload and IDs do not match");
+            cmd_vel_.linear.x = 0.0;
+            cmd_vel_.angular.z = 0.0;
+            writePlannerCsv("count_mismatch", "count_mismatch", "count_mismatch", "none",
+                            false, false, 0.0);
+            return;
+        }
 
         // Choose goal states from global path
         chooseGoalState();
@@ -169,30 +193,39 @@ private:
         std::string accepted_beta_source = "candidate";
         bool used_fallback = false;
         bool mpc_guard_used = false;
-        bool success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
-        first_attempt_status = success ? "success" : "infeasible";
+        bool success = false;
+        std::vector<double> final_beta_values;
+
+        if (!validateBetaCountLocked(beta_list_, "candidate")) {
+            first_attempt_status = "beta_count_mismatch";
+        } else {
+            success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
+            first_attempt_status = success ? "success" : "infeasible";
+        }
         final_status = first_attempt_status;
 
         if (!success) {
             if (mpc_feasibility_guard_enabled_) {
                 mpc_guard_used = true;
-                if (!accepted_beta_list_.empty()) {
+                if (!accepted_beta_list_.empty() && validateBetaCountLocked(accepted_beta_list_, "previous")) {
                     success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, accepted_beta_list_);
                     if (success) {
                         mpc_status = "guard_previous";
                         final_status = "success";
                         accepted_beta_source = "previous";
+                        final_beta_values = accepted_beta_list_;
                     }
                 }
 
-                if (!success && !beta_list_.empty()) {
-                    std::vector<double> zero_beta(beta_list_.size(), 0.0);
+                if (!success) {
+                    std::vector<double> zero_beta(obstacle_ids_.size(), 0.0);
                     success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, zero_beta);
                     if (success) {
                         mpc_status = "guard_zero";
                         final_status = "success";
                         accepted_beta_source = "zero";
                         accepted_beta_list_ = zero_beta;
+                        final_beta_values = zero_beta;
                     }
                 }
             }
@@ -224,11 +257,15 @@ private:
                 mpc_status = "no_cbf_fallback";
                 final_status = "success";
                 accepted_beta_source = "no_cbf";
+                final_beta_values.assign(obstacle_ids_.size(), 0.0);
                 ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
         } else if (accepted_beta_source == "candidate") {
             accepted_beta_list_ = beta_list_;
+            final_beta_values = beta_list_;
         }
+
+        publishAcceptedMargins(final_beta_values, accepted_beta_source);
 
         // Extract first control
         if (solver_.predict_u.size() >= 2) {
@@ -288,6 +325,41 @@ private:
         }
     }
 
+    bool validateObstacleContractLocked() const {
+        if (obs_matrix_.cols() == 0 && obstacle_ids_.empty()) return true;
+        if (N_ <= 0 || obs_matrix_.cols() % N_ != 0) return false;
+        return static_cast<size_t>(obs_matrix_.cols() / N_) == obstacle_ids_.size();
+    }
+
+    bool validateBetaCountLocked(const std::vector<double>& beta,
+                                 const std::string& source) const {
+        if (beta.size() != obstacle_ids_.size()) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] %s beta/id count mismatch: beta=%zu ids=%zu",
+                               source.c_str(), beta.size(), obstacle_ids_.size());
+            return false;
+        }
+        return true;
+    }
+
+    void publishAcceptedMargins(const std::vector<double>& beta,
+                                const std::string& source) {
+        if (!validateObstacleContractLocked()) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Skip final margin publication because obstacle contract is invalid");
+            return;
+        }
+        if (!validateBetaCountLocked(beta, source)) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Skip final margin publication because final beta count does not match IDs");
+            return;
+        }
+
+        semantic_guard::AppliedMarginArray out;
+        out.header.stamp = ros::Time::now();
+        out.obstacle_ids = obstacle_ids_;
+        out.beta_applied.assign(beta.begin(), beta.end());
+        out.accepted_sources.assign(beta.size(), source);
+        pub_beta_applied_final_.publish(out);
+    }
+
     void chooseGoalState() {
         int wp_num = global_path_.cols();
         if (wp_num == 0) return;
@@ -342,8 +414,8 @@ private:
     }
 
     ros::NodeHandle nh_;
-    ros::Subscriber sub_odom_, sub_path_, sub_beta_, sub_obs_;
-    ros::Publisher pub_cmd_, pub_local_path_;
+    ros::Subscriber sub_odom_, sub_path_, sub_beta_, sub_obs_, sub_obs_ids_;
+    ros::Publisher pub_cmd_, pub_local_path_, pub_beta_applied_final_;
     ros::Timer timer_replan_, timer_cmd_;
 
     MPC_SECBF_SOLVE solver_;
@@ -355,6 +427,7 @@ private:
     Eigen::MatrixXd global_path_;
     Eigen::MatrixXd goal_state_;
     Eigen::MatrixXd obs_matrix_;
+    std::vector<uint32_t> obstacle_ids_;
     std::vector<double> beta_list_;
     std::vector<double> accepted_beta_list_;
     geometry_msgs::Twist cmd_vel_;

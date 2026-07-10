@@ -8,9 +8,11 @@
 #include <tf/transform_datatypes.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <cmath>
+#include <algorithm>
 
 // #include <costmap_converter/ObstacleArrayMsg.h>   // TEB预测轨迹消息类型
 #include <std_msgs/Float32MultiArray.h>           // 清华DCBF预测轨迹消息类型
+#include <std_msgs/UInt32MultiArray.h>
 #include "dynamic_simulator/DynTraj.h"            // 动态障碍物预测轨迹消息类型
 
 // 障碍物轨迹类型结构体
@@ -61,6 +63,7 @@ public:
     obsTraj_pub = nh.advertise<visualization_msgs::MarkerArray>("obs_traj_vis", 1, true);
 
     dcbfTraj_pub = nh.advertise<std_msgs::Float32MultiArray>("obs_predict_pub", 100, true);
+    obsId_pub = nh.advertise<std_msgs::UInt32MultiArray>("obs_predict_ids", 100, true);
 
     // tebTraj_pub = nh.advertise<costmap_converter::ObstacleArrayMsg>("move_base/TebLocalPlannerROS/obstacles", 100, true);
 
@@ -70,7 +73,7 @@ public:
   }
 
   // 作为障碍物往返直线运动的函数
-  void sfunc(double A, double T, double tt, double& res_pos, double& res_vel, double init_pos)
+  void sfunc(double A, double T, double tt, double& res_pos, double& res_vel, double init_pos) const
   {
     double k = 2*A/T;
     if(tt<T) {
@@ -87,70 +90,13 @@ public:
   // 根据时间返回障碍物的状态: posVel_list: P_x, P_y, V_x, V_y;   radius_lists: 对应的障碍物半径
   void get_obs_state(ros::Time cur_time, std::vector<Eigen::Vector4d>& posVel_list, std::vector<double>& radius_lists)
   {
-    if (is_use_GroundTruth)
-    {
-      // 使用真值
-      // 遍历轨迹容器，根据时间返回可用的障碍物位置
-      for (auto traj_iter = obstalce_trajs_.begin(); traj_iter != obstalce_trajs_.end(); traj_iter++) {
-
-        double time_out = (cur_time - traj_iter->second.start_time).toSec();
-
-        if(time_out >= 5.0 - 1e-3) {  // 超时的无用障碍物轨迹，删除并跳过
-          continue;
-        }
-
-        double rel_time = cur_time.toSec() - traj_iter->second.Time0;
-
-        // 根据轨迹参数，计算当前时间的障碍物位置和速度状态
-        // Eigen::Vector2d tmp_X;
-        // tmp_X[0] = 1.0 * rel_time / traj_iter->second.slower_ + traj_iter->second.offset_;
-        // tmp_X[1] = 2.0 * rel_time / traj_iter->second.slower_ + traj_iter->second.offset_;
-        Eigen::Vector4d cur_posVel;
-        // cur_posVel[0] = traj_iter->second.scale_.x() * (sin(tmp_X[0]) + 2.0 * sin(tmp_X[1])) + traj_iter->second.pos_xy_.x();
-        // cur_posVel[1] = traj_iter->second.scale_.y() * (cos(tmp_X[0]) - 2.0 * cos(tmp_X[1])) + traj_iter->second.pos_xy_.y();
-        // cur_posVel[2] = traj_iter->second.scale_.x() * (cos(tmp_X[0]) + 4.0 * cos(tmp_X[1])) / traj_iter->second.slower_;
-        // cur_posVel[3] = traj_iter->second.scale_.y() * (-1.0 * sin(tmp_X[0]) + 4.0 * sin(tmp_X[1])) / traj_iter->second.slower_;
-        // posVel_list.push_back(cur_posVel);
-        // radius_lists.push_back(traj_iter->second.circle_R_);
-
-        // for janedipan's model
-        double delayed_rel_time = rel_time - traj_iter->second.start_delay_;
-        if (delayed_rel_time < 0.0) {
-          sfunc(traj_iter->second.scale_.x(), traj_iter->second.slower_, 0.0, cur_posVel[0], cur_posVel[2], traj_iter->second.pos_xy_.x());
-          sfunc(traj_iter->second.scale_.y(), traj_iter->second.slower_, 0.0, cur_posVel[1], cur_posVel[3], traj_iter->second.pos_xy_.y());
-          cur_posVel[2] = 0.0;
-          cur_posVel[3] = 0.0;
-        } else {
-          double tmpc_X = fmod((delayed_rel_time + traj_iter->second.offset_), 2*traj_iter->second.slower_);
-          sfunc(traj_iter->second.scale_.x(), traj_iter->second.slower_, tmpc_X, cur_posVel[0], cur_posVel[2], traj_iter->second.pos_xy_.x());
-          sfunc(traj_iter->second.scale_.y(), traj_iter->second.slower_, tmpc_X, cur_posVel[1], cur_posVel[3], traj_iter->second.pos_xy_.y());
-        }
-        posVel_list.push_back(cur_posVel);
-        radius_lists.push_back(traj_iter->second.circle_R_);
-      }
-    }
-    else
-    {
-      // ROS_WARN("get obstacle_predicted traj from real-world");
-      // 遍历轨迹容器，根据时间返回可用的障碍物位置
-      // 多项式拟合轨迹
-      for (auto traj_iter = obstalce_trajs_.begin(); traj_iter != obstalce_trajs_.end(); traj_iter++) {
-
-        if ( cur_time.toSec() > traj_iter->second.Time1 - 0.05 ) {  // 超时的无用障碍物轨迹，删除并跳过
-          continue;
-        }
-
-        Eigen::Vector4d cur_posVel;
-        double time_now = cur_time.toSec() - traj_iter->second.Time0;
-        cur_posVel[0] = traj_iter->second.coeff_x[0] * pow(time_now/5.0, 2) +
-                        traj_iter->second.coeff_x[1] * time_now/5.0 + traj_iter->second.coeff_x[2];
-        cur_posVel[1] = traj_iter->second.coeff_y[0] * pow(time_now/5.0, 2) +
-                        traj_iter->second.coeff_y[1] * time_now/5.0 + traj_iter->second.coeff_y[2];
-        cur_posVel[2] = 2.0 * traj_iter->second.coeff_x[0] * time_now / 25.0 + traj_iter->second.coeff_x[1] / 5;
-        cur_posVel[3] = 2.0 * traj_iter->second.coeff_y[0] * time_now / 25.0 + traj_iter->second.coeff_y[1] / 5;
-        posVel_list.push_back(cur_posVel);
-        radius_lists.push_back(traj_iter->second.circle_R_);
-      }
+    const auto active_obstacles = collectActiveObstacles(cur_time);
+    for (const obstacle_traj* obstacle : active_obstacles) {
+      Eigen::Vector4d cur_posVel;
+      double radius = 0.0;
+      computeObstacleStateAt(*obstacle, cur_time, cur_posVel, radius);
+      posVel_list.push_back(cur_posVel);
+      radius_lists.push_back(radius);
     }
   }
 
@@ -158,33 +104,7 @@ public:
 
     ros::Time cur_time = ros::Time::now();
 
-    int size_of_obs = 0;
-
-    if (is_use_GroundTruth)
-    {
-      // 遍历轨迹容器，根据时间返回可用的障碍物位置
-      for (auto traj_iter = obstalce_trajs_.begin(); traj_iter != obstalce_trajs_.end(); traj_iter++) {
-
-        double time_out = (cur_time - traj_iter->second.start_time).toSec();
-
-        if(time_out >= 5.0 - 1e-3) {  // 超时的无用障碍物轨迹，删除并跳过
-          continue;
-        }
-        size_of_obs += 1;
-      }
-    }
-    else
-    {
-      // 遍历轨迹容器，根据时间返回可用的障碍物位置
-      for (auto traj_iter = obstalce_trajs_.begin(); traj_iter != obstalce_trajs_.end(); traj_iter++) {
-
-        if ( cur_time.toSec() > traj_iter->second.Time1 - 0.05 ) {  // 超时的无用障碍物轨迹，删除并跳过
-          continue;
-        }
-        size_of_obs += 1;
-      }
-    }
-    return size_of_obs;
+    return static_cast<int>(collectActiveObstacles(cur_time).size());
   }
 
   bool is_collide(Eigen::Vector2d pos, double robot_R, ros::Time cur_time) // 根据当前位置和时间，返回碰撞状态
@@ -284,7 +204,7 @@ private:
 
   ros::Subscriber obsTraj_sub, predicted_Traj_sub;
 
-  ros::Publisher obsTraj_pub, dcbfTraj_pub, tebTraj_pub;
+  ros::Publisher obsTraj_pub, dcbfTraj_pub, tebTraj_pub, obsId_pub;
 
   ros::Timer show_timer;
 
@@ -292,6 +212,61 @@ private:
   double step_time;
 
   std::unordered_map<int, obstacle_traj> obstalce_trajs_;         // 所有障碍物轨迹，哈希表形式存储
+
+  bool isObstacleActiveAt(const obstacle_traj& obs, const ros::Time& query_time) const
+  {
+    if (is_use_GroundTruth) {
+      return (query_time - obs.start_time).toSec() < 5.0 - 1e-3;
+    }
+    return query_time.toSec() <= obs.Time1 - 0.05;
+  }
+
+  void computeObstacleStateAt(const obstacle_traj& obs,
+                              const ros::Time& query_time,
+                              Eigen::Vector4d& cur_posVel,
+                              double& radius) const
+  {
+    radius = obs.circle_R_;
+    if (is_use_GroundTruth) {
+      const double rel_time = query_time.toSec() - obs.Time0;
+      const double delayed_rel_time = rel_time - obs.start_delay_;
+      if (delayed_rel_time < 0.0) {
+        sfunc(obs.scale_.x(), obs.slower_, 0.0, cur_posVel[0], cur_posVel[2], obs.pos_xy_.x());
+        sfunc(obs.scale_.y(), obs.slower_, 0.0, cur_posVel[1], cur_posVel[3], obs.pos_xy_.y());
+        cur_posVel[2] = 0.0;
+        cur_posVel[3] = 0.0;
+      } else {
+        const double tmpc_X = fmod((delayed_rel_time + obs.offset_), 2 * obs.slower_);
+        sfunc(obs.scale_.x(), obs.slower_, tmpc_X, cur_posVel[0], cur_posVel[2], obs.pos_xy_.x());
+        sfunc(obs.scale_.y(), obs.slower_, tmpc_X, cur_posVel[1], cur_posVel[3], obs.pos_xy_.y());
+      }
+      return;
+    }
+
+    const double time_now = query_time.toSec() - obs.Time0;
+    cur_posVel[0] = obs.coeff_x[0] * pow(time_now / 5.0, 2) +
+                    obs.coeff_x[1] * time_now / 5.0 + obs.coeff_x[2];
+    cur_posVel[1] = obs.coeff_y[0] * pow(time_now / 5.0, 2) +
+                    obs.coeff_y[1] * time_now / 5.0 + obs.coeff_y[2];
+    cur_posVel[2] = 2.0 * obs.coeff_x[0] * time_now / 25.0 + obs.coeff_x[1] / 5;
+    cur_posVel[3] = 2.0 * obs.coeff_y[0] * time_now / 25.0 + obs.coeff_y[1] / 5;
+  }
+
+  std::vector<const obstacle_traj*> collectActiveObstacles(const ros::Time& query_time) const
+  {
+    std::vector<const obstacle_traj*> active_obstacles;
+    active_obstacles.reserve(obstalce_trajs_.size());
+    for (const auto& traj_entry : obstalce_trajs_) {
+      if (isObstacleActiveAt(traj_entry.second, query_time)) {
+        active_obstacles.push_back(&traj_entry.second);
+      }
+    }
+    std::sort(active_obstacles.begin(), active_obstacles.end(),
+              [](const obstacle_traj* lhs, const obstacle_traj* rhs) {
+                return lhs->Id_ < rhs->Id_;
+              });
+    return active_obstacles;
+  }
 
   void showObs_callback(const ros::TimerEvent& e)         // 定时器回调，定时更新障碍物显示
   {
@@ -347,40 +322,49 @@ private:
     }
     std_msgs::Float32MultiArray dcbf_msgs;
     std_msgs::Float32MultiArray acbf_msgs;
+    std_msgs::UInt32MultiArray obs_ids_msg;
     ros::Time time_now = ros::Time::now();
+    const auto active_obstacles = collectActiveObstacles(time_now);
+    if (active_obstacles.empty()) {
+      return;
+    }
 
     int N_ = pre_step;                        // mpc预测步长，需与清华mpc-dcbf参数保持一致
     double delta_t_ = step_time;             // mpc离散时间，需与清华mpc-dcbf参数保持一致
     // std::cout<<"pre_step is:"<< N_<< std::endl;
     // std::cout<<"delta_time is:"<< delta_t_<< std::endl;
 
-    dcbf_msgs.data.resize(5 * N_ * get_obs_size()); // 给障碍物矩阵分配内存
-    acbf_msgs.data.resize(7 * N_ * get_obs_size());
+    dcbf_msgs.data.resize(5 * N_ * active_obstacles.size()); // 给障碍物矩阵分配内存
+    acbf_msgs.data.resize(7 * N_ * active_obstacles.size());
+    obs_ids_msg.data.resize(active_obstacles.size());
+    for (int j = 0; j < active_obstacles.size(); ++j) {
+      obs_ids_msg.data[j] = static_cast<uint32_t>(active_obstacles[j]->Id_);
+    }
 
     for (int i = 0; i < N_; i++) {                // 预测第i步
       double add_time = (double)(i * delta_t_);
       ros::Time time_index = time_now + ros::Duration(add_time);
-      std::vector<Eigen::Vector4d> posVel_list;   // 获取当前时间的障碍物状态
-      std::vector<double> radius_list;            // 获取当前时间的障碍物半径
-
-      get_obs_state(time_index, posVel_list, radius_list);
-      for (int j = 0; j < posVel_list.size(); j++) {  // 对于第j个障碍物
-        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 0 ] = posVel_list[j].x();  // x坐标
-        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 1 ] = posVel_list[j].y();  // y坐标
-        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 2 ] = radius_list[j];      // 椭圆半长轴a
-        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 3 ] = radius_list[j];      // 椭圆半短轴b
+      for (int j = 0; j < active_obstacles.size(); j++) {  // 对于第j个障碍物
+        Eigen::Vector4d pos_vel;
+        double radius = 0.0;
+        computeObstacleStateAt(*active_obstacles[j], time_index, pos_vel, radius);
+        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 0 ] = pos_vel.x();  // x坐标
+        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 1 ] = pos_vel.y();  // y坐标
+        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 2 ] = radius;       // 椭圆半长轴a
+        dcbf_msgs.data[ 5 * N_ * j + 5 * i + 3 ] = radius;       // 椭圆半短轴b
         dcbf_msgs.data[ 5 * N_ * j + 5 * i + 4 ] = 0.0;                 // 椭圆方位角theta
         // for janedipan_test
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 0 ] = posVel_list[j].x();  // x坐标
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 1 ] = posVel_list[j].y();  // y坐标
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 2 ] = radius_list[j];      // 椭圆半长轴a
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 3 ] = radius_list[j];      // 椭圆半短轴b
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 0 ] = pos_vel.x();  // x坐标
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 1 ] = pos_vel.y();  // y坐标
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 2 ] = radius;       // 椭圆半长轴a
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 3 ] = radius;       // 椭圆半短轴b
         acbf_msgs.data[ 7 * N_ * j + 7 * i + 4 ] = 0.0;                 // 椭圆方位角theta
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 5 ] = posVel_list[j].z();                 
-        acbf_msgs.data[ 7 * N_ * j + 7 * i + 6 ] = posVel_list[j].w();                 
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 5 ] = pos_vel.z();
+        acbf_msgs.data[ 7 * N_ * j + 7 * i + 6 ] = pos_vel.w();
       }
     }
     // 可以添加一个符号标志
+    obsId_pub.publish(obs_ids_msg);
     dcbfTraj_pub.publish(acbf_msgs);
   }
 
