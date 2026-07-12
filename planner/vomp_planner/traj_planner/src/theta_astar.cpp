@@ -27,6 +27,9 @@ void ThetaAstar::init(ros::NodeHandle& nh,
   else{
     ROS_WARN("------ path searching use None ------");
   }
+  if (is_used_global_seesm_) {
+    ROS_WARN("------ global SEESM check enabled! ------");
+  }
   setEnvironment(env);
   setObsManager(obs_Manager);
   init();
@@ -37,6 +40,9 @@ int ThetaAstar::search(Eigen::Vector2d start_pt, Eigen::Vector2d start_v, Eigen:
 {
   start_vel_ = start_v;
   start_acc_ = start_a;
+  if (obs_Manager_ != nullptr) {
+    obs_Manager_->beginGlobalSeesmReplan();
+  }
 
   PathNodePtr cur_node = path_node_pool_[0];
   cur_node->parent = NULL;
@@ -244,6 +250,15 @@ int ThetaAstar::search(Eigen::Vector2d start_pt, Eigen::Vector2d start_v, Eigen:
             break;
           }
           ros::Time node_time = cur_node->node_time + ros::Duration(dt);
+          if (is_used_global_seesm_) {
+            Eigen::Vector4d node_state;
+            node_state.head(2) = xt.head(2);
+            node_state.tail(2) = xt.tail(2);
+            if (obs_Manager_->is_SEESM_unsafe(node_state, robot_radius, node_time, false)) {
+              is_occ = true;
+              break;
+            }
+          }
           bool is_vo_unsafe = false;
 
           if (is_used_VO_) {          // 用vo来检查动态障碍物安全性
@@ -551,6 +566,14 @@ bool ThetaAstar::computeShotTraj( Eigen::VectorXd state1, Eigen::VectorXd state2
     }
 
     ros::Time time_cur = start_time + ros::Duration(time);
+    if (is_used_global_seesm_) {
+      Eigen::Vector4d node_state;
+      node_state.head(2) = coord;
+      node_state.tail(2) = vel;
+      if (obs_Manager_->is_SEESM_unsafe(node_state, robot_radius, time_cur, true)) {
+        return false;
+      }
+    }
     bool is_vo_unsafe = false;
     if (is_used_VO_) {  // 用vo来检查动态障碍物安全性
       Eigen::Vector4d node_state;
@@ -703,6 +726,7 @@ void ThetaAstar::setParam(ros::NodeHandle& nh)
   nh.param("search/is_used_VO", is_used_VO_, false);
   nh.param("search/is_used_DIS", is_used_DIS_, false);
   nh.param("search/is_used_adsm", is_used_adsm_, false);
+  nh.param("search/global_seesm_enable", is_used_global_seesm_, false);
 
   tie_breaker_ = 1.0 + 1.0 / 10000;
 

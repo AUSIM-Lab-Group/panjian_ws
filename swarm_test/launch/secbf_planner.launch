@@ -5,7 +5,7 @@
   <arg name="mpc_frequency" value="10"/>
   <arg name="pre_step"      value="20"/>
   <arg name="step_time"     value="0.2"/>
-  <arg name="v_max"         value="1.5"/>
+  <arg name="v_max"         default="1.5"/>
   <arg name="gamma"         value="0.35"/>
   <arg name="show_rviz"     default="true"/>
   <arg name="use_ground_truth" default="true"/>
@@ -28,6 +28,8 @@
   <arg name="enable_rate_limit" default="true"/>
   <arg name="enable_available_projection" default="true"/>
   <arg name="enable_guard_fallback" default="true"/>
+  <arg name="global_seesm_enable" default="false"/>
+  <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="fixed_beta" default="0.4"/>
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
@@ -84,8 +86,14 @@
     <arg name="used_adsm_"        value="$(arg front_adsm)"/>
     <arg name="used_static_path"  value="$(arg static_path)"/>
     <arg name="traj_horizon"      value="$(arg search_horizon)"/>
+    <arg name="map_size_x_"       value="$(arg map_size_x)"/>
+    <arg name="map_size_y_"       value="$(arg map_size_y)"/>
+    <arg name="map_size_z_"       value="$(arg map_size_z)"/>
     <arg name="_goal_x"           value="$(arg goal_x)"/>
     <arg name="_goal_y"           value="$(arg goal_y)"/>
+    <arg name="global_seesm_enable" value="$(arg global_seesm_enable)"/>
+    <arg name="global_seesm_margin_topic" value="$(arg global_seesm_margin_topic)"/>
+    <arg name="global_seesm_log_path" value="$(arg output_dir)/global_seesm_log.csv"/>
   </include>
 
   <!-- 本文语义 β + Guard (Ground Truth 模式: 跳过感知，类别来自场景配置) -->

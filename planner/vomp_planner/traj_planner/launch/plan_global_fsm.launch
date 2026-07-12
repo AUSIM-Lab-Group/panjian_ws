@@ -20,6 +20,9 @@
     <arg name="odometry_topic" default="/Odometry"/>
     <arg name="cloud_topic"    default="/velodyne_points_world"/>
     <arg name="_perception_GroundTruth"    default="true"/>
+    <arg name="global_seesm_enable" default="false"/>
+    <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
+    <arg name="global_seesm_log_path" default=""/>
     <arg name="clean_runtime_env" default="true"/>
     <arg name="runtime_ld_library_path" default="/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu:/opt/ros/noetic/share/euslisp/jskeus/eus//Linux64/lib"/>
 
@@ -30,6 +33,7 @@
         <remap from="/vis_dense_kino_traj"        to="/vis_kino_traj"/>
         <remap from="/sdf_map/odom"               to="$(arg odometry_topic)"/>
         <remap from="/sdf_map/cloud"              to="$(arg cloud_topic)"/>
+        <remap from="/safety_margin/beta_applied_final" to="$(arg global_seesm_margin_topic)"/>
 
         <!-- for obs_manager -->
         <!-- 障碍物轨迹预测值话题 -->
@@ -73,6 +77,10 @@
         <param name="search/is_used_VO"         value="false" type="bool"/>
         <param name="search/is_used_DIS"        value="$(arg used_DIS_)" type="bool"/>
         <param name="search/is_used_adsm"       value="$(arg used_adsm_)" type="bool"/>
+        <param name="search/global_seesm_enable" value="$(arg global_seesm_enable)" type="bool"/>
+        <param name="search/global_seesm_tau" value="0.20" type="double"/>
+        <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
+        <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
 
         <!-- 地图参数 -->
         <param name="sdf_map/resolution"            value="0.1" />
@@ -120,6 +128,7 @@
         <remap from="/vis_dense_kino_traj"        to="/vis_kino_traj"/>
         <remap from="/sdf_map/odom"               to="$(arg odometry_topic)"/>
         <remap from="/sdf_map/cloud"              to="$(arg cloud_topic)"/>
+        <remap from="/safety_margin/beta_applied_final" to="$(arg global_seesm_margin_topic)"/>
 
         <!-- for obs_manager -->
         <!-- 障碍物轨迹预测值话题 -->
@@ -163,6 +172,10 @@
         <param name="search/is_used_VO"         value="false" type="bool"/>
         <param name="search/is_used_DIS"        value="$(arg used_DIS_)" type="bool"/>
         <param name="search/is_used_adsm"       value="$(arg used_adsm_)" type="bool"/>
+        <param name="search/global_seesm_enable" value="$(arg global_seesm_enable)" type="bool"/>
+        <param name="search/global_seesm_tau" value="0.20" type="double"/>
+        <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
+        <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
 
         <!-- 地图参数 -->
         <param name="sdf_map/resolution"            value="0.1" />

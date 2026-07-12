@@ -46,6 +46,7 @@ private:
   double time_origin_;
 
   bool is_used_VO_, is_used_DIS_, is_used_adsm_;
+  bool is_used_global_seesm_ = false;  // search/global_seesm_enable
 
   /* helper */
   Eigen::Vector2i posToIndex(Eigen::Vector2d pt);

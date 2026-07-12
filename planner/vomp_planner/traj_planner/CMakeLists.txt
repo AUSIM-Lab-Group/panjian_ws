@@ -35,12 +35,13 @@ find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   message_generation
   dynamic_simulator
+  semantic_guard
 )
 
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES traj_planner
- CATKIN_DEPENDS plan_env dynamic_simulator message_runtime
+ CATKIN_DEPENDS plan_env dynamic_simulator message_runtime semantic_guard
 #  DEPENDS system_lib
 )
 

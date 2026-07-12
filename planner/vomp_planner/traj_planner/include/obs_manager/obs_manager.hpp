@@ -5,15 +5,22 @@
 #include <ros/ros.h>
 #include <Eigen/Eigen>
 #include <unordered_map>
+#include <unordered_set>
 #include <tf/transform_datatypes.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <limits>
+#include <mutex>
+#include <string>
 
 // #include <costmap_converter/ObstacleArrayMsg.h>   // TEB预测轨迹消息类型
 #include <std_msgs/Float32MultiArray.h>           // 清华DCBF预测轨迹消息类型
 #include <std_msgs/UInt32MultiArray.h>
 #include "dynamic_simulator/DynTraj.h"            // 动态障碍物预测轨迹消息类型
+#include "semantic_guard/AppliedMarginArray.h"
 
 // 障碍物轨迹类型结构体
 struct obstacle_traj      
@@ -37,6 +44,13 @@ struct obstacle_traj
   Eigen::Vector3d coeff_y;   // 二次多项式系数y
 };
 
+struct applied_margin_cache_entry
+{
+  double beta_applied = 0.0;
+  std::string accepted_source;
+  ros::Time message_stamp;
+  ros::Time receipt_time;
+};
 
 class Obs_Manager
 {
@@ -49,6 +63,10 @@ public:
     nh.param("obs_manager/use_GroundTruth", is_use_GroundTruth, true);
     nh.param("obs_manager/pre_step", pre_step, 25);
     nh.param("obs_manager/step_time", step_time, 0.1);
+    nh.param("search/global_seesm_enable", global_seesm_enable_, false);
+    nh.param("search/global_seesm_tau", tau_global_, 0.20);
+    nh.param("search/global_seesm_margin_timeout", global_seesm_margin_timeout_, 0.50);
+    nh.param<std::string>("search/global_seesm_log_path", global_seesm_log_path_, std::string(""));
 
     ROS_WARN("obs_manager pre_step is: %d", pre_step);
     ROS_WARN("obs_manager step_time is: %f", step_time);
@@ -64,6 +82,14 @@ public:
 
     dcbfTraj_pub = nh.advertise<std_msgs::Float32MultiArray>("obs_predict_pub", 100, true);
     obsId_pub = nh.advertise<std_msgs::UInt32MultiArray>("obs_predict_ids", 100, true);
+
+    if (global_seesm_enable_) {
+      applied_margin_sub_ = nh.subscribe("/safety_margin/beta_applied_final", 10,
+                                         &Obs_Manager::appliedMarginCallback, this);
+      prepareGlobalSeesmLog();
+      ROS_WARN("global SEESM check enabled, tau=%f, margin_timeout=%f", tau_global_,
+               global_seesm_margin_timeout_);
+    }
 
     // tebTraj_pub = nh.advertise<costmap_converter::ObstacleArrayMsg>("move_base/TebLocalPlannerROS/obstacles", 100, true);
 
@@ -197,12 +223,98 @@ public:
     return false;
   }
 
+  void beginGlobalSeesmReplan()
+  {
+    if (!global_seesm_enable_) {
+      return;
+    }
+    current_global_replan_id_ += 1;
+    current_global_replan_wall_start_ = ros::WallTime::now();
+  }
+
+  bool is_SEESM_unsafe(const Eigen::Vector4d& robot_state,
+                       double robot_R,
+                       const ros::Time& prediction_time,
+                       bool shot_check)
+  {
+    if (!global_seesm_enable_) {
+      return false;
+    }
+
+    const auto active_obstacles = collectActiveObstacles(prediction_time);
+    bool rejected = false;
+    for (const obstacle_traj* obstacle : active_obstacles) {
+      Eigen::Vector4d obstacle_state;
+      double radius = 0.0;
+      computeObstacleStateAt(*obstacle, prediction_time, obstacle_state, radius);
+
+      double beta_applied = 0.0;
+      double margin_age_ms = -1.0;
+      std::string accepted_source = "missing";
+      std::string reason = "accepted";
+
+      applied_margin_cache_entry margin_entry;
+      bool has_margin_entry = false;
+      {
+        std::lock_guard<std::mutex> lock(applied_margin_mutex_);
+        auto cache_it = applied_margin_cache_.find(obstacle->Id_);
+        if (cache_it != applied_margin_cache_.end()) {
+          margin_entry = cache_it->second;
+          has_margin_entry = true;
+        }
+      }
+
+      const ros::Time receipt_time = ros::Time::now();
+      if (!has_margin_entry) {
+        reason = "missing";
+      } else {
+        accepted_source = margin_entry.accepted_source.empty() ? "unknown" : margin_entry.accepted_source;
+        if (!margin_entry.receipt_time.isZero()) {
+          margin_age_ms = std::max(0.0, (receipt_time - margin_entry.receipt_time).toSec() * 1000.0);
+        }
+
+        const bool margin_is_stale = !margin_entry.receipt_time.isZero() &&
+                                     (receipt_time - margin_entry.receipt_time).toSec() > global_seesm_margin_timeout_;
+        if (accepted_source == "no_cbf") {
+          reason = "no_cbf";
+        } else if (margin_is_stale) {
+          reason = "stale";
+        } else {
+          beta_applied = margin_entry.beta_applied;
+        }
+      }
+
+      Eigen::Vector2d p_rel = robot_state.head(2) - obstacle_state.head(2);
+      Eigen::Vector2d v_rel = robot_state.tail(2) - obstacle_state.tail(2);
+      double h_ee = p_rel.norm() - radius - robot_R;
+      double h_see = (p_rel + tau_global_ * v_rel).norm() - radius - robot_R - beta_applied;
+
+      const bool physical_rejected = h_ee <= 0.0;
+      const bool seesm_rejected = h_see <= 0.0;
+      const bool obstacle_rejected = physical_rejected || seesm_rejected;
+      if (physical_rejected) {
+        appendReason(reason, "h_ee");
+      } else if (seesm_rejected) {
+        appendReason(reason, "h_see");
+      }
+
+      writeGlobalSeesmLog(prediction_time.toSec(), obstacle->Id_, beta_applied, accepted_source,
+                          margin_age_ms, h_ee, h_see,
+                          obstacle_rejected && !shot_check,
+                          obstacle_rejected && shot_check, reason);
+      rejected = rejected || obstacle_rejected;
+    }
+
+    return rejected;
+  }
+
 private:
 
   bool is_use_GroundTruth;
   bool is_play_bag;
+  bool global_seesm_enable_ = false;
 
-  ros::Subscriber obsTraj_sub, predicted_Traj_sub;
+  ros::Subscriber obsTraj_sub, predicted_Traj_sub, applied_margin_sub_;
 
   ros::Publisher obsTraj_pub, dcbfTraj_pub, tebTraj_pub, obsId_pub;
 
@@ -210,8 +322,138 @@ private:
 
   int pre_step;
   double step_time;
+  double tau_global_ = 0.20;
+  double global_seesm_margin_timeout_ = 0.50;
+  std::string global_seesm_log_path_;
+  std::ofstream global_seesm_log_stream_;
+  ros::WallTime current_global_replan_wall_start_;
+  uint64_t current_global_replan_id_ = 0;
+  std::unordered_map<int, applied_margin_cache_entry> applied_margin_cache_;
+  std::mutex applied_margin_mutex_;
+  std::mutex global_seesm_log_mutex_;
 
   std::unordered_map<int, obstacle_traj> obstalce_trajs_;         // 所有障碍物轨迹，哈希表形式存储
+
+  void appliedMarginCallback(const semantic_guard::AppliedMarginArray::ConstPtr& msg)
+  {
+    const size_t obstacle_count = msg->obstacle_ids.size();
+    if (msg->beta_applied.size() != obstacle_count ||
+        msg->accepted_sources.size() != obstacle_count) {
+      ROS_WARN_THROTTLE(1.0,
+                        "[global_seesm] ignore applied margin message: ids=%zu beta=%zu sources=%zu",
+                        obstacle_count, msg->beta_applied.size(), msg->accepted_sources.size());
+      return;
+    }
+
+    const ros::Time receipt_time = ros::Time::now();
+    const ros::Time message_stamp = msg->header.stamp.isZero() ? receipt_time : msg->header.stamp;
+
+    std::unordered_set<uint32_t> seen_ids;
+    seen_ids.reserve(obstacle_count);
+    std::unordered_map<int, applied_margin_cache_entry> validated_cache;
+    validated_cache.reserve(obstacle_count);
+    for (size_t i = 0; i < obstacle_count; ++i) {
+      const uint32_t obstacle_id = msg->obstacle_ids[i];
+      const double beta = msg->beta_applied[i];
+      if (!seen_ids.insert(obstacle_id).second) {
+        ROS_WARN_THROTTLE(1.0, "[global_seesm] ignore applied margin message: duplicate obstacle id=%u",
+                          obstacle_id);
+        return;
+      }
+      if (!std::isfinite(beta) || beta < 0.0) {
+        ROS_WARN_THROTTLE(1.0, "[global_seesm] ignore applied margin message: invalid beta for obstacle id=%u",
+                          obstacle_id);
+        return;
+      }
+
+      applied_margin_cache_entry entry;
+      entry.beta_applied = beta;
+      entry.accepted_source = msg->accepted_sources[i];
+      entry.message_stamp = message_stamp;
+      entry.receipt_time = receipt_time;
+      validated_cache[static_cast<int>(obstacle_id)] = entry;
+    }
+
+    std::lock_guard<std::mutex> lock(applied_margin_mutex_);
+    applied_margin_cache_.swap(validated_cache);
+  }
+
+  void prepareGlobalSeesmLog()
+  {
+    if (global_seesm_log_path_.empty()) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(global_seesm_log_mutex_);
+    if (global_seesm_log_stream_.is_open()) {
+      return;
+    }
+
+    global_seesm_log_stream_.open(global_seesm_log_path_.c_str(), std::ios::out | std::ios::trunc);
+    if (!global_seesm_log_stream_.is_open()) {
+      ROS_WARN_STREAM("[global_seesm] failed to open log path: " << global_seesm_log_path_);
+      return;
+    }
+
+    global_seesm_log_stream_
+        << "t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"
+        << "margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms\n";
+    global_seesm_log_stream_.flush();
+  }
+
+  static void appendReason(std::string& base, const std::string& suffix)
+  {
+    if (base.empty() || base == "accepted") {
+      base = suffix;
+      return;
+    }
+    base += "|" + suffix;
+  }
+
+  static std::string sanitizeCsvField(const std::string& field)
+  {
+    std::string sanitized = field;
+    std::replace(sanitized.begin(), sanitized.end(), ',', ';');
+    return sanitized;
+  }
+
+  void writeGlobalSeesmLog(double t,
+                           int obs_id,
+                           double beta_applied,
+                           const std::string& accepted_source,
+                           double margin_age_ms,
+                           double h_ee,
+                           double h_see,
+                           bool primitive_rejected,
+                           bool shot_rejected,
+                           const std::string& reason)
+  {
+    if (!global_seesm_log_stream_.is_open()) {
+      return;
+    }
+
+    double global_replan_ms = 0.0;
+    if (!current_global_replan_wall_start_.isZero()) {
+      global_replan_ms =
+          (ros::WallTime::now() - current_global_replan_wall_start_).toSec() * 1000.0;
+    }
+
+    std::lock_guard<std::mutex> lock(global_seesm_log_mutex_);
+    global_seesm_log_stream_ << t << ","
+                             << current_global_replan_id_ << ","
+                             << (global_seesm_enable_ ? 1 : 0) << ","
+                             << obs_id << ","
+                             << beta_applied << ","
+                             << sanitizeCsvField(accepted_source) << ","
+                             << margin_age_ms << ","
+                             << h_ee << ","
+                             << h_see << ","
+                             << (primitive_rejected ? 1 : 0) << ","
+                             << (shot_rejected ? 1 : 0) << ","
+                             << sanitizeCsvField(reason) << ","
+                             << global_replan_ms << "\n";
+    global_seesm_log_stream_.flush();
+  }
 
   bool isObstacleActiveAt(const obstacle_traj& obs, const ros::Time& query_time) const
   {
