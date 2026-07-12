@@ -1,0 +1,7 @@
+trial_id,seed,scenario_id,obstacle_id,start_x_offset_m,start_y_offset_m,speed_scale,start_delay_offset_s
+pilot_001,20260710,head_on_context_int,obs_001,0.103686,0.053068,0.965125,-0.076664
+pilot_001,20260710,crossing_context_int,obs_001,0.103686,0.053068,0.965125,-0.076664
+pilot_001,20260710,local_crowding_context_int,obs_001,0.103686,0.053068,0.965125,-0.076664
+pilot_001,20260710,local_crowding_context_int,obs_002,-0.085910,-0.107900,1.046936,-0.061617
+pilot_001,20260710,local_crowding_context_int,obs_003,0.002648,0.140720,1.017007,0.060865
+pilot_001,20260710,local_crowding_context_int,obs_004,0.025396,-0.113369,0.995167,-0.053982

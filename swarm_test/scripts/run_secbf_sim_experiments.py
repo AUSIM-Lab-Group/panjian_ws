@@ -2,6 +2,7 @@
 """Run MPC-SECBF numerical simulation experiment matrix."""
 
 import argparse
+import copy
 import csv
 import datetime as dt
 import math
@@ -16,6 +17,12 @@ try:
     import yaml
 except ImportError:
     yaml = None
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from reference_path_waypoints import generate_waypoints, initial_yaw
 
 
 SCENARIO_INDEX = {
@@ -36,6 +43,10 @@ SCENARIO_INDEX = {
     "drmpc_scene_3_circle_dense": 213,
     "drmpc_scene_4_corridor_dense": 214,
     "drmpc_scene_4_corridor_spread6": 215,
+    "drmpc_fig4_scene_1_arc": 216,
+    "drmpc_fig4_scene_2_vertical": 217,
+    "drmpc_fig4_scene_3_reverse_arc": 218,
+    "drmpc_fig4_scene_4_reverse_vertical": 219,
     "Exp2_category_box": 21,
     "Exp2_category_adult": 22,
     "Exp2_category_child_like": 23,
@@ -149,6 +160,18 @@ BASELINES = {
     },
 }
 
+PAPER_BASELINE_ALIASES = {
+    "Standard_MPC_CBF": "B1_ACBF_fixed",
+    "EESM_MPC_ECBF": "No_semantic",
+    "SEESM_Without_FPU": "Unguarded_SEESM",
+    "Proposed_MPC_SECBF": "SEESM_Ours",
+}
+
+SEED_MANIFEST_HEADER = [
+    "trial_id", "seed", "scenario_id", "obstacle_id",
+    "start_x_offset_m", "start_y_offset_m", "speed_scale", "start_delay_offset_s",
+]
+
 DEFAULT_BETA_BAR = {
     "box": 0.1,
     "adult": 0.4,
@@ -172,7 +195,84 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "epsilon_max": 0.05,
     "slack_weight": 1000.0,
     "max_cbf_obstacles": 6,
+    "global_seesm_enable": "false",
 }
+
+
+def resolve_baseline_alias(value: str) -> str:
+    baseline_id = PAPER_BASELINE_ALIASES.get(value, value)
+    if baseline_id not in BASELINES:
+        raise ValueError(f"Unknown baseline '{value}'")
+    return baseline_id
+
+
+def paper_baseline_label(baseline_id: str) -> str:
+    for label, resolved in PAPER_BASELINE_ALIASES.items():
+        if resolved == baseline_id:
+            return label
+    return baseline_id
+
+
+def obstacle_id(obstacle: dict, index: int) -> str:
+    return str(obstacle.get("obstacle_id", f"obs_{index + 1:03d}"))
+
+
+def load_seed_manifest(path: Path) -> list:
+    with Path(path).open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != SEED_MANIFEST_HEADER:
+            raise ValueError("seed manifest header must match the required contract")
+        grouped = {}
+        for row in reader:
+            try:
+                normalized = {
+                    "trial_id": row["trial_id"], "seed": int(row["seed"]),
+                    "scenario_id": row["scenario_id"], "obstacle_id": row["obstacle_id"],
+                    "start_x_offset_m": float(row["start_x_offset_m"]),
+                    "start_y_offset_m": float(row["start_y_offset_m"]),
+                    "speed_scale": float(row["speed_scale"]),
+                    "start_delay_offset_s": float(row["start_delay_offset_s"]),
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("invalid seed manifest row") from exc
+            grouped.setdefault((normalized["scenario_id"], normalized["trial_id"], normalized["seed"]), []).append(normalized)
+    return [{"scenario_id": key[0], "trial_id": key[1], "seed": key[2], "rows": rows}
+            for key, rows in sorted(grouped.items())]
+
+
+def materialize_trial(scene: dict, trial: dict):
+    effective_scene = copy.deepcopy(scene)
+    obstacles = effective_scene.get("obstacles", [])
+    by_id = {obstacle_id(obstacle, index): obstacle for index, obstacle in enumerate(obstacles)}
+    start_x, start_y = scenario_start_xy(effective_scene)
+    for row in trial["rows"]:
+        obstacle = by_id.get(row["obstacle_id"])
+        if obstacle is None:
+            raise ValueError(f"unknown obstacle ID: {row['obstacle_id']}")
+        obstacle["obstacle_id"] = row["obstacle_id"]
+        obstacle["x"] = float(obstacle.get("x", 0.0)) + row["start_x_offset_m"]
+        obstacle["y"] = float(obstacle.get("y", 0.0)) + row["start_y_offset_m"]
+        obstacle["slower"] = float(obstacle.get("slower", 1.0)) / row["speed_scale"]
+        obstacle["start_delay"] = float(obstacle.get("start_delay", 0.0)) + row["start_delay_offset_s"]
+        map_cfg = effective_scene.get("map", {})
+        # Canonical scenarios use x as forward distance (start 0, goal near map.x),
+        # while y remains centered about zero.
+        if abs(obstacle["x"]) > float(map_cfg.get("x", 50.0)) or abs(obstacle["y"]) > float(map_cfg.get("y", 50.0)) / 2:
+            raise ValueError("perturbed obstacle start is outside map")
+        if math.hypot(obstacle["x"] - start_x, obstacle["y"] - start_y) < 0.8:
+            raise ValueError("perturbed obstacle start is within 0.8 m of robot")
+    for index, obstacle in enumerate(obstacles):
+        obstacle.setdefault("obstacle_id", obstacle_id(obstacle, index))
+    return effective_scene, obstacles
+
+
+def write_trial_artifacts(run_dir: Path, scenario: dict, trial: dict, resolved_baseline_id: str) -> None:
+    with (run_dir / "effective_obstacles.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump({"obstacles": scenario.get("obstacles", [])}, f, sort_keys=False)
+    with (run_dir / "trial_manifest_row.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=SEED_MANIFEST_HEADER)
+        writer.writeheader()
+        writer.writerows(trial["rows"])
 
 
 def repo_root() -> Path:
@@ -280,6 +380,7 @@ def baseline_switches(baseline_id: str) -> dict:
     for key in values:
         if key in baseline:
             values[key] = baseline[key]
+    values["global_seesm_enable"] = "true" if baseline_id in {"Unguarded_SEESM", "SEESM_Ours"} else "false"
     return values
 
 
@@ -289,10 +390,68 @@ def scenario_switches(baseline_id: str, scenario: dict) -> dict:
     return values
 
 
+def point_xy(point: dict, default_x=0.0, default_y=0.0):
+    return float(point.get("x", default_x)), float(point.get("y", default_y))
+
+
+def scenario_start_xy(scenario: dict):
+    return point_xy(scenario.get("start", {}))
+
+
+def scenario_goal_xy(scenario: dict):
+    return point_xy(scenario.get("goal", {}))
+
+
+def is_reference_path_scene(scenario: dict) -> bool:
+    return bool(scenario.get("reference_path"))
+
+
+REFERENCE_GOAL_MODES = {"waypoints", "final_only"}
+
+
+def reference_goal_mode(scenario: dict):
+    reference_path = scenario.get("reference_path")
+    if not reference_path:
+        return None
+    goal_mode = reference_path.get("goal_mode", "waypoints")
+    if not isinstance(goal_mode, str) or goal_mode not in REFERENCE_GOAL_MODES:
+        raise ValueError(f"Unknown reference_path goal_mode: {goal_mode}")
+    if goal_mode == "final_only" and reference_path.get("type") != "line":
+        raise ValueError("reference_path goal_mode final_only requires type line")
+    return goal_mode
+
+
+def uses_reference_waypoints(scenario: dict) -> bool:
+    return reference_goal_mode(scenario) == "waypoints"
+
+
+def scenario_planner_v_max(scenario: dict) -> float:
+    return float(scenario.get("planner_v_max", 1.5))
+
+
+def write_reference_path_config(run_dir: Path, scenario: dict):
+    waypoints = generate_waypoints(scenario["reference_path"])
+    payload = {
+        "waypoints": [[x, y] for x, y in waypoints],
+        "threshold": 0.35,
+        "start_delay": 3.0,
+        "planner_goal_min_distance": float(
+            scenario["reference_path"].get("planner_goal_min_distance", 1.2)
+        ),
+        "final_goal": list(waypoints[-1]),
+    }
+    path = run_dir / "reference_path.yaml"
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return path, waypoints
+
+
 def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: dict,
-                   classes_arg: str, num_obs: int, duration_sec: int) -> Path:
+                   classes_arg: str, num_obs: int, duration_sec: int,
+                   reference_waypoints=None, trial=None, resolved_baseline_id=None,
+                   requested_baseline_label=None) -> Path:
     meta_path = run_dir / "meta.yaml"
-    goal = scenario.get("goal", {})
+    start_x, start_y = scenario_start_xy(scenario)
+    goal_x, goal_y = scenario_goal_xy(scenario)
     map_cfg = scenario.get("map", {})
     baseline = BASELINES[baseline_id]
     switches = scenario_switches(baseline_id, scenario)
@@ -311,13 +470,16 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "scene_source": scenario.get("scene_source", "teacher_canonical"),
         "method": baseline.get("experiment_label", baseline_id),
         "baseline_id": baseline_id,
+        "resolved_baseline_id": resolved_baseline_id or baseline_id,
+        "requested_baseline_label": requested_baseline_label or paper_baseline_label(baseline_id),
+        "paper_baseline_label": requested_baseline_label or paper_baseline_label(baseline_id),
         "map_name": (
             "corridor_12m_x_6m" if scenario_id.startswith(("Exp2_", "Exp3_"))
             else "paper_style_supplementary_2d" if scenario_id.startswith(("avocado_", "drmpc_"))
             else "teacher_canonical_2d"
         ),
-        "start": [0.0, 0.0, 0.0],
-        "goal": [float(goal.get("x", 0.0)), float(goal.get("y", 0.0)), 0.0],
+        "start": [start_x, start_y, 0.0],
+        "goal": [goal_x, goal_y, 0.0],
         "map_size": [
             float(map_cfg.get("x", 50.0)),
             float(map_cfg.get("y", 50.0)),
@@ -341,9 +503,11 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "epsilon_max": switches["epsilon_max"],
         "slack_weight": switches["slack_weight"],
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
+        "global_seesm_enable": switches["global_seesm_enable"],
         "guard_tau": 0.20,
         "mpc_horizon": 20,
         "dt": 0.10,
+        "planner_v_max": scenario_planner_v_max(scenario),
         "random_seed": 1,
         "duration_sec": duration_sec,
         "safety_contract": {
@@ -360,6 +524,19 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
             "event_log.csv",
         ],
     }
+    if is_reference_path_scene(scenario):
+        waypoints = reference_waypoints
+        if waypoints is None:
+            waypoints = generate_waypoints(scenario["reference_path"])
+        meta["reference_path"] = scenario["reference_path"]
+        meta["reference_waypoints"] = [[x, y] for x, y in waypoints]
+        meta["corridor_width"] = float(scenario.get("corridor_width", 1.5))
+        meta["planner_goal_min_distance"] = float(
+            scenario["reference_path"].get("planner_goal_min_distance", 1.2)
+        )
+    if trial is not None:
+        meta["trial_manifest"] = {"trial_id": trial["trial_id"], "seed": trial["seed"], "scenario_id": trial["scenario_id"]}
+        meta["perturbations"] = trial["rows"]
     with meta_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(meta, f, sort_keys=False, allow_unicode=True)
     return meta_path
@@ -373,11 +550,17 @@ def obstacle_classes(obstacles: list) -> str:
 def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_params: Path,
                    classes_arg: str, num_obs: int, scenario: dict):
     baseline = BASELINES[baseline_id]
-    goal = scenario.get("goal", {})
+    start_x, start_y = scenario_start_xy(scenario)
+    goal_x, goal_y = scenario_goal_xy(scenario)
     map_cfg = scenario.get("map", {})
     beta_bar = scenario_beta_bar(baseline_id, scenario)
     mu_weights = scenario_mu_weights(baseline_id, scenario)
     switches = scenario_switches(baseline_id, scenario)
+    reference_path = is_reference_path_scene(scenario)
+    use_reference_waypoints = uses_reference_waypoints(scenario)
+    reference_waypoints = generate_waypoints(scenario["reference_path"]) if reference_path else None
+    init_yaw = initial_yaw(reference_waypoints) if reference_waypoints else 0.0
+    reference_path_file = run_dir / "reference_path.yaml"
     common_start = [
         "roslaunch", "swarm_test", "start_test.launch",
         f"scenario_index:={SCENARIO_INDEX[scenario_id]}",
@@ -386,10 +569,17 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
         f"num_of_obs:={num_obs}",
         f"obstacle_params_file:={obstacle_params}",
         f"obstacle_classes:={classes_arg}",
-        f"goal_x:={goal.get('x', 21.0)}",
-        f"goal_y:={goal.get('y', 0.0)}",
+        f"goal_x:={goal_x}",
+        f"goal_y:={goal_y}",
         "record_data:=true",
     ]
+    if use_reference_waypoints:
+        common_start.extend([
+            "use_reference_path:=true",
+            f"reference_path_file:={reference_path_file}",
+            f"final_goal_x:={reference_waypoints[-1][0]}",
+            f"final_goal_y:={reference_waypoints[-1][1]}",
+        ])
 
     if baseline_id == "B1_ACBF_fixed":
         planner = [
@@ -412,13 +602,17 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",
             f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
+            f"global_seesm_enable:={switches['global_seesm_enable']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
             f"map_size_x:={map_cfg.get('x', 50.0)}",
             f"map_size_y:={map_cfg.get('y', 50.0)}",
             f"map_size_z:={map_cfg.get('z', 3.0)}",
-            f"goal_x:={goal.get('x', 10.0)}",
-            f"goal_y:={goal.get('y', 0.0)}",
+            f"goal_x:={goal_x}",
+            f"goal_y:={goal_y}",
+            f"init_x:={start_x}",
+            f"init_y:={start_y}",
+            f"init_yaw:={init_yaw}",
             f"beta_bar_box:={beta_bar['box']}",
             f"beta_bar_adult:={beta_bar['adult']}",
             f"beta_bar_pedestrian:={beta_bar['pedestrian']}",
@@ -431,6 +625,7 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"mu_heading:={mu_weights['heading']}",
             f"mu_ttc:={mu_weights['ttc']}",
             f"mu_density:={mu_weights['density']}",
+            f"v_max:={scenario_planner_v_max(scenario)}",
         ]
 
     return planner, common_start
@@ -918,9 +1113,18 @@ def write_aggregate_summary(output_root: Path, run_dirs: list):
     return aggregate_csv
 
 
-def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp: str):
-    run_dir = Path(args.output_root) / f"{timestamp}_{scenario_id}_{baseline_id}"
-    obstacles = scenario.get("obstacles", [])
+def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp: str,
+            trial=None, requested_baseline_label=None):
+    run_suffix = trial["trial_id"] if trial is not None else timestamp
+    run_dir = Path(args.output_root) / f"{run_suffix}_{scenario_id}_{baseline_id}"
+    summary_path = run_dir / "summary.csv"
+    if getattr(args, "skip_existing_complete", False) and summary_path.exists() and summary_path.stat().st_size > 0:
+        print(f"Skipped complete {scenario_id} / {baseline_id}: {run_dir}")
+        return run_dir
+    if trial is not None:
+        scenario, obstacles = materialize_trial(scenario, trial)
+    else:
+        obstacles = scenario.get("obstacles", [])
     if not obstacles:
         raise RuntimeError(f"Scenario {scenario_id} has no obstacles")
 
@@ -940,8 +1144,25 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         return None
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    if trial is not None:
+        write_trial_artifacts(run_dir, scenario, trial, baseline_id)
     obstacle_params = write_obstacle_params(run_dir, obstacles)
-    write_run_meta(run_dir, scenario_id, baseline_id, scenario, classes_arg, len(obstacles), args.duration_sec)
+    reference_waypoints = None
+    if is_reference_path_scene(scenario):
+        _, reference_waypoints = write_reference_path_config(run_dir, scenario)
+    write_run_meta(
+        run_dir,
+        scenario_id,
+        baseline_id,
+        scenario,
+        classes_arg,
+        len(obstacles),
+        args.duration_sec,
+        reference_waypoints,
+        trial=trial,
+        resolved_baseline_id=baseline_id,
+        requested_baseline_label=requested_baseline_label,
+    )
     planner_cmd, start_cmd = build_commands(
         scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
     )
@@ -1007,9 +1228,11 @@ def main():
     parser.add_argument("--baseline", default="all")
     parser.add_argument("--duration-sec", type=int, default=90)
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--seed-manifest")
     parser.add_argument("--output-root", default=str(default_output))
     parser.add_argument("--roscore", choices=["auto", "external"], default="auto")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-existing-complete", action="store_true")
     parser.add_argument(
         "--config",
         default=str(root / "swarm_test/config/secbf_scenarios.yaml"),
@@ -1020,17 +1243,24 @@ def main():
 
     scenarios = load_scenarios(Path(args.config))
     scenario_ids = selected(SCENARIO_INDEX.keys(), args.scenario)
-    baseline_ids = selected(BASELINES.keys(), args.baseline)
+    requested_baselines = selected(list(BASELINES) + list(PAPER_BASELINE_ALIASES), args.baseline)
+    baseline_ids = [resolve_baseline_alias(value) for value in requested_baselines]
+    if args.seed_manifest and args.repeat != 1:
+        parser.error("--seed-manifest cannot be combined with --repeat != 1")
+    trials = load_seed_manifest(Path(args.seed_manifest)) if args.seed_manifest else []
     base_timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     completed_runs = []
 
     for repeat_idx in range(args.repeat):
         timestamp = base_timestamp if args.repeat == 1 else f"{base_timestamp}_r{repeat_idx + 1:02d}"
         for scenario_id in scenario_ids:
-            for baseline_id in baseline_ids:
-                run_dir = run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp)
-                if run_dir is not None:
-                    completed_runs.append(run_dir)
+            scenario_trials = [trial for trial in trials if trial["scenario_id"] == scenario_id] or [None]
+            for trial in scenario_trials:
+                for requested, baseline_id in zip(requested_baselines, baseline_ids):
+                    run_dir = run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp,
+                                      trial=trial, requested_baseline_label=requested)
+                    if run_dir is not None:
+                        completed_runs.append(run_dir)
 
     if completed_runs:
         aggregate_csv = write_aggregate_summary(Path(args.output_root), completed_runs)

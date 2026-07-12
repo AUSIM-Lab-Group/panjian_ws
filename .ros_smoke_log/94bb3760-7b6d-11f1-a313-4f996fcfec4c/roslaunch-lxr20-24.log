@@ -1,0 +1,57 @@
+[roslaunch][INFO] 2026-07-09 16:10:00,273: Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+[roslaunch][INFO] 2026-07-09 16:10:00,277: Done checking log file disk usage. Usage is <1GB.
+[roslaunch][INFO] 2026-07-09 16:10:00,278: roslaunch starting with args ['roscore', '--core']
+[roslaunch][INFO] 2026-07-09 16:10:00,278: roslaunch env is environ({'ROS_LOG_DIR': '/home/lxr20/lxr/panjian_ws/.ros_smoke_log', 'ROS_HOME': '/home/lxr20/lxr/panjian_ws/.ros_smoke', 'SHELL': '/bin/bash', 'ROS_VERSION': '1', 'SESSION_MANAGER': 'local/lxr20:@/tmp/.ICE-unix/1994,unix/lxr20:/tmp/.ICE-unix/1994', 'QT_ACCESSIBILITY': '1', 'COLORTERM': '', 'XDG_CONFIG_DIRS': '/etc/xdg/xdg-ubuntu:/etc/xdg', 'XDG_MENU_PREFIX': 'gnome-', 'GNOME_DESKTOP_SESSION_ID': 'this-is-deprecated', 'GTK_IM_MODULE': 'fcitx', 'DISABLE_ROS1_EOL_WARNINGS': '1', 'PKG_CONFIG_PATH': '/opt/ros/noetic/lib/pkgconfig', 'ROS_PYTHON_VERSION': '3', 'LANGUAGE': 'zh_CN:zh', 'QT4_IM_MODULE': 'fcitx', 'GNOME_SHELL_SESSION_MODE': 'ubuntu', 'SSH_AUTH_SOCK': '/run/user/1000/keyring/ssh', 'ELECTRON_RUN_AS_NODE': '1', 'XMODIFIERS': '@im=fcitx', 'DESKTOP_SESSION': 'ubuntu', 'SSH_AGENT_PID': '1951', 'ROS_PACKAGE_PATH': '/opt/ros/noetic/share', 'GH_PAGER': 'cat', 'GTK_MODULES': 'gail:atk-bridge', 'ROSLISP_PACKAGE_DIRECTORIES': '', 'PWD': '/home/lxr20/lxr/panjian_ws', 'LOGNAME': 'lxr20', 'XDG_SESSION_DESKTOP': 'ubuntu', 'XDG_SESSION_TYPE': 'x11', 'VSCODE_ESM_ENTRYPOINT': 'vs/workbench/api/node/extensionHostProcess', 'GPG_AGENT_INFO': '/run/user/1000/gnupg/S.gpg-agent:0:1', 'VSCODE_CODE_CACHE_PATH': '/home/lxr20/.config/Code/CachedData/4fe60c8b1cdac1c4c174f2fb180d0d758272d713', 'XAUTHORITY': '/run/user/1000/gdm/Xauthority', 'GJS_DEBUG_TOPICS': 'JS ERROR;JS LOG', 'WINDOWPATH': '2', 'HOME': '/home/lxr20', 'USERNAME': 'lxr20', 'IM_CONFIG_PHASE': '1', 'LANG': 'C.UTF-8', 'ROS_ETC_DIR': '/opt/ros/noetic/etc/ros', 'XDG_CURRENT_DESKTOP': 'ubuntu:GNOME', 'VSCODE_IPC_HOOK': '/run/user/1000/vscode-a4f3bed7-1.12-main.sock', 'CMAKE_PREFIX_PATH': '/opt/ros/noetic', 'INVOCATION_ID': '091828eb6ebc446a85a0667dbb884e8b', 'MANAGERPID': '1851', 'CHROME_DESKTOP': 'code.desktop', 'CLUTTER_IM_MODULE': 'fcitx', 'GJS_DEBUG_OUTPUT': 'stderr', 'LESSCLOSE': '/usr/bin/lesspipe %s %s', 'XDG_SESSION_CLASS': 'user', 'PYTHONPATH': '/opt/ros/noetic/lib/python3/dist-packages', 'TERM': 'dumb', 'CODEX_THREAD_ID': '019f45df-1a22-7030-bccb-5ed0c3418a58', 'LESSOPEN': '| /usr/bin/lesspipe %s', 'USER': 'lxr20', 'GIT_PAGER': 'cat', 'DISPLAY': ':1', 'VSCODE_PID': '1961250', 'SHLVL': '1', 'PAGER': 'cat', 'ROS_MASTER_URI': 'http://localhost:11311', 'QT_IM_MODULE': 'fcitx', 'VSCODE_CWD': '/home/lxr20', 'NO_COLOR': '1', 'FC_FONTATIONS': '1', 'LD_LIBRARY_PATH': '/opt/ros/noetic/lib', 'CODEX_CI': '1', 'LC_CTYPE': 'C.UTF-8', 'VSCODE_CRASH_REPORTER_PROCESS_TYPE': 'extensionHost', 'XDG_RUNTIME_DIR': '/run/user/1000', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'codex_vscode', 'LC_ALL': 'C.UTF-8', 'JOURNAL_STREAM': '8:46240', 'XDG_DATA_DIRS': '/usr/share/ubuntu:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop', 'GDK_BACKEND': 'x11', 'CODEX_SANDBOX_NETWORK_DISABLED': '1', 'PATH': '/opt/ros/noetic/bin:/home/lxr20/.local/bin:/home/lxr20/.local/bin:/home/lxr20/.codex/tmp/arg0/codex-arg0JmDxHR:/home/lxr20/.local/bin:/home/lxr20/.opencode/bin:/home/lxr20/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/lxr20/.vscode/extensions/openai.chatgpt-26.623.141536-linux-x64/bin/linux-x86_64', 'GDMSESSION': 'ubuntu', 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus', 'RUST_LOG': 'warn', 'VSCODE_NLS_CONFIG': '{"userLocale":"zh-cn","osLocale":"zh-cn","resolvedLanguage":"zh-cn","defaultMessagesFile":"/usr/share/code/resources/app/out/nls.messages.json","languagePack":{"translationsConfigFile":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/tcf.json","messagesFile":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/4fe60c8b1cdac1c4c174f2fb180d0d758272d713/nls.messages.json","corruptMarkerFile":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/corrupted.info"},"locale":"zh-cn","availableLanguages":{"*":"zh-cn"},"_languagePackId":"95a1d175239d220149ee2b7c238e7810.zh-cn","_languagePackSupport":true,"_translationsConfigFile":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/tcf.json","_cacheRoot":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn","_resolvedLanguagePackCoreLocation":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/4fe60c8b1cdac1c4c174f2fb180d0d758272d713","_corruptedFile":"/home/lxr20/.config/Code/clp/95a1d175239d220149ee2b7c238e7810.zh-cn/corrupted.info"}', 'DEBUG': 'release', 'ROS_ROOT': '/opt/ros/noetic/share/ros', 'ROS_DISTRO': 'noetic', 'GIO_LAUNCHED_DESKTOP_FILE_PID': '1961250', 'GIO_LAUNCHED_DESKTOP_FILE': '/usr/share/applications/code.desktop', 'VSCODE_HANDLES_UNCAUGHT_ERRORS': 'true', '_': '/opt/ros/noetic/bin/roscore', 'ROS_LOG_FILENAME': '/home/lxr20/lxr/panjian_ws/.ros_smoke_log/94bb3760-7b6d-11f1-a313-4f996fcfec4c/roslaunch-lxr20-24.log'})
+[roslaunch][INFO] 2026-07-09 16:10:00,278: starting in server mode
+[roslaunch.parent][INFO] 2026-07-09 16:10:00,278: starting roslaunch parent run
+[roslaunch][INFO] 2026-07-09 16:10:00,278: loading roscore config file /opt/ros/noetic/etc/ros/roscore.xml
+[roslaunch][INFO] 2026-07-09 16:10:00,460: Added core node of type [rosout/rosout] in namespace [/]
+[roslaunch.pmon][INFO] 2026-07-09 16:10:00,460: start_process_monitor: creating ProcessMonitor
+[roslaunch.pmon][INFO] 2026-07-09 16:10:00,461: created process monitor <ProcessMonitor(ProcessMonitor-1, initial daemon)>
+[roslaunch.pmon][INFO] 2026-07-09 16:10:00,461: start_process_monitor: ProcessMonitor started
+[roslaunch.parent][INFO] 2026-07-09 16:10:00,461: starting parent XML-RPC server
+[roslaunch.server][INFO] 2026-07-09 16:10:00,461: starting roslaunch XML-RPC server
+[roslaunch.server][INFO] 2026-07-09 16:10:00,461: waiting for roslaunch XML-RPC server to initialize
+[xmlrpc][INFO] 2026-07-09 16:10:00,461: XML-RPC server binding to 0.0.0.0:0
+[xmlrpc][ERROR] 2026-07-09 16:10:00,462: ERROR: Unable to start XML-RPC server: Operation not permitted
+[roslaunch.remote][ERROR] 2026-07-09 16:10:00,464: Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/server.py", line 425, in run
+    super(ROSLaunchNode, self).run()
+  File "/opt/ros/noetic/lib/python3/dist-packages/rosgraph/xmlrpc.py", line 252, in run
+    self._run()
+  File "/opt/ros/noetic/lib/python3/dist-packages/rosgraph/xmlrpc.py", line 321, in _run
+    self._run_init()
+  File "/opt/ros/noetic/lib/python3/dist-packages/rosgraph/xmlrpc.py", line 271, in _run_init
+    self.server = ThreadingXMLRPCServer((bind_address, port), log_requests)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rosgraph/xmlrpc.py", line 149, in __init__
+    SimpleXMLRPCServer.__init__(self, addr, SilenceableXMLRPCRequestHandler, log_requests)
+  File "/usr/lib/python3.8/xmlrpc/server.py", line 605, in __init__
+    socketserver.TCPServer.__init__(self, addr, requestHandler, bind_and_activate)
+  File "/usr/lib/python3.8/socketserver.py", line 448, in __init__
+    self.socket = socket.socket(self.address_family,
+  File "/usr/lib/python3.8/socket.py", line 231, in __init__
+    _socket.socket.__init__(self, family, type, proto, fileno)
+PermissionError: [Errno 1] Operation not permitted
+
+[roslaunch.pmon][INFO] 2026-07-09 16:10:05,464: ProcessMonitor.shutdown <ProcessMonitor(ProcessMonitor-1, started daemon 140402932098816)>
+[roslaunch.pmon][INFO] 2026-07-09 16:10:05,470: ProcessMonitor._post_run <ProcessMonitor(ProcessMonitor-1, started daemon 140402932098816)>
+[roslaunch.pmon][INFO] 2026-07-09 16:10:05,470: ProcessMonitor._post_run <ProcessMonitor(ProcessMonitor-1, started daemon 140402932098816)>: remaining procs are []
+[roslaunch.pmon][INFO] 2026-07-09 16:10:05,471: ProcessMonitor exit: cleaning up data structures and signals
+[roslaunch.pmon][INFO] 2026-07-09 16:10:05,471: ProcessMonitor exit: pmon has shutdown
+[roslaunch][ERROR] 2026-07-09 16:10:05,471: RLException: XML-RPC initialization failed
+[roslaunch][ERROR] 2026-07-09 16:10:05,471: The traceback for the exception was written to the log file
+[roslaunch][ERROR] 2026-07-09 16:10:05,471: Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/__init__.py", line 347, in main
+    p.start()
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/parent.py", line 305, in start
+    self._start_infrastructure()
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/parent.py", line 263, in _start_infrastructure
+    self._start_server()
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/parent.py", line 212, in _start_server
+    self.server.start()
+  File "/opt/ros/noetic/lib/python3/dist-packages/roslaunch/server.py", line 378, in start
+    raise RLException("XML-RPC initialization failed")
+roslaunch.core.RLException: XML-RPC initialization failed
+
+[rospy.core][INFO] 2026-07-09 16:10:05,472: signal_shutdown [atexit]

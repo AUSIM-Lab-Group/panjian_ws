@@ -67,6 +67,26 @@ class WaypointProgress:
     def current(self):
         return self._waypoints[self._index]
 
+    @property
+    def index(self):
+        return self._index
+
+    def advance_to_min_distance(self, position, min_distance):
+        if self.complete:
+            return False
+        min_distance = float(min_distance)
+        if min_distance <= 0.0:
+            return False
+
+        advanced = False
+        while (
+            self._index < len(self._waypoints) - 1
+            and math.dist(position, self.current) < min_distance
+        ):
+            self._index += 1
+            advanced = True
+        return advanced
+
     def update(self, position):
         if self.complete:
             return True

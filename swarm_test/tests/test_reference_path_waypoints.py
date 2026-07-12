@@ -104,6 +104,28 @@ def test_waypoint_progress_advances_only_inside_threshold():
     assert progress.complete
 
 
+def test_waypoint_progress_can_skip_dense_waypoints_for_planner_lookahead():
+    progress = WaypointProgress(
+        [(0.0, 0.0), (0.4, 0.0), (0.8, 0.0), (1.2, 0.0), (1.6, 0.0)],
+        threshold=0.35,
+    )
+    assert progress.advance_to_min_distance((0.0, 0.0), 1.0)
+    assert progress.index == 3
+    assert progress.current == (1.2, 0.0)
+    assert progress.update((1.2, 0.0))
+    assert progress.current == (1.6, 0.0)
+
+
+def test_waypoint_progress_lookahead_preserves_final_waypoint():
+    progress = WaypointProgress(
+        [(0.0, 0.0), (0.4, 0.0), (0.8, 0.0)],
+        threshold=0.35,
+    )
+    assert progress.advance_to_min_distance((0.0, 0.0), 1.0)
+    assert progress.index == 2
+    assert progress.current == (0.8, 0.0)
+
+
 def test_generate_waypoints_rejects_unsupported_path_type():
     with pytest.raises(ValueError, match="unsupported reference path type"):
         generate_waypoints({"type": "spiral", "spacing": 0.4})

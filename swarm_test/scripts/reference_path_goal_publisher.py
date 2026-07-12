@@ -4,6 +4,14 @@
 
 import math
 from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+else:
+    sys.path.remove(str(SCRIPT_DIR))
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import rospy
 import yaml
@@ -15,6 +23,10 @@ from reference_path_waypoints import WaypointProgress
 
 ODOM_TIMEOUT_SECONDS = 5.0
 FINAL_GOAL_TOLERANCE = 1e-6
+DEFAULT_PLANNER_GOAL_MIN_DISTANCE = 1.2
+GOAL_CONNECTION_WAIT_SECONDS = 2.0
+GOAL_DELIVERY_REPEATS = 5
+GOAL_DELIVERY_PERIOD_SECONDS = 0.1
 
 
 def load_reference_path_config(path_file):
@@ -38,6 +50,9 @@ def load_reference_path_config(path_file):
         "threshold": threshold,
         "start_delay": start_delay,
         "final_goal": final_goal,
+        "planner_goal_min_distance": float(
+            config.get("planner_goal_min_distance", DEFAULT_PLANNER_GOAL_MIN_DISTANCE)
+        ),
     }
 
 
@@ -48,9 +63,10 @@ class ReferencePathGoalPublisher:
         self._waypoints = config["waypoints"]
         self._threshold = config["threshold"]
         self._start_delay = config["start_delay"]
+        self._planner_goal_min_distance = config["planner_goal_min_distance"]
         self._progress = WaypointProgress(self._waypoints, self._threshold)
         self._publisher = rospy.Publisher(
-            "/move_base_simple/goal", PoseStamped, queue_size=1
+            "/move_base_simple/goal", PoseStamped, queue_size=1, latch=True
         )
         self._odom_subscriber = rospy.Subscriber(
             "/robot1/odom", Odometry, self._odom_callback, queue_size=1
@@ -59,7 +75,6 @@ class ReferencePathGoalPublisher:
         self._activation_time = None
         self._goal_published = False
         self._completed = False
-        self._current_index = 1
         self._node_start_time = rospy.Time.now()
 
     def _segment_yaw(self, index):
@@ -73,22 +88,56 @@ class ReferencePathGoalPublisher:
 
     def _build_goal(self):
         current_target = self._progress.current
+        current_index = self._progress.index
         goal = PoseStamped()
         goal.header.stamp = rospy.Time.now()
         goal.header.frame_id = "world"
         goal.pose.position.x = current_target[0]
         goal.pose.position.y = current_target[1]
         goal.pose.position.z = 0.0
-        yaw = self._segment_yaw(self._current_index)
+        yaw = self._segment_yaw(current_index)
         goal.pose.orientation.x = 0.0
         goal.pose.orientation.y = 0.0
         goal.pose.orientation.z = math.sin(yaw / 2.0)
         goal.pose.orientation.w = math.cos(yaw / 2.0)
         return goal
 
+    def _advance_to_planner_lookahead(self):
+        if self._last_position is None:
+            return
+        advanced = self._progress.advance_to_min_distance(
+            self._last_position, self._planner_goal_min_distance
+        )
+        if advanced:
+            rospy.loginfo(
+                "Advanced reference target to waypoint %d/%d for %.2fm planner lookahead",
+                self._progress.index,
+                len(self._waypoints) - 1,
+                self._planner_goal_min_distance,
+            )
+
     def _publish_current_goal(self):
+        self._advance_to_planner_lookahead()
+        start_wait = rospy.Time.now()
+        while (
+            not rospy.is_shutdown()
+            and self._publisher.get_num_connections() == 0
+            and (rospy.Time.now() - start_wait).to_sec() < GOAL_CONNECTION_WAIT_SECONDS
+        ):
+            rospy.sleep(0.05)
+        goal = self._build_goal()
         try:
-            self._publisher.publish(self._build_goal())
+            for _ in range(GOAL_DELIVERY_REPEATS):
+                self._publisher.publish(goal)
+                rospy.loginfo(
+                    "Published reference waypoint %d/%d at (%.3f, %.3f), connections=%d",
+                    self._progress.index,
+                    len(self._waypoints) - 1,
+                    goal.pose.position.x,
+                    goal.pose.position.y,
+                    self._publisher.get_num_connections(),
+                )
+                rospy.sleep(GOAL_DELIVERY_PERIOD_SECONDS)
         except Exception as exc:
             raise RuntimeError(f"failed to publish reference waypoint: {exc}") from exc
         self._goal_published = True
@@ -111,12 +160,11 @@ class ReferencePathGoalPublisher:
         )
         if not self._goal_published or self._completed:
             return
-        if self._current_index >= len(self._waypoints) - 1:
+        if self._progress.index >= len(self._waypoints) - 1:
             self._finish_if_final_reached()
             return
         if not self._progress.update(self._last_position):
             return
-        self._current_index += 1
         self._publish_current_goal()
 
     def run(self):

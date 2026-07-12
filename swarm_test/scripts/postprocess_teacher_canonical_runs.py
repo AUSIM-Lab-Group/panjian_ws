@@ -35,6 +35,8 @@ RUN_FIELDS = [
     "run_id",
     "output_dir",
     "success",
+    "goal_reached",
+    "collision_count",
     "d_min_m",
     "min_h_seesm",
     "semantic_violation_ratio",
@@ -79,6 +81,8 @@ TABLE_FIELDS = [
     "method_label",
     "n_trials",
     "success_rate",
+    "goal_reached_rate",
+    "collision_rate",
     "d_min_mean_m",
     "d_min_min_m",
     "min_h_seesm_mean",
@@ -308,6 +312,12 @@ def metric_from_summary(summary_row: dict[str, str], primary: str, fallback: str
     return parse_float(summary_row.get(fallback))
 
 
+def paper_outcome(summary_row: dict[str, str]) -> tuple[int, int, int]:
+    goal_reached = int((parse_float(summary_row.get("success")) or 0.0) > 0.0)
+    collision_count = int(parse_float(summary_row.get("nav_collision_count")) or 0.0)
+    return int(goal_reached == 1 and collision_count == 0), goal_reached, collision_count
+
+
 def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     scenario_meta = load_scenario_meta(config_path)
     summary_rows = collect_summary_rows(output_root)
@@ -350,6 +360,7 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         sem = semantic_violation_metrics(output_dir)
         plan = planner_metrics(output_dir, summary)
         global_metrics = global_seesm_metrics(output_dir)
+        success, goal_reached, collision_count = paper_outcome(summary)
         min_h = parse_float(summary.get("h_see_min"))
         if min_h is None:
             min_h = sem["min_h_seesm_from_log"]
@@ -366,7 +377,9 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "method_label": method_label,
                 "run_id": run_id,
                 "output_dir": str(output_dir),
-                "success": summary.get("success", ""),
+                "success": success,
+                "goal_reached": goal_reached,
+                "collision_count": collision_count,
                 "d_min_m": fmt(metric_from_summary(summary, "log_min_distance_m", "nav_min_distance_m")),
                 "min_h_seesm": fmt(min_h),
                 "semantic_violation_ratio": fmt(sem["semantic_violation_ratio"]),
@@ -412,6 +425,8 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
             return [value for value in (parse_float(row.get(name)) for row in rows) if value is not None]
 
         success = values("success")
+        goal_reached = values("goal_reached")
+        collision_count = values("collision_count")
         d_min = values("d_min_m")
         min_h = values("min_h_seesm")
         summary_rows.append(
@@ -423,6 +438,8 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
                 "method_label": method,
                 "n_trials": len(rows),
                 "success_rate": fmt(mean(success)),
+                "goal_reached_rate": fmt(mean(goal_reached)),
+                "collision_rate": fmt(mean([float(value > 0.0) for value in collision_count])),
                 "d_min_mean_m": fmt(mean(d_min)),
                 "d_min_min_m": fmt(min(d_min) if d_min else None),
                 "min_h_seesm_mean": fmt(mean(min_h)),

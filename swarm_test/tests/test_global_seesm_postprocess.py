@@ -38,3 +38,9 @@ def test_global_log_metrics_count_semantic_and_stale_rows(tmp_path):
     assert metrics["global_stale_margin_count"] == 1
     assert metrics["global_missing_margin_count"] == 1
     assert metrics["global_replan_mean_ms"] == 4.0
+
+
+def test_paper_success_requires_goal_and_zero_collisions():
+    assert postprocess.paper_outcome({"success": "1", "nav_collision_count": "0"}) == (1, 1, 0)
+    assert postprocess.paper_outcome({"success": "1", "nav_collision_count": "22"}) == (0, 1, 22)
+    assert postprocess.paper_outcome({"success": "0", "nav_collision_count": "0"}) == (0, 0, 0)

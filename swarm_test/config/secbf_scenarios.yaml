@@ -424,6 +424,163 @@ scenarios:
       slack_weight: 5000.0
     paper_role: "SEESM six-obstacle visualization evidence with clearly separated semantic risks"
 
+  drmpc_fig4_scene_1_arc:
+    description: "Fig4-style Scene 1: right-half arc path with sparse scripted crossings"
+    scenario_family: "DR-MPC Fig4 Arc"
+    context_level: "Supplementary"
+    scene_source: "DR-MPC Fig4-inspired scripted layout"
+    map: {x: 12.0, y: 12.0, z: 3.0}
+    start: {x: 0.0, y: 4.0}
+    goal: {x: 0.0, y: -4.0}
+    corridor_width: 1.5
+    reference_path:
+      type: "arc"
+      center: [0.0, 0.0]
+      radius: 4.0
+      start_angle: 1.5707963267948966
+      end_angle: -1.5707963267948966
+      clockwise: true
+      spacing: 0.4
+      planner_goal_min_distance: 2.0
+    obstacles:
+      - {motion_type: "line", start: {x: 4.4, y: 2.8, z: 0.75}, goal: {x: 5.6, y: 2.8}, travel_time: 18.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.0, y: 1.4, z: 0.75}, goal: {x: 5.8, y: 1.4}, travel_time: 19.0, start_delay: 3.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.2, y: 0.0, z: 0.75}, goal: {x: 5.8, y: 0.0}, travel_time: 20.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 5.0, y: -1.4, z: 0.75}, goal: {x: 5.8, y: -1.4}, travel_time: 21.0, start_delay: 3.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 4.4, y: -2.8, z: 0.75}, goal: {x: 5.6, y: -2.8}, travel_time: 22.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.2, y: 4.8, z: 0.75}, goal: {x: 5.2, y: -4.8}, travel_time: 24.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+    beta_bar:
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    paper_role: "SEESM reference-path smoke scene for sparse right-arc interactions"
+
+  drmpc_fig4_scene_2_vertical:
+    description: "Fig4-style Scene 2: vertical corridor with alternating scripted crossings"
+    scenario_family: "DR-MPC Fig4 Vertical"
+    context_level: "Supplementary"
+    scene_source: "DR-MPC Fig4-inspired scripted layout"
+    map: {x: 15.0, y: 18.0, z: 3.0}
+    start: {x: 0.0, y: -6.0}
+    goal: {x: 0.0, y: 6.0}
+    corridor_width: 6.0
+    planner_v_max: 0.9
+    reference_path:
+      type: "line"
+      goal_mode: "final_only"
+      start: [0.0, -6.0]
+      goal: [0.0, 6.0]
+      spacing: 0.6
+      planner_goal_min_distance: 3.0
+    obstacles:
+      - {motion_type: "line", start: {x: -4.5, y: -3.3, z: 0.75}, goal: {x: 3.0, y: -3.3}, travel_time: 7.2, start_delay: 0.8,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 0.0, y: -1.5, z: 0.75}, goal: {x: 0.0, y: -1.5}, travel_time: 18.0, start_delay: 3.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 3.9, y: 0.0, z: 0.75}, goal: {x: -2.7, y: 0.0}, travel_time: 9.0, start_delay: 1.8,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 0.0, y: 3.0, z: 0.75}, goal: {x: 0.0, y: 3.0}, travel_time: 22.0, start_delay: 3.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: -4.2, y: 3.3, z: 0.75}, goal: {x: 2.7, y: 3.3}, travel_time: 11.5, start_delay: 2.8,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 3.3, y: -5.1, z: 0.75}, goal: {x: 5.7, y: 4.5}, travel_time: 24.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+    beta_bar:
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    paper_role: "SEESM reference-path smoke scene for vertical crossing interactions"
+
+  drmpc_fig4_scene_3_reverse_arc:
+    description: "Fig4-style Scene 3: reverse right-half arc path with denser scripted crossings"
+    scenario_family: "DR-MPC Fig4 Arc"
+    context_level: "Supplementary"
+    scene_source: "DR-MPC Fig4-inspired scripted layout"
+    map: {x: 12.0, y: 12.0, z: 3.0}
+    start: {x: 0.0, y: -4.0}
+    goal: {x: 0.0, y: 4.0}
+    corridor_width: 1.5
+    reference_path:
+      type: "arc"
+      center: [0.0, 0.0]
+      radius: 4.0
+      start_angle: -1.5707963267948966
+      end_angle: 1.5707963267948966
+      clockwise: false
+      spacing: 0.4
+      planner_goal_min_distance: 2.0
+    obstacles:
+      - {motion_type: "line", start: {x: 4.8, y: 3.2, z: 0.75}, goal: {x: 5.6, y: 1.5}, travel_time: 18.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.6, y: 2.4, z: 0.75}, goal: {x: 4.8, y: 1.2}, travel_time: 19.0, start_delay: 3.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.0, y: 0.8, z: 0.75}, goal: {x: 5.8, y: -0.5}, travel_time: 20.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 5.8, y: 0.2, z: 0.75}, goal: {x: 5.0, y: -1.0}, travel_time: 21.0, start_delay: 3.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 4.8, y: -1.6, z: 0.75}, goal: {x: 5.6, y: -2.8}, travel_time: 22.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 5.6, y: -3.4, z: 0.75}, goal: {x: 4.8, y: -2.0}, travel_time: 24.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+    beta_bar:
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    paper_role: "SEESM reference-path smoke scene for denser reverse-arc interactions"
+
+  drmpc_fig4_scene_4_reverse_vertical:
+    description: "Fig4-style Scene 4: reverse vertical corridor with concentrated crossing crowd"
+    scenario_family: "DR-MPC Fig4 Vertical"
+    context_level: "Supplementary"
+    scene_source: "DR-MPC Fig4-inspired scripted layout"
+    map: {x: 15.0, y: 18.0, z: 3.0}
+    start: {x: 0.0, y: 6.0}
+    goal: {x: 0.0, y: -6.0}
+    corridor_width: 6.0
+    reference_path:
+      type: "line"
+      goal_mode: "final_only"
+      start: [0.0, 6.0]
+      goal: [0.0, -6.0]
+      spacing: 0.6
+      planner_goal_min_distance: 3.0
+    obstacles:
+      - {motion_type: "line", start: {x: 6.3, y: 2.7, z: 0.75}, goal: {x: -3.0, y: 2.7}, travel_time: 20.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: 0.0, y: 3.0, z: 0.75}, goal: {x: 0.0, y: 3.0}, travel_time: 19.0, start_delay: 3.0,
+         semantic_class: "pedestrian", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: -6.3, y: 0.3, z: 0.75}, goal: {x: 3.0, y: 0.3}, travel_time: 21.0, start_delay: 3.0,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+      - {motion_type: "line", start: {x: 0.0, y: -1.5, z: 0.75}, goal: {x: 0.0, y: -1.5}, travel_time: 22.0, start_delay: 3.0,
+         semantic_class: "cyclist", cooperation_type: "partial"}
+      - {motion_type: "line", start: {x: 6.3, y: -3.15, z: 0.75}, goal: {x: -3.0, y: -3.15}, travel_time: 23.0, start_delay: 3.0,
+         semantic_class: "adult", cooperation_type: "cooperative"}
+      - {motion_type: "line", start: {x: -3.3, y: 5.1, z: 0.75}, goal: {x: -5.7, y: -4.5}, travel_time: 24.0, start_delay: 4.8,
+         semantic_class: "child_like", cooperation_type: "noncooperative"}
+    beta_bar:
+      child_like: 1.05
+      child: 1.05
+      cyclist: 0.95
+      pedestrian: 0.80
+      adult: 0.75
+      unknown: 0.75
+    paper_role: "SEESM reference-path smoke scene for reverse vertical crossing crowd"
+
   # Exp2: 类别感知单障碍物 sweep，固定几何与运动，只改变类别
   Exp2_category_box:
     description: "Exp2 category-aware sanity: single static box on path"
