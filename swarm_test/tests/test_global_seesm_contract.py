@@ -145,7 +145,7 @@ def load_scenarios():
 
 
 def test_paper_aliases_have_exact_baseline_ids():
-    assert runner.resolve_baseline_alias("Standard_MPC_CBF") == "B1_ACBF_fixed"
+    assert runner.resolve_baseline_alias("Standard_MPC_CBF") == "Standard_MPC_CBF"
     assert runner.resolve_baseline_alias("EESM_MPC_ECBF") == "No_semantic"
     assert runner.resolve_baseline_alias("SEESM_Without_FPU") == "Unguarded_SEESM"
     assert runner.resolve_baseline_alias("Proposed_MPC_SECBF") == "SEESM_Ours"

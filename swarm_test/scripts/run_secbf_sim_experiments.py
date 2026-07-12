@@ -63,6 +63,21 @@ BASELINES = {
         "controller_index": 4,
         "guard_enabled": None,
     },
+    "Standard_MPC_CBF": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "false",
+        "mpc_feasibility_guard_enabled": "false",
+        "enable_rate_limit": "false",
+        "enable_available_projection": "false",
+        "enable_guard_fallback": "false",
+        "experiment_label": "Standard_MPC_CBF",
+        "semantic_mode": "fixed",
+        "fixed_beta": 0.4,
+        "cbf_metric": "distance",
+        "front_adsm": "false",
+        "global_seesm_enable": "false",
+    },
     "B2_SECBF_no_guard": {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
@@ -161,7 +176,7 @@ BASELINES = {
 }
 
 PAPER_BASELINE_ALIASES = {
-    "Standard_MPC_CBF": "B1_ACBF_fixed",
+    "Standard_MPC_CBF": "Standard_MPC_CBF",
     "EESM_MPC_ECBF": "No_semantic",
     "SEESM_Without_FPU": "Unguarded_SEESM",
     "Proposed_MPC_SECBF": "SEESM_Ours",
@@ -171,7 +186,6 @@ SEED_MANIFEST_HEADER = [
     "trial_id", "seed", "scenario_id", "obstacle_id",
     "start_x_offset_m", "start_y_offset_m", "speed_scale", "start_delay_offset_s",
 ]
-
 DEFAULT_BETA_BAR = {
     "box": 0.1,
     "adult": 0.4,
@@ -195,6 +209,8 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "epsilon_max": 0.05,
     "slack_weight": 1000.0,
     "max_cbf_obstacles": 6,
+    "cbf_metric": "seesm",
+    "front_adsm": "true",
     "global_seesm_enable": "false",
 }
 
@@ -602,6 +618,8 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",
             f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
+            f"cbf_metric:={switches['cbf_metric']}",
+            f"front_adsm:={switches['front_adsm']}",
             f"global_seesm_enable:={switches['global_seesm_enable']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",

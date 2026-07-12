@@ -8,7 +8,7 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    std::vector<double> Q, std::vector<double> R,
                                    double gamma, double beta_bar_unknown, double robot_radius,
                                    double epsilon_max, double slack_weight,
-                                   int max_cbf_obstacles) {
+                                   int max_cbf_obstacles, const std::string& cbf_metric) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -22,6 +22,7 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     epsilon_max_ = epsilon_max;
     slack_weight_ = slack_weight;
     max_cbf_obstacles_ = std::max(1, max_cbf_obstacles);
+    cbf_metric_ = cbf_metric;
 
     kine_equation_ = setKinematicEquation();
     ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d",
@@ -143,9 +144,13 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 
             Eigen::VectorXd obs_k = obs_matrix->col(original_idx * N_ + i);
             Eigen::VectorXd obs_k1 = obs_matrix->col(original_idx * N_ + i + 1);
+            if (cbf_metric_ == "distance") {
+                obs_k = obs_matrix->col(original_idx * N_);
+                obs_k1 = obs_matrix->col(original_idx * N_);
+            }
 
-            casadi::MX hk = h_secbf(X_cur, obs_k, beta_i);
-            casadi::MX hk1 = h_secbf(X_nxt, obs_k1, beta_i);
+            casadi::MX hk = h_cbf(X_cur, obs_k, beta_i);
+            casadi::MX hk1 = h_cbf(X_nxt, obs_k1, beta_i);
 
             // Soft CBF constraint: -h_{k+1} + (1-γ)h_k ≤ ε
             casadi::MX cbf = -hk1 + (1.0 - gamma_) * hk;
@@ -221,7 +226,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     }
 }
 
-casadi::MX MPC_SECBF_SOLVE::h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
+casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
     // 统一安全函数:
     //   h_EE  = ||l|| - R_obs - R_robot
     //   h_SEE = h_EE - β_i

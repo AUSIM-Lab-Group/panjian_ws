@@ -22,7 +22,8 @@ public:
                      std::vector<double> Q, std::vector<double> R,
                      double gamma, double beta_bar_unknown, double robot_radius,
                      double epsilon_max = 0.05, double slack_weight = 1000.0,
-                     int max_cbf_obstacles = 6);
+                     int max_cbf_obstacles = 6,
+                     const std::string& cbf_metric = "seesm");
 
     /**
      * Solve the MPC-SECBF problem.
@@ -44,8 +45,8 @@ public:
     int last_constrained_obs_count = 0;
 
 private:
-    // SECBF barrier function: h = ||p_obs - p_robot|| - R_obs - R_robot - β_i
-    casadi::MX h_secbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i);
+    // Shared distance barrier; the caller selects predicted or frozen obstacle state.
+    casadi::MX h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i);
 
     // Kinematic model
     casadi::Function setKinematicEquation();
@@ -65,6 +66,7 @@ private:
     double epsilon_max_ = 0.05;
     double slack_weight_ = 1000.0;
     int max_cbf_obstacles_ = 6;
+    std::string cbf_metric_ = "seesm";
     std::vector<double> Q_, R_;
 
     // CasADi objects
