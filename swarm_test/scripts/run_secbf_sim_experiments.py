@@ -519,6 +519,8 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "epsilon_max": switches["epsilon_max"],
         "slack_weight": switches["slack_weight"],
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
+        "cbf_metric": switches["cbf_metric"],
+        "front_adsm": switches["front_adsm"],
         "global_seesm_enable": switches["global_seesm_enable"],
         "guard_tau": 0.20,
         "mpc_horizon": 20,

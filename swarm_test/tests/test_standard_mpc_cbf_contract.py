@@ -51,3 +51,11 @@ def test_top_level_launch_forwards_distance_metric_and_adsm():
     assert '<arg name="front_adsm" default="true"/>' in launch
     assert '<arg name="cbf_metric" value="$(arg cbf_metric)"/>' in launch
     assert '<arg name="used_adsm_" value="$(arg front_adsm)"/>' in launch
+
+
+def test_runner_metadata_records_distance_metric_and_adsm_switch():
+    runner = _runner()
+    source = (REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py").read_text(encoding="utf-8")
+
+    assert '"cbf_metric": switches["cbf_metric"]' in source
+    assert '"front_adsm": switches["front_adsm"]' in source
