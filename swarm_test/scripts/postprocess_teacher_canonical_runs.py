@@ -25,6 +25,8 @@ METHOD_LABELS = {
 
 RUN_FIELDS = [
     "repeat_id",
+    "trial_id",
+    "seed",
     "scenario",
     "scenario_family",
     "context_level",
@@ -47,10 +49,17 @@ RUN_FIELDS = [
     "planner_records",
     "guard_records",
     "safety_bound_passed",
+    "global_beta_applied_max",
+    "global_semantic_rejection_count",
+    "global_stale_margin_count",
+    "global_missing_margin_count",
+    "global_replan_mean_ms",
 ]
 
 MANIFEST_FIELDS = [
     "repeat_id",
+    "trial_id",
+    "seed",
     "scenario",
     "baseline",
     "source_batch",
@@ -80,6 +89,11 @@ TABLE_FIELDS = [
     "travel_time_mean_s",
     "solve_time_mean_ms",
     "solve_time_p95_ms",
+    "global_beta_applied_max",
+    "global_semantic_rejection_count_mean",
+    "global_stale_margin_count_mean",
+    "global_missing_margin_count_mean",
+    "global_replan_mean_ms",
 ]
 
 
@@ -247,6 +261,46 @@ def planner_metrics(run_dir: Path, summary_row: dict[str, str]) -> dict[str, obj
     }
 
 
+def global_seesm_metrics(run_dir: Path) -> dict[str, object]:
+    rows = read_csv(run_dir / "global_seesm_log.csv")
+    beta_values: list[float] = []
+    replan_values: list[float] = []
+    semantic_rejections = 0
+    stale_count = 0
+    missing_count = 0
+    for row in rows:
+        beta = parse_float(row.get("beta_applied"))
+        if beta is not None:
+            beta_values.append(beta)
+        replan_ms = parse_float(row.get("global_replan_ms"))
+        if replan_ms is not None:
+            replan_values.append(replan_ms)
+        reason = (row.get("reason") or "").strip().lower()
+        rejected = row.get("primitive_rejected") in {"1", "true", "True"} or row.get("shot_rejected") in {"1", "true", "True"}
+        semantic_rejections += int(reason == "semantic" and rejected)
+        stale_count += int(reason == "stale")
+        missing_count += int(reason == "missing")
+    return {
+        "global_beta_applied_max": max(beta_values) if beta_values else None,
+        "global_semantic_rejection_count": semantic_rejections,
+        "global_stale_margin_count": stale_count,
+        "global_missing_margin_count": missing_count,
+        "global_replan_mean_ms": mean(replan_values),
+    }
+
+
+def trial_identity(run_dir: Path) -> tuple[str, str]:
+    if yaml is None or not (run_dir / "meta.yaml").exists():
+        return "", ""
+    try:
+        with (run_dir / "meta.yaml").open("r", encoding="utf-8") as handle:
+            meta = yaml.safe_load(handle) or {}
+        trial = meta.get("trial_manifest") or {}
+        return str(trial.get("trial_id", "")), str(trial.get("seed", meta.get("random_seed", "")))
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return "", ""
+
+
 def metric_from_summary(summary_row: dict[str, str], primary: str, fallback: str) -> float | None:
     value = parse_float(summary_row.get(primary))
     if value is not None:
@@ -271,6 +325,7 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         run_id = output_dir.name
         scenario = summary.get("scenario", "")
         repeat_id = repeat_id_from_run(run_id)
+        trial_id, seed = trial_identity(output_dir)
         meta = scenario_meta.get(scenario, {})
         method_label = METHOD_LABELS[baseline]
         summary_csv = output_dir / "summary.csv"
@@ -278,6 +333,8 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         manifest_rows.append(
             {
                 "repeat_id": repeat_id,
+                "trial_id": trial_id,
+                "seed": seed,
                 "scenario": scenario,
                 "baseline": baseline,
                 "source_batch": source_batch,
@@ -292,6 +349,7 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
 
         sem = semantic_violation_metrics(output_dir)
         plan = planner_metrics(output_dir, summary)
+        global_metrics = global_seesm_metrics(output_dir)
         min_h = parse_float(summary.get("h_see_min"))
         if min_h is None:
             min_h = sem["min_h_seesm_from_log"]
@@ -299,6 +357,8 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         metric_rows.append(
             {
                 "repeat_id": repeat_id,
+                "trial_id": trial_id,
+                "seed": seed,
                 "scenario": scenario,
                 "scenario_family": meta.get("scenario_family", ""),
                 "context_level": meta.get("context_level", ""),
@@ -321,6 +381,11 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "planner_records": plan["planner_records"],
                 "guard_records": sem["guard_records"],
                 "safety_bound_passed": summary.get("safety_bound_passed", ""),
+                "global_beta_applied_max": fmt(global_metrics["global_beta_applied_max"]),
+                "global_semantic_rejection_count": global_metrics["global_semantic_rejection_count"],
+                "global_stale_margin_count": global_metrics["global_stale_margin_count"],
+                "global_missing_margin_count": global_metrics["global_missing_margin_count"],
+                "global_replan_mean_ms": fmt(global_metrics["global_replan_mean_ms"]),
             }
         )
 
@@ -368,6 +433,11 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
                 "travel_time_mean_s": fmt(mean(values("travel_time_s"))),
                 "solve_time_mean_ms": fmt(mean(values("solve_time_mean_ms"))),
                 "solve_time_p95_ms": fmt(mean(values("solve_time_p95_ms"))),
+                "global_beta_applied_max": fmt(max(values("global_beta_applied_max")) if values("global_beta_applied_max") else None),
+                "global_semantic_rejection_count_mean": fmt(mean(values("global_semantic_rejection_count"))),
+                "global_stale_margin_count_mean": fmt(mean(values("global_stale_margin_count"))),
+                "global_missing_margin_count_mean": fmt(mean(values("global_missing_margin_count"))),
+                "global_replan_mean_ms": fmt(mean(values("global_replan_mean_ms"))),
             }
         )
     return summary_rows
