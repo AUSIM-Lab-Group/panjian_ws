@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <mutex>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 #include "mpc_secbf/mpc_secbf.h"
@@ -26,6 +27,7 @@ public:
         int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
         double v_max, v_min, o_max;
+        std::string cbf_metric;
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
         nh_.param("mpc/step_time", Ts, 0.2);
         nh_.param("mpc/pre_step", N, 20);
@@ -38,6 +40,11 @@ public:
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
+        nh_.param<std::string>("mpc/cbf_metric", cbf_metric, "seesm");
+        if (cbf_metric != "seesm" && cbf_metric != "distance") {
+            ROS_FATAL_STREAM("Unsupported mpc/cbf_metric: " << cbf_metric);
+            throw std::runtime_error("unsupported mpc/cbf_metric");
+        }
         if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
             nh_.param("robot/radius", robot_radius, 0.4);
         }
@@ -55,7 +62,7 @@ public:
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
-                            epsilon_max, slack_weight, max_cbf_obstacles);
+                            epsilon_max, slack_weight, max_cbf_obstacles, cbf_metric);
 
         openCsv(planner_csv_, planner_log_path,
                 "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"

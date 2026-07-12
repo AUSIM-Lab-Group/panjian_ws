@@ -9,7 +9,7 @@
   <arg name="gamma"         value="0.35"/>
   <arg name="show_rviz"     default="true"/>
   <arg name="use_ground_truth" default="true"/>
-  <arg name="front_adsm"    value="true"/>
+  <arg name="front_adsm" default="true"/>
   <arg name="static_path"   default="false"/>
   <arg name="search_horizon" default="10.0"/>
   <arg name="map_size_x" default="50.0"/>
@@ -34,6 +34,7 @@
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
   <arg name="max_cbf_obstacles" default="6"/>
+  <arg name="cbf_metric" default="seesm"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
   <arg name="obstacle_classes" default="[child_like]"/>
   <arg name="beta_bar_box" default="0.1"/>
@@ -83,7 +84,7 @@
     <arg name="pre_step_"         value="$(arg pre_step)"/>
     <arg name="step_time_"        value="$(arg step_time)"/>
     <arg name="used_DIS_"         value="false"/>
-    <arg name="used_adsm_"        value="$(arg front_adsm)"/>
+    <arg name="used_adsm_" value="$(arg front_adsm)"/>
     <arg name="used_static_path"  value="$(arg static_path)"/>
     <arg name="traj_horizon"      value="$(arg search_horizon)"/>
     <arg name="map_size_x_"       value="$(arg map_size_x)"/>
@@ -136,6 +137,7 @@
     <arg name="epsilon_max" value="$(arg epsilon_max)"/>
     <arg name="slack_weight" value="$(arg slack_weight)"/>
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
+    <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="cmd_vel_topic" value="/cmd_vel1"/>

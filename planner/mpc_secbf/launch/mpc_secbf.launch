@@ -9,6 +9,7 @@
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
   <arg name="max_cbf_obstacles" default="6"/>
+  <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
   <arg name="v_min" default="0.3"/>
   <arg name="o_max" default="0.8"/>
@@ -35,6 +36,7 @@
     <param name="mpc/epsilon_max" value="$(arg epsilon_max)"/>
     <param name="mpc/slack_weight" value="$(arg slack_weight)"/>
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
+    <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
     <param name="planner_log_path" value="$(arg planner_log_path)"/>
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
