@@ -269,12 +269,14 @@ public:
         reason = "missing";
       } else {
         accepted_source = margin_entry.accepted_source.empty() ? "unknown" : margin_entry.accepted_source;
-        if (!margin_entry.receipt_time.isZero()) {
-          margin_age_ms = std::max(0.0, (receipt_time - margin_entry.receipt_time).toSec() * 1000.0);
+        const ros::Time margin_time =
+            margin_entry.message_stamp.isZero() ? margin_entry.receipt_time : margin_entry.message_stamp;
+        if (!margin_time.isZero()) {
+          margin_age_ms = std::max(0.0, (receipt_time - margin_time).toSec() * 1000.0);
         }
 
-        const bool margin_is_stale = !margin_entry.receipt_time.isZero() &&
-                                     (receipt_time - margin_entry.receipt_time).toSec() > global_seesm_margin_timeout_;
+        const bool margin_is_stale =
+            !margin_time.isZero() && (receipt_time - margin_time).toSec() > global_seesm_margin_timeout_;
         if (accepted_source == "no_cbf") {
           reason = "no_cbf";
         } else if (margin_is_stale) {
