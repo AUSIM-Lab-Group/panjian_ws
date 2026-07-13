@@ -3,6 +3,7 @@ import csv
 from contextlib import contextmanager
 import importlib.util
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,6 +15,7 @@ import yaml
 CPP_RAW_STRING_START = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\]*)\(')
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
+CSV_CHECKER_PATH = REPO_ROOT / "swarm_test/scripts/check_experiment_csv_fields.py"
 DYNAMIC_TAU_SWITCHES = (
     "dynamic_tau_enabled",
     "dynamic_tau_ke",
@@ -207,6 +209,57 @@ def minimal_scenario():
         "map": {"x": 12.0, "y": 6.0, "z": 3.0},
         "obstacles": [{"x": 6.0, "y": 0.0, "z": 0.5, "semantic_class": "adult"}],
     }
+
+
+CHECKER_HEADERS = {
+    "robot_log.csv": ["t", "x", "y", "yaw", "v", "w", "cmd_v", "cmd_w"],
+    "obstacle_log.csv": [
+        "t", "id", "class", "x", "y", "radius", "vx", "vy", "d_i", "rel_v", "TTC", "h_EE"
+    ],
+    "margin_guard_log.csv": [
+        "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
+        "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
+    ],
+    "planner_log.csv": [
+        "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
+        "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
+        "solve_time_ms", "mpc_feasibility_guard_used",
+    ],
+    "timing_log.csv": ["t", "mpc_secbf_ms", "total_loop_time_ms"],
+    "event_log.csv": ["t", "event", "detail"],
+}
+TAU_HEADERS = ["tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"]
+
+
+def write_checker_fixture(run_dir, tau_files=(), metadata_enabled=None, partial_tau=False):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for file_name, headers in CHECKER_HEADERS.items():
+        rows = []
+        output_headers = list(headers)
+        if file_name in tau_files:
+            output_headers.extend(TAU_HEADERS[:1] if partial_tau else TAU_HEADERS)
+            rows = [{field: ("1" if field != "tau_reason" else "active") for field in output_headers}]
+        with (run_dir / file_name).open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=output_headers)
+            writer.writeheader()
+            if rows:
+                writer.writerows(rows)
+    if metadata_enabled is not None:
+        (run_dir / "meta.yaml").write_text(
+            "dynamic_tau:\n  enabled: " + ("true" if metadata_enabled else "false") + "\n",
+            encoding="utf-8",
+        )
+
+
+def run_csv_checker(run_dir):
+    return subprocess.run(
+        [sys.executable, str(CSV_CHECKER_PATH), str(run_dir)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
 
 
 def launch_args(command):
@@ -756,6 +809,91 @@ def test_runner_alias_mapping_is_explicit_and_resolved():
     with runner_module() as runner:
         for requested, resolved in ALIAS_CONTRACT.items():
             assert runner.resolve_baseline_alias(requested) == resolved
+
+
+def test_csv_checker_accepts_legacy_tau_free_logs(tmp_path):
+    run_dir = tmp_path / "legacy"
+    write_checker_fixture(run_dir)
+    result = run_csv_checker(run_dir)
+    assert result.returncode == 0, result.stdout
+
+
+def test_csv_checker_rejects_partial_tau_fields_even_for_legacy_logs(tmp_path):
+    run_dir = tmp_path / "partial"
+    write_checker_fixture(run_dir, tau_files={"margin_guard_log.csv"}, partial_tau=True)
+    result = run_csv_checker(run_dir)
+    assert result.returncode != 0
+    assert "incomplete tau field group" in result.stdout
+
+
+def test_csv_checker_requires_tau_fields_when_metadata_enables_dynamic_tau(tmp_path):
+    run_dir = tmp_path / "dynamic_missing"
+    write_checker_fixture(run_dir, metadata_enabled=True)
+    result = run_csv_checker(run_dir)
+    assert result.returncode != 0
+    assert "missing complete tau field group" in result.stdout
+
+
+def test_csv_checker_accepts_complete_tau_fields_when_metadata_enables_dynamic_tau(tmp_path):
+    run_dir = tmp_path / "dynamic_complete"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+        metadata_enabled=True,
+    )
+    result = run_csv_checker(run_dir)
+    assert result.returncode == 0, result.stdout
+
+
+def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
+    with runner_module() as runner:
+        run_dir = tmp_path / "summary"
+        run_dir.mkdir()
+        (run_dir / "meta.yaml").write_text(
+            "dynamic_tau:\n"
+            "  enabled: true\n"
+            "  Ke: 0.3\n"
+            "  Tmax: 2.0\n"
+            "  min_speed: 1.0e-6\n"
+            "  min_distance: 1.0e-6\n"
+            "  max_tau: 2.0\n"
+            "  formula: tau=f_r*f_v*f_T*Ke*T_i\n"
+            "  h_ee: '||l+tau*v||-R_obs-R_robot'\n"
+            "  h_see: 'h_ee-beta'\n"
+            "  beta_source: beta_applied_final\n",
+            encoding="utf-8",
+        )
+        (run_dir / "margin_guard_log.csv").write_text("time,obs_id\n", encoding="utf-8")
+        planner_headers = [
+            "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
+            "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
+            "solve_time_ms", "mpc_feasibility_guard_used", *TAU_HEADERS,
+        ]
+        with (run_dir / "planner_log.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=planner_headers)
+            writer.writeheader()
+            writer.writerow({
+                **{field: "0" for field in planner_headers},
+                "tau": "0.25", "T_i": "1.0", "f_r": "1.0", "f_v": "1.0",
+                "f_T": "1.0", "tau_valid": "1", "tau_reason": "active",
+            })
+
+        metrics = runner.summarize_tau_log(run_dir)
+        assert metrics["tau_source"] == "planner_log.csv"
+        assert metrics["tau_mean"] == "0.250000"
+        runner.write_summary(run_dir, "head_on_context_bl", "SEESM_Ours", [], True, "ok", 1)
+
+        summary_md = (run_dir / "summary.md").read_text(encoding="utf-8")
+        for field in (
+            "enabled", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
+            "formula", "h_ee", "h_see", "beta_source",
+        ):
+            assert f"- {field}:" in summary_md
+        with (run_dir / "summary.csv").open("r", newline="", encoding="utf-8") as f:
+            summary = next(csv.DictReader(f))
+        assert summary["tau_source"] == "planner_log.csv"
+        assert summary["dynamic_tau_enabled"] == "True"
+        assert summary["dynamic_tau_beta_source"] == "beta_applied_final"
 
 
 def test_runner_source_has_structured_baseline_and_writer_assignments():

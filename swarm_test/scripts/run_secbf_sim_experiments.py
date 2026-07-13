@@ -920,48 +920,103 @@ def summarize_tau_log(run_dir: Path) -> dict:
         "tau_active_fraction": "",
         "tau_invalid_count": 0,
         "tau_reason_counts": "",
+        "tau_source": "",
     }
+    tau_fields = {"tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"}
     candidates = (
         run_dir / "margin_guard_log.csv",
         run_dir / "planner_log.csv",
         run_dir / "global_seesm_log.csv",
     )
-    source = next((path for path in candidates if path.exists()), None)
-    if source is None:
-        return metrics
-
-    with source.open("r", newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if not rows or "tau" not in (rows[0] if rows else {}):
-        return metrics
-
-    tau_values = []
-    active_count = 0
-    invalid_count = 0
-    reason_counts = {}
-    for row in rows:
-        try:
-            tau = float(row["tau"])
-        except (KeyError, TypeError, ValueError):
+    for source in candidates:
+        if not source.exists():
             continue
-        if math.isfinite(tau):
+        with source.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            header = set(reader.fieldnames or ())
+            if not tau_fields.issubset(header):
+                continue
+            rows = list(reader)
+
+        tau_values = []
+        active_count = 0
+        invalid_count = 0
+        reason_counts = {}
+        for row in rows:
+            try:
+                values = [float(row[field]) for field in ("tau", "T_i", "f_r", "f_v", "f_T")]
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not all(math.isfinite(value) for value in values):
+                continue
+            valid = str(row.get("tau_valid", "")).strip().lower()
+            reason = str(row.get("tau_reason", "")).strip()
+            if valid not in {"0", "1", "true", "false", "yes", "no"} or not reason:
+                continue
+            tau = values[0]
             tau_values.append(tau)
             active_count += int(tau > 0.0)
-        reason = str(row.get("tau_reason", "")).strip()
-        if reason:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        valid = str(row.get("tau_valid", "")).strip().lower()
-        if valid in {"0", "false", "no", "invalid"}:
-            invalid_count += 1
+            if valid in {"0", "false", "no"}:
+                invalid_count += 1
 
-    if tau_values:
+        if not tau_values:
+            continue
         metrics["tau_mean"] = f"{sum(tau_values) / len(tau_values):.6f}"
         metrics["tau_max"] = f"{max(tau_values):.6f}"
         metrics["tau_active_fraction"] = f"{active_count / len(tau_values):.6f}"
-    metrics["tau_invalid_count"] = invalid_count
-    metrics["tau_reason_counts"] = ";".join(
-        f"{reason}:{reason_counts[reason]}" for reason in sorted(reason_counts)
-    )
+        metrics["tau_invalid_count"] = invalid_count
+        metrics["tau_reason_counts"] = ";".join(
+            f"{reason}:{reason_counts[reason]}" for reason in sorted(reason_counts)
+        )
+        metrics["tau_source"] = source.name
+        break
+    return metrics
+
+
+def dynamic_tau_audit(run_dir: Path) -> dict:
+    metrics = {
+        "dynamic_tau_enabled": False,
+        "dynamic_tau_ke": "",
+        "dynamic_tau_tmax": "",
+        "dynamic_tau_min_speed": "",
+        "dynamic_tau_min_distance": "",
+        "dynamic_tau_max_tau": "",
+        "dynamic_tau_formula": "",
+        "dynamic_tau_h_ee": "",
+        "dynamic_tau_h_see": "",
+        "dynamic_tau_beta_source": "",
+    }
+    meta_path = run_dir / "meta.yaml"
+    if yaml is None or not meta_path.exists():
+        return metrics
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            meta = yaml.safe_load(f) or {}
+        dynamic = meta.get("dynamic_tau", {})
+        if not isinstance(dynamic, dict):
+            return metrics
+        metrics["dynamic_tau_enabled"] = bool_switch(dynamic.get("enabled", False))
+        for source_key, output_key in (
+            ("Ke", "dynamic_tau_ke"),
+            ("Tmax", "dynamic_tau_tmax"),
+            ("min_speed", "dynamic_tau_min_speed"),
+            ("min_distance", "dynamic_tau_min_distance"),
+            ("max_tau", "dynamic_tau_max_tau"),
+        ):
+            if source_key in dynamic:
+                metrics[output_key] = float(dynamic[source_key])
+        for source_key, output_key in (
+            ("formula", "dynamic_tau_formula"),
+            ("h_ee", "dynamic_tau_h_ee"),
+            ("h_see", "dynamic_tau_h_see"),
+            ("beta_source", "dynamic_tau_beta_source"),
+        ):
+            metrics[output_key] = str(dynamic.get(source_key, ""))
+    except (OSError, TypeError, ValueError):
+        return metrics
+    except yaml.YAMLError:
+        return metrics
     return metrics
 
 
@@ -1148,6 +1203,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     guard_metrics = summarize_guard_log(guard_log)
     planner_metrics = summarize_planner_log(planner_log)
     tau_metrics = summarize_tau_log(run_dir)
+    tau_audit = dynamic_tau_audit(run_dir)
     nav_metrics = summarize_data_processor(data_summary, duration_sec)
     phase5_metrics = summarize_phase5_logs(run_dir)
 
@@ -1191,6 +1247,19 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- tau_active_fraction: {tau_metrics['tau_active_fraction']}",
         f"- tau_invalid_count: {tau_metrics['tau_invalid_count']}",
         f"- tau_reason_counts: {tau_metrics['tau_reason_counts']}",
+        f"- tau_source: {tau_metrics['tau_source']}",
+        "",
+        "## Dynamic tau audit",
+        f"- enabled: {tau_audit['dynamic_tau_enabled']}",
+        f"- Ke: {tau_audit['dynamic_tau_ke']}",
+        f"- Tmax: {tau_audit['dynamic_tau_tmax']}",
+        f"- min_speed: {tau_audit['dynamic_tau_min_speed']}",
+        f"- min_distance: {tau_audit['dynamic_tau_min_distance']}",
+        f"- max_tau: {tau_audit['dynamic_tau_max_tau']}",
+        f"- formula: {tau_audit['dynamic_tau_formula']}",
+        f"- h_ee: {tau_audit['dynamic_tau_h_ee']}",
+        f"- h_see: {tau_audit['dynamic_tau_h_see']}",
+        f"- beta_source: {tau_audit['dynamic_tau_beta_source']}",
         "",
         "## Commands",
         "",
@@ -1223,7 +1292,11 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "no_cbf_fallback_rate", "slack_max", "slack_mean",
                 "solve_time_mean_ms", "solve_time_max_ms",
                 "tau_mean", "tau_max", "tau_active_fraction", "tau_invalid_count",
-                "tau_reason_counts", "output_dir",
+                "tau_reason_counts", "tau_source",
+                "dynamic_tau_enabled", "dynamic_tau_ke", "dynamic_tau_tmax",
+                "dynamic_tau_min_speed", "dynamic_tau_min_distance", "dynamic_tau_max_tau",
+                "dynamic_tau_formula", "dynamic_tau_h_ee", "dynamic_tau_h_see",
+                "dynamic_tau_beta_source", "output_dir",
             ],
         )
         writer.writeheader()
@@ -1240,6 +1313,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             **guard_metrics,
             **planner_metrics,
             **tau_metrics,
+            **tau_audit,
             "output_dir": str(run_dir),
         })
 

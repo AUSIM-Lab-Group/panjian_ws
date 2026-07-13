@@ -7,6 +7,11 @@ import math
 from pathlib import Path
 import sys
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 
 FILE_FIELDS = {
     "robot_log.csv": {"t", "x", "y", "yaw", "v", "w", "cmd_v", "cmd_w"},
@@ -15,13 +20,11 @@ FILE_FIELDS = {
         "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
         "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
-        "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
     },
     "planner_log.csv": {
         "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
         "solve_time_ms", "mpc_feasibility_guard_used",
-        "dynamic_tau_enabled", "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
     },
     "timing_log.csv": {"t", "mpc_secbf_ms", "total_loop_time_ms"},
     "event_log.csv": {"t", "event", "detail"},
@@ -32,10 +35,10 @@ OPTIONAL_FILE_FIELDS = {
         "t", "replan_id", "global_seesm_enable", "obs_id", "beta_applied",
         "accepted_source", "margin_age_ms", "h_ee", "h_see",
         "primitive_rejected", "shot_rejected", "reason", "global_replan_ms",
-        "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
     },
 }
 
+TAU_FIELDS = frozenset({"tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"})
 TAU_NUMERIC_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T")
 KNOWN_TAU_REASONS = {
     "invalid", "non_finite_input", "invalid_config", "speed_degenerate",
@@ -80,6 +83,24 @@ def read_rows(path):
         return list(csv.DictReader(f))
 
 
+def dynamic_tau_enabled(run_dir):
+    meta_path = run_dir / "meta.yaml"
+    if yaml is None or not meta_path.exists():
+        return False
+    try:
+        with meta_path.open("r", encoding="utf-8") as f:
+            meta = yaml.safe_load(f) or {}
+        dynamic_tau = meta.get("dynamic_tau", {})
+        if not isinstance(dynamic_tau, dict):
+            return False
+        value = dynamic_tau.get("enabled", False)
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return False
+
+
 def validate_tau_rows(file_name, path, errors):
     rows = read_rows(path)
     for row_index, row in enumerate(rows, start=2):
@@ -101,6 +122,21 @@ def validate_tau_rows(file_name, path, errors):
             errors.append(f"{file_name}:{row_index}: unknown tau_reason {tau_reason!r}")
 
 
+def validate_tau_file(file_name, path, errors, required=False):
+    header = read_header(path)
+    present = header & TAU_FIELDS
+    if not present:
+        if required:
+            errors.append(f"{file_name}: missing complete tau field group")
+        return header
+    missing = sorted(TAU_FIELDS - header)
+    if missing:
+        errors.append(f"{file_name}: incomplete tau field group, missing {missing}")
+        return header
+    validate_tau_rows(file_name, path, errors)
+    return header
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check Phase 5 CSV field contract")
     parser.add_argument("run_dir", type=Path)
@@ -108,6 +144,7 @@ def main():
 
     headers = {}
     errors = []
+    dynamic_enabled = dynamic_tau_enabled(args.run_dir)
     for file_name, required in FILE_FIELDS.items():
         path = args.run_dir / file_name
         if not path.exists():
@@ -119,7 +156,7 @@ def main():
         if missing:
             errors.append(f"{file_name}: missing fields {missing}")
         elif file_name in {"margin_guard_log.csv", "planner_log.csv"}:
-            validate_tau_rows(file_name, path, errors)
+            validate_tau_file(file_name, path, errors, required=dynamic_enabled)
 
     for file_name, required in OPTIONAL_FILE_FIELDS.items():
         path = args.run_dir / file_name
@@ -131,7 +168,7 @@ def main():
         if missing:
             errors.append(f"{file_name}: missing fields {missing}")
         else:
-            validate_tau_rows(file_name, path, errors)
+            validate_tau_file(file_name, path, errors, required=dynamic_enabled)
 
     for field, choices in PAPER_FIELDS.items():
         if not any(file_name in headers and column in headers[file_name] for file_name, column in choices):
