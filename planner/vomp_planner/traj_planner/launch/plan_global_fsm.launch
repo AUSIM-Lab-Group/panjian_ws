@@ -23,6 +23,12 @@
     <arg name="global_seesm_enable" default="false"/>
     <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
     <arg name="global_seesm_log_path" default=""/>
+    <arg name="dynamic_tau_enabled" default="false"/>
+    <arg name="dynamic_tau_ke" default="0.30"/>
+    <arg name="dynamic_tau_tmax" default="2.0"/>
+    <arg name="dynamic_tau_min_speed" default="1e-6"/>
+    <arg name="dynamic_tau_min_distance" default="1e-6"/>
+    <arg name="dynamic_tau_max_tau" default="2.0"/>
     <arg name="clean_runtime_env" default="true"/>
     <arg name="runtime_ld_library_path" default="/catkin_ws/devel/lib:/opt/ros/noetic/lib:/opt/ros/noetic/lib/x86_64-linux-gnu:/opt/ros/noetic/share/euslisp/jskeus/eus//Linux64/lib"/>
 
@@ -81,6 +87,12 @@
         <param name="search/global_seesm_tau" value="0.20" type="double"/>
         <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
         <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
+        <param name="search/dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+        <param name="search/dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
+        <param name="search/dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
+        <param name="search/dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
+        <param name="search/dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)" type="double"/>
+        <param name="search/dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
 
         <!-- 地图参数 -->
         <param name="sdf_map/resolution"            value="0.1" />
@@ -176,6 +188,12 @@
         <param name="search/global_seesm_tau" value="0.20" type="double"/>
         <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
         <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
+        <param name="search/dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+        <param name="search/dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
+        <param name="search/dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
+        <param name="search/dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
+        <param name="search/dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)" type="double"/>
+        <param name="search/dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
 
         <!-- 地图参数 -->
         <param name="sdf_map/resolution"            value="0.1" />

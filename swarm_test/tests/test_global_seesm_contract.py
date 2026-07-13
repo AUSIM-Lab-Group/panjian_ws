@@ -88,8 +88,10 @@ def test_global_seesm_predicate_contract():
     assert "/safety_margin/beta\"" not in obs
     assert "AppliedMarginArray" in obs
     assert "is_SEESM_unsafe" in obs
-    assert "p_rel + tau_global_ * v_rel" in obs
-    assert "norm() - radius - robot_R - beta_applied" in obs
+    assert "tau_result.tau = tau_global_" in obs
+    assert 'tau_result.reason = "fixed_config"' in obs
+    assert "(p_rel + tau_result.tau * v_rel).norm() - radius - robot_R - beta_applied" in obs
+    assert "double h_ee = p_rel.norm() - radius - robot_R" in obs
     assert "global_seesm_enable" in astar_h
     assert "is_used_global_seesm_" in astar_h
     assert "is_SEESM_unsafe" in astar_cpp
@@ -107,6 +109,67 @@ def test_global_seesm_log_columns_exist():
         "global_replan_ms",
     ):
         assert value in obs
+
+
+def test_global_seesm_final_beta_dynamic_tau_and_log_contract():
+    obs = (TRAJ_PLANNER_DIR / "include/obs_manager/obs_manager.hpp").read_text(encoding="utf-8")
+    global_launch = (TRAJ_PLANNER_DIR / "launch/plan_global_fsm.launch").read_text(encoding="utf-8")
+    planner_launch = (REPO_ROOT / "swarm_test/launch/secbf_planner.launch").read_text(encoding="utf-8")
+
+    assert 'nh.subscribe("/safety_margin/beta_applied_final"' in obs
+    assert "beta_applied = margin_entry.beta_applied" in obs
+    assert "beta_requested" not in obs
+    assert "beta_candidate" not in obs
+
+    dynamic_params = {
+        "search/dynamic_tau_enabled": "bool",
+        "search/dynamic_tau/Ke": "double",
+        "search/dynamic_tau/Tmax": "double",
+        "search/dynamic_tau/min_speed": "double",
+        "search/dynamic_tau/min_distance": "double",
+        "search/dynamic_tau/max_tau": "double",
+    }
+    root = ET.fromstring(global_launch)
+    global_nodes = root.findall("node")
+    assert len(global_nodes) == 2
+    for node in global_nodes:
+        params = {param.attrib["name"]: param for param in node.findall("param")}
+        for name, expected_type in dynamic_params.items():
+            assert params[name].attrib.get("type") == expected_type
+    assert global_launch.count('search/dynamic_tau_enabled') == 2
+    assert global_launch.count('search/dynamic_tau/Ke') == 2
+    assert global_launch.count('search/dynamic_tau/Tmax') == 2
+    assert global_launch.count('search/dynamic_tau/min_speed') == 2
+    assert global_launch.count('search/dynamic_tau/min_distance') == 2
+    assert global_launch.count('search/dynamic_tau/max_tau') == 2
+
+    for name in (
+        "dynamic_tau_enabled",
+        "dynamic_tau_ke",
+        "dynamic_tau_tmax",
+        "dynamic_tau_min_speed",
+        "dynamic_tau_min_distance",
+        "dynamic_tau_max_tau",
+    ):
+        assert f'<arg name="{name}"' in planner_launch
+        assert f'<arg name="{name}" value="$(arg {name})"/>' in planner_launch
+
+    header_chunks = (
+        '"t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"',
+        '"margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms,"',
+        '"tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\\n"',
+    )
+    assert obs.index(header_chunks[0]) < obs.index(header_chunks[1]) < obs.index(header_chunks[2])
+    for field in (
+        "tau_result.tau",
+        "tau_result.T_i",
+        "tau_result.f_r",
+        "tau_result.f_v",
+        "tau_result.f_T",
+        "tau_result.valid",
+        "sanitizeCsvField(tau_result.reason)",
+    ):
+        assert field in obs
 
 
 def test_global_seesm_margin_age_uses_message_stamp_when_available():

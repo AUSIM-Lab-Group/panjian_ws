@@ -101,6 +101,12 @@
     <arg name="global_seesm_enable" value="$(arg global_seesm_enable)"/>
     <arg name="global_seesm_margin_topic" value="$(arg global_seesm_margin_topic)"/>
     <arg name="global_seesm_log_path" value="$(arg output_dir)/global_seesm_log.csv"/>
+    <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
+    <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
+    <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
+    <arg name="dynamic_tau_min_distance" value="$(arg dynamic_tau_min_distance)"/>
+    <arg name="dynamic_tau_max_tau" value="$(arg dynamic_tau_max_tau)"/>
   </include>
 
   <!-- 本文语义 β + Guard (Ground Truth 模式: 跳过感知，类别来自场景配置) -->

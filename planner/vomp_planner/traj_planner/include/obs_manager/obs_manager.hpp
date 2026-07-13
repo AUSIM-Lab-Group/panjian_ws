@@ -21,6 +21,7 @@
 #include <std_msgs/UInt32MultiArray.h>
 #include "dynamic_simulator/DynTraj.h"            // 动态障碍物预测轨迹消息类型
 #include "semantic_guard/AppliedMarginArray.h"
+#include "semantic_guard/dynamic_tau.hpp"
 
 // 障碍物轨迹类型结构体
 struct obstacle_traj      
@@ -67,6 +68,12 @@ public:
     nh.param("search/global_seesm_tau", tau_global_, 0.20);
     nh.param("search/global_seesm_margin_timeout", global_seesm_margin_timeout_, 0.50);
     nh.param<std::string>("search/global_seesm_log_path", global_seesm_log_path_, std::string(""));
+    nh.param("search/dynamic_tau_enabled", dynamic_tau_enabled_, false);
+    nh.param("search/dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
+    nh.param("search/dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
+    nh.param("search/dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
+    nh.param("search/dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
+    nh.param("search/dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
 
     ROS_WARN("obs_manager pre_step is: %d", pre_step);
     ROS_WARN("obs_manager step_time is: %f", step_time);
@@ -286,10 +293,21 @@ public:
         }
       }
 
-      Eigen::Vector2d p_rel = robot_state.head(2) - obstacle_state.head(2);
-      Eigen::Vector2d v_rel = robot_state.tail(2) - obstacle_state.tail(2);
+      Eigen::Vector2d p_rel = robot_state.head<2>() - obstacle_state.head<2>();
+      Eigen::Vector2d v_rel = robot_state.tail<2>() - obstacle_state.tail<2>();
+      semantic_guard::DynamicTauResult tau_result;
+      if (dynamic_tau_enabled_) {
+        tau_result = semantic_guard::computeDynamicTau(
+            p_rel.x(), p_rel.y(), v_rel.x(), v_rel.y(), radius + robot_R,
+            dynamic_tau_params_);
+      } else {
+        tau_result.tau = tau_global_;
+        tau_result.valid = true;
+        tau_result.reason = "fixed_config";
+      }
+
       double h_ee = p_rel.norm() - radius - robot_R;
-      double h_see = (p_rel + tau_global_ * v_rel).norm() - radius - robot_R - beta_applied;
+      double h_see = (p_rel + tau_result.tau * v_rel).norm() - radius - robot_R - beta_applied;
 
       const bool physical_rejected = h_ee <= 0.0;
       const bool seesm_rejected = h_see <= 0.0;
@@ -301,7 +319,7 @@ public:
       }
 
       writeGlobalSeesmLog(prediction_time.toSec(), obstacle->Id_, beta_applied, accepted_source,
-                          margin_age_ms, h_ee, h_see,
+                          margin_age_ms, h_ee, h_see, tau_result,
                           obstacle_rejected && !shot_check,
                           obstacle_rejected && shot_check, reason);
       rejected = rejected || obstacle_rejected;
@@ -315,6 +333,7 @@ private:
   bool is_use_GroundTruth;
   bool is_play_bag;
   bool global_seesm_enable_ = false;
+  bool dynamic_tau_enabled_ = false;
 
   ros::Subscriber obsTraj_sub, predicted_Traj_sub, applied_margin_sub_;
 
@@ -325,6 +344,7 @@ private:
   int pre_step;
   double step_time;
   double tau_global_ = 0.20;
+  semantic_guard::DynamicTauParams dynamic_tau_params_;
   double global_seesm_margin_timeout_ = 0.50;
   std::string global_seesm_log_path_;
   std::ofstream global_seesm_log_stream_;
@@ -399,7 +419,8 @@ private:
 
     global_seesm_log_stream_
         << "t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"
-        << "margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms\n";
+        << "margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms,"
+        << "tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n";
     global_seesm_log_stream_.flush();
   }
 
@@ -416,6 +437,8 @@ private:
   {
     std::string sanitized = field;
     std::replace(sanitized.begin(), sanitized.end(), ',', ';');
+    std::replace(sanitized.begin(), sanitized.end(), '\n', ' ');
+    std::replace(sanitized.begin(), sanitized.end(), '\r', ' ');
     return sanitized;
   }
 
@@ -426,6 +449,7 @@ private:
                            double margin_age_ms,
                            double h_ee,
                            double h_see,
+                           const semantic_guard::DynamicTauResult& tau_result,
                            bool primitive_rejected,
                            bool shot_rejected,
                            const std::string& reason)
@@ -453,7 +477,14 @@ private:
                              << (primitive_rejected ? 1 : 0) << ","
                              << (shot_rejected ? 1 : 0) << ","
                              << sanitizeCsvField(reason) << ","
-                             << global_replan_ms << "\n";
+                             << global_replan_ms << ","
+                             << tau_result.tau << ","
+                             << tau_result.T_i << ","
+                             << tau_result.f_r << ","
+                             << tau_result.f_v << ","
+                             << tau_result.f_T << ","
+                             << tau_result.valid << ","
+                             << sanitizeCsvField(tau_result.reason) << "\n";
     global_seesm_log_stream_.flush();
   }
 
