@@ -155,8 +155,14 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
                 obs_k1 = obs_matrix->col(original_idx * N_);
             }
 
-            casadi::MX hk = h_cbf(X_cur, obs_k, beta_i);
-            casadi::MX hk1 = h_cbf(X_nxt, obs_k1, beta_i);
+            const double tau_k = dynamic_tau_enabled_
+                                     ? computeFrozenStageTau(obs_k, *cur_state)
+                                     : 0.0;
+            const double tau_k1 = dynamic_tau_enabled_
+                                      ? computeFrozenStageTau(obs_k1, *cur_state)
+                                      : 0.0;
+            casadi::MX hk = h_cbf(X_cur, obs_k, beta_i, tau_k);
+            casadi::MX hk1 = h_cbf(X_nxt, obs_k1, beta_i, tau_k1);
 
             // Soft CBF constraint: -h_{k+1} + (1-γ)h_k ≤ ε
             casadi::MX cbf = -hk1 + (1.0 - gamma_) * hk;
@@ -235,7 +241,8 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     }
 }
 
-casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
+casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs,
+                                  double beta_i, double stage_tau) {
     if (obs.size() < 7 || !obs.allFinite() || !std::isfinite(beta_i)) {
         return casadi::MX(0.0);
     }
@@ -252,12 +259,39 @@ casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, doubl
         return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;
     }
 
-    casadi::MX tau = dynamicTauCasadi(lx, ly, vx, vy,
-                                      obs_radius + robot_radius_);
+    // stage_tau is numeric and therefore a constant in the NLP graph. The
+    // relative l/v terms may still depend on the candidate state, but the
+    // non-smooth tau policy is evaluated outside CasADi once per MPC solve.
+    const double finite_stage_tau = std::isfinite(stage_tau)
+                                        ? std::max(0.0, stage_tau)
+                                        : 0.0;
+    const casadi::MX tau(finite_stage_tau);
     casadi::MX lookahead_x = lx + tau * vx;
     casadi::MX lookahead_y = ly + tau * vy;
     return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y)
          - obs_radius - robot_radius_ - beta_i;
+}
+
+double MPC_SECBF_SOLVE::computeFrozenStageTau(
+    const Eigen::VectorXd& obs, const Eigen::VectorXd& measured_state) const {
+    if (!dynamic_tau_enabled_ || obs.size() < 7 || measured_state.size() < 5 ||
+        !obs.allFinite() || !measured_state.allFinite()) {
+        return 0.0;
+    }
+
+    const double lx = obs(0) - measured_state(0);
+    const double ly = obs(1) - measured_state(1);
+    const double vx = obs(5) - measured_state(3);
+    const double vy = obs(6) - measured_state(4);
+    const semantic_guard::DynamicTauResult result =
+        semantic_guard::computeDynamicTau(
+            lx, ly, vx, vy, obs(2) + robot_radius_, dynamic_tau_params_);
+    if (!std::isfinite(result.tau)) {
+        ROS_WARN_THROTTLE(1.0,
+                          "[MPC-SECBF] non-finite stage tau; using zero lookahead");
+        return 0.0;
+    }
+    return std::max(0.0, result.tau);
 }
 
 casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
@@ -265,7 +299,10 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
                                                const casadi::MX& vx,
                                                const casadi::MX& vy,
                                                double inflated_radius) {
-    // Keep the symbolic expression aligned with semantic_guard::computeDynamicTau.
+    // Reference-only algebraic expression aligned with
+    // semantic_guard::computeDynamicTau. solve() uses computeFrozenStageTau()
+    // instead, so this non-smooth symbolic branch is not part of the production
+    // NLP. Keeping it here supports algebraic/reference cross-checks.
     // The guards make every denominator finite while the validity gate preserves the
     // numeric policy for degenerate inputs and invalid configuration.
     const double min_distance = std::max(dynamic_tau_params_.min_distance, 1e-12);
@@ -315,7 +352,10 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
         dynamic_tau_params_.t_max - T_i > 0.0, 1.0, 0.0);
     casadi::MX raw_tau = f_r * f_v * f_T * dynamic_tau_params_.ke * T_i;
     const double max_tau = std::max(dynamic_tau_params_.max_tau, 0.0);
-    return casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);
+    casadi::MX tau = casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);
+    casadi::MX lookahead_x = lx + tau * vx;
+    casadi::MX lookahead_y = ly + tau * vy;
+    return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y);
 }
 
 casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {

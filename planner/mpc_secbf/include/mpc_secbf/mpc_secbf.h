@@ -52,10 +52,17 @@ public:
     int last_constrained_obs_index = -1;
 
 private:
-    // The caller selects predicted or frozen obstacle state before evaluating h.
-    casadi::MX h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i);
+    // The caller supplies the numeric tau frozen for this obstacle prediction stage.
+    casadi::MX h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i,
+                     double stage_tau);
 
-    // Symbolic dynamic lookahead. Numeric dynamic_tau policy is reserved for audit logs.
+    // Receding-horizon policy: recompute tau from the measured robot state at
+    // every solve, then freeze it as a CasADi constant for this stage.
+    double computeFrozenStageTau(const Eigen::VectorXd& obs,
+                                 const Eigen::VectorXd& measured_state) const;
+
+    // Reference-only algebraic expression. Production solve() intentionally does
+    // not call this symbolic tau branch because tau must not depend on X_k/U_k.
     casadi::MX dynamicTauCasadi(const casadi::MX& lx, const casadi::MX& ly,
                                 const casadi::MX& vx, const casadi::MX& vy,
                                 double inflated_radius);

@@ -793,6 +793,56 @@ def test_shared_policy_is_the_numeric_source_of_truth():
     assert "max_tau" in header
 
 
+def test_mpc_dynamic_tau_is_frozen_per_obstacle_stage():
+    source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    header = read("planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h")
+    solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solve(")
+    h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
+
+    assert "computeFrozenStageTau(obs_k, *cur_state)" in solve
+    assert "computeFrozenStageTau(obs_k1, *cur_state)" in solve
+    assert "h_cbf(X_cur, obs_k, beta_i, tau_k)" in solve
+    assert "h_cbf(X_nxt, obs_k1, beta_i, tau_k1)" in solve
+    assert "computeDynamicTau" in source
+    assert "obs(0) - measured_state(0)" in source
+    assert "obs(5) - measured_state(3)" in source
+    assert "std::isfinite(result.tau)" in source
+    assert "using zero lookahead" in source
+
+    assert "double stage_tau" in header
+    assert "dynamicTauCasadi(lx, ly, vx, vy" not in h_cbf
+    assert "const double finite_stage_tau" in h_cbf
+    assert "const casadi::MX tau(finite_stage_tau)" in h_cbf
+    assert "lx + tau * vx" in h_cbf
+    assert "ly + tau * vy" in h_cbf
+
+
+def test_mpc_reference_symbolic_tau_is_not_the_production_solve_path():
+    source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solve(")
+    helper = cpp_function_body_raw(
+        source, "casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi("
+    )
+
+    assert "dynamicTauCasadi" not in solve
+    assert "Reference-only algebraic expression" in helper
+    assert "semantic_guard::computeDynamicTau" in source
+
+
+def test_mpc_stage_frozen_tau_keeps_standard_instantaneous_path():
+    source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
+
+    assert "if (!dynamic_tau_enabled_)" in h_cbf
+    assert (
+        "return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;"
+        in h_cbf
+    )
+    assert "dynamicTauCasadi" not in h_cbf
+    assert "R_safe" not in source
+    assert "epsilon" in source
+
+
 def test_margin_launch_dynamic_tau_numeric_params_are_explicit_doubles():
     launch_files = (
         "planner/semantic_guard/launch/beta_guard.launch",

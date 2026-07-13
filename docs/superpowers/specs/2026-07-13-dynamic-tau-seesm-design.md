@@ -63,11 +63,15 @@ output rule. Guard and `Obs_Manager` use this API for their numeric checks.
 
 ### 3.2 Symbolic MPC implementation
 
-`mpc_secbf` implements the algebraically equivalent CasADi expression for
-each obstacle and prediction stage. The expression uses the predicted MPC
-state and the obstacle state at the corresponding stage. The dynamic tau is
-therefore part of `h_cbf()` rather than being silently replaced by an
-external obstacle-position prediction.
+`mpc_secbf` implements the same lookahead formula for each obstacle and
+prediction stage. At every receding-horizon solve, the shared numeric policy
+is evaluated from the measured robot state and that stage's obstacle
+prediction. The resulting `stage_tau` is then frozen as a CasADi constant while
+building that stage's `h_cbf()` constraint; the next solve recomputes it.
+This solver-time freezing avoids putting the non-smooth `tau` gates inside the
+NLP while preserving the dynamic, auditable policy. `dynamicTauCasadi()` is
+retained only as an algebraic reference helper and is not used by production
+solves.
 
 The existing discrete CBF constraint remains:
 
