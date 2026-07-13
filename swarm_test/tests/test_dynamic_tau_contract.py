@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -24,6 +25,12 @@ METADATA_TO_SWITCH = {
     "max_tau": "dynamic_tau_max_tau",
 }
 TAU_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason")
+BASELINE_CONTRACT = (
+    ("Standard_MPC_CBF", False, "distance", False, "fixed_config"),
+    ("No_semantic", True, "seesm", False, "zero"),
+    ("Unguarded_SEESM", True, "seesm", True, "candidate"),
+    ("SEESM_Ours", True, "seesm", True, "beta_applied_final"),
+)
 
 
 def read(relative):
@@ -100,60 +107,41 @@ def test_shared_policy_is_the_numeric_source_of_truth():
     assert "max_tau" in header
 
 
-def test_runner_baseline_switches_are_parsed_from_real_configuration():
-    runner = runner_module()
-
-    for baseline_id in ("No_semantic", "Unguarded_SEESM", "SEESM_Ours"):
-        resolved = runner.resolve_baseline_alias(baseline_id)
-        switches = runner.baseline_switches(resolved)
-        assert switches.get("dynamic_tau_enabled") is True
-        assert switches["cbf_metric"] == "seesm"
-        for key in DYNAMIC_TAU_SWITCHES:
-            assert key in switches
-
-    standard = runner.baseline_switches(runner.resolve_baseline_alias("Standard_MPC_CBF"))
-    assert standard.get("dynamic_tau_enabled") is False
-    assert standard["cbf_metric"] == "distance"
-    for key in DYNAMIC_TAU_SWITCHES:
-        assert key in standard
-
-
-def test_runner_generates_dynamic_switches_and_metadata_at_write_sites(tmp_path):
+@pytest.mark.parametrize(
+    ("baseline_id", "dynamic_enabled", "cbf_metric", "global_enabled", "beta_source"),
+    BASELINE_CONTRACT,
+)
+def test_runner_generates_all_baseline_contracts_at_write_sites(
+    tmp_path, baseline_id, dynamic_enabled, cbf_metric, global_enabled, beta_source
+):
     runner = runner_module()
     scenario = minimal_scenario()
     obstacle_params = tmp_path / "obstacles_param.yaml"
-    dynamic_cmd, _ = runner.build_commands(
-        "head_on_context_bl", "SEESM_Ours", tmp_path, obstacle_params, "[adult]", 1, scenario
-    )
-    standard_cmd, _ = runner.build_commands(
-        "head_on_context_bl", "Standard_MPC_CBF", tmp_path, obstacle_params, "[adult]", 1, scenario
+    planner_cmd, _ = runner.build_commands(
+        "head_on_context_bl", baseline_id, tmp_path, obstacle_params, "[adult]", 1, scenario
     )
 
-    dynamic_args = launch_args(dynamic_cmd)
-    standard_args = launch_args(standard_cmd)
-    dynamic_switches = runner.baseline_switches("SEESM_Ours")
-    standard_switches = runner.baseline_switches("Standard_MPC_CBF")
+    args = launch_args(planner_cmd)
+    switches = runner.baseline_switches(runner.resolve_baseline_alias(baseline_id))
     for key in DYNAMIC_TAU_SWITCHES:
-        assert key in dynamic_args
-        assert key in standard_args
+        assert key in args
+        assert key in switches
         if key != "dynamic_tau_enabled":
-            assert float(dynamic_args[key]) == float(dynamic_switches[key])
-            assert float(standard_args[key]) == float(standard_switches[key])
-    assert dynamic_args["dynamic_tau_enabled"].lower() == "true"
-    assert standard_args["dynamic_tau_enabled"].lower() == "false"
+            assert float(args[key]) == float(switches[key])
+    assert args["dynamic_tau_enabled"].lower() == str(dynamic_enabled).lower()
+    assert args["cbf_metric"] == cbf_metric
+    assert args["global_seesm_enable"].lower() == str(global_enabled).lower()
 
-    meta_path = write_meta(runner, tmp_path, "SEESM_Ours")
+    meta_path = write_meta(runner, tmp_path, baseline_id)
     meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
     dynamic_tau = meta["dynamic_tau"]
-    assert dynamic_tau["enabled"] is True
-    assert dynamic_tau["beta_source"] == "beta_applied_final"
+    assert dynamic_tau["enabled"] is dynamic_enabled
+    assert dynamic_tau["beta_source"] == beta_source
+    assert meta["cbf_metric"] == cbf_metric
+    assert str(meta["global_seesm_enable"]).lower() == str(global_enabled).lower()
     for field in DYNAMIC_TAU_METADATA:
         assert field in dynamic_tau
-        assert float(dynamic_tau[field]) == float(dynamic_switches[METADATA_TO_SWITCH[field]])
-
-    standard_meta_path = write_meta(runner, tmp_path, "Standard_MPC_CBF")
-    standard_meta = yaml.safe_load(standard_meta_path.read_text(encoding="utf-8"))
-    assert standard_meta["dynamic_tau"]["enabled"] is False
+        assert float(dynamic_tau[field]) == float(switches[METADATA_TO_SWITCH[field]])
 
 
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
