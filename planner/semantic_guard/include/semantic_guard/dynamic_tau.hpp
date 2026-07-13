@@ -117,12 +117,12 @@ inline DynamicTauResult computeDynamicTau(double lx, double ly,
     return result;
   }
 
+  result.f_T = detail::dynamicTauPositiveSign(params.t_max - result.T_i);
   if (result.T_i <= 0.0 || result.f_r == 0.0) {
     result.reason = "receding_or_nonclosing";
     return result;
   }
 
-  result.f_T = detail::dynamicTauPositiveSign(params.t_max - result.T_i);
   if (result.f_v == 0.0) {
     result.reason = "velocity_gate";
     return result;

@@ -24,6 +24,7 @@ TEST(DynamicTauPolicy, StationaryAndRecedingReturnZero) {
   const auto receding = computeDynamicTau(5.0, 0.0, 1.0, 0.0, 0.8, params());
   EXPECT_DOUBLE_EQ(stationary.tau, 0.0);
   EXPECT_DOUBLE_EQ(receding.tau, 0.0);
+  EXPECT_DOUBLE_EQ(receding.f_T, 1.0);
   EXPECT_TRUE(std::isfinite(stationary.tau));
   EXPECT_TRUE(std::isfinite(receding.tau));
 }
