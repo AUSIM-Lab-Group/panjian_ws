@@ -63,7 +63,9 @@ TEST(DynamicTauPolicy, DegenerateInputsAreFinite) {
 }
 
 TEST(DynamicTauPolicy, ReferenceFactorsAreAuditable) {
-  const auto result = computeDynamicTau(2.0, 0.0, -0.5, 0.0, 0.5, params());
+  DynamicTauParams p = params();
+  p.t_max = 4.0;
+  const auto result = computeDynamicTau(2.0, 0.0, -0.5, 0.0, 0.5, p);
   EXPECT_TRUE(result.valid);
   EXPECT_DOUBLE_EQ(result.f_r, 1.0);
   EXPECT_DOUBLE_EQ(result.f_v, 1.0);
