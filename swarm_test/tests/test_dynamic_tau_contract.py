@@ -257,11 +257,9 @@ def strip_cpp_comments_only(source):
                 index += 2
                 state = "block_comment"
             elif source[index] == '"':
-                mask(index)
                 index += 1
                 state = "string"
             elif source[index] == "'":
-                mask(index)
                 index += 1
                 state = "char"
             else:
@@ -292,17 +290,11 @@ def strip_cpp_comments_only(source):
                 state = "code"
         else:
             if source[index] == "\\":
-                mask(index)
-                index += 1
-                if index < len(source):
-                    mask(index)
-                    index += 1
+                index += 2
             elif source[index] == ("\"" if state == "string" else "'"):
-                mask(index)
                 index += 1
                 state = "code"
             else:
-                mask(index)
                 index += 1
     return "".join(masked)
 
@@ -569,6 +561,44 @@ def assert_cpp_include(source, header):
                 else:
                     index += 1
     assert found
+
+
+def test_cpp_parser_preserves_writer_literals_and_real_include():
+    source = r'''
+// #include "semantic_guard/dynamic_tau.hpp"
+const char* fake = "#include \"semantic_guard/dynamic_tau.hpp\"";
+const char* braces = "{ not code }";
+R"raw(
+#include "semantic_guard/dynamic_tau.hpp"
+)raw";
+#include "semantic_guard/dynamic_tau.hpp"
+
+void writer() {
+  const char brace = '}';
+  stream << "," << "tau" << "\n";
+}
+'''
+    stripped = strip_cpp_comments_only(source)
+    assert 'const char* fake = "#include \\\"semantic_guard/dynamic_tau.hpp\\\"";' in stripped
+    body = cpp_function_body_raw(source, "void writer()")
+    assert [cpp_string_literals(operand) for operand in cpp_stream_operands(body)] == [
+        [","],
+        ["tau"],
+        ["\n"],
+    ]
+    assert_cpp_include(source, "semantic_guard/dynamic_tau.hpp")
+
+
+def test_cpp_parser_rejects_comment_and_string_pseudo_declarations():
+    source = r'''
+// #include "semantic_guard/dynamic_tau.hpp"
+const char* fake = "#include \"semantic_guard/dynamic_tau.hpp\"";
+R"raw(
+#include "semantic_guard/dynamic_tau.hpp"
+)raw";
+'''
+    with pytest.raises(AssertionError):
+        assert_cpp_include(source, "semantic_guard/dynamic_tau.hpp")
 
 
 def bool_value(value):
