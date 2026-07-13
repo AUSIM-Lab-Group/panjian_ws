@@ -55,10 +55,6 @@ target_link_libraries(beta_ground_truth_node
 )
 
 if(CATKIN_ENABLE_TESTING)
-  find_package(rostest REQUIRED)
   catkin_add_gtest(dynamic_tau_policy_test
     test/test_dynamic_tau_policy.cpp)
-  if(TARGET dynamic_tau_policy_test)
-    target_link_libraries(dynamic_tau_policy_test ${catkin_LIBRARIES})
-  endif()
 endif()
