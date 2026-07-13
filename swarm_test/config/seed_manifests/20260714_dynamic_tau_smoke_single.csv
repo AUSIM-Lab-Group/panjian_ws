@@ -1,0 +1,2 @@
+trial_id,seed,scenario_id,obstacle_id,start_x_offset_m,start_y_offset_m,speed_scale,start_delay_offset_s
+smoke_001,20260720,head_on_context_bl,obs_001,-0.106686,0.143155,0.980481,-0.081744
