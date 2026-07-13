@@ -277,6 +277,9 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
                               dynamic_tau_params_.min_distance >= 0.0 &&
                               std::isfinite(dynamic_tau_params_.max_tau) &&
                               dynamic_tau_params_.max_tau > 0.0;
+    if (!config_valid) {
+        return casadi::MX(0.0);
+    }
 
     casadi::MX distance = casadi::MX::sqrt(lx * lx + ly * ly);
     casadi::MX speed = casadi::MX::sqrt(vx * vx + vy * vy);

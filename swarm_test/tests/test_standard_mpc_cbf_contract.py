@@ -66,6 +66,9 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     ):
         assert field in node
     assert 'tau_result.reason = "no_constrained_obstacle"' in node
+    assert "const bool obstacle_contract_valid = validateObstacleContractLocked();" in node
+    assert "const int constrained_obs_count = obstacle_contract_valid" in node
+    assert "!obstacle_contract_valid" in node
 
 
 def test_mpc_launch_exposes_seesm_default_metric():

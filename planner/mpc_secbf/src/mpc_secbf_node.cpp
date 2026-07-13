@@ -313,10 +313,13 @@ private:
                          double solve_time_ms) {
         const double t = ros::Time::now().toSec();
         const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
-        const int constrained_obs_count = solver_.last_constrained_obs_count;
+        const bool obstacle_contract_valid = validateObstacleContractLocked();
+        const int constrained_obs_count = obstacle_contract_valid
+                                             ? solver_.last_constrained_obs_count
+                                             : 0;
         const bool dynamic_tau_enabled = dynamic_tau_enabled_;
         semantic_guard::DynamicTauResult tau_result;
-        if (solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
+        if (!obstacle_contract_valid || solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
             solver_.last_constrained_obs_index * N_ >= obs_matrix_.cols()) {
             tau_result.reason = "no_constrained_obstacle";
         } else if (!dynamic_tau_enabled) {

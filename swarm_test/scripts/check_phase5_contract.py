@@ -58,14 +58,59 @@ def check_mpc_source() -> None:
         "mpc_secbf.cpp: h_EE must subtract obstacle radius and robot radius",
     )
     require(
-        "h_SEE = h_EE - beta_i" in src,
-        "mpc_secbf.cpp: h_SEE must subtract beta_i from h_EE",
+        "dynamicTauCasadi" in src,
+        "mpc_secbf.cpp: dynamic h_cbf must use dynamicTauCasadi",
+    )
+    require(
+        "casadi::MX lookahead_x = lx + tau * vx" in src and
+        "casadi::MX lookahead_y = ly + tau * vy" in src,
+        "mpc_secbf.cpp: dynamic h_cbf must use l + tau*v lookahead",
+    )
+    require(
+        "- obs_radius - robot_radius_ - beta_i" in src,
+        "mpc_secbf.cpp: dynamic h_cbf must subtract both radii and beta_i",
+    )
+    require(
+        "return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;" in src,
+        "mpc_secbf.cpp: instantaneous h_cbf must subtract beta_i",
+    )
+    require(
+        "h_SEE = h_EE - beta_i" not in src,
+        "mpc_secbf.cpp: obsolete h_SEE = h_EE - beta_i literal remains",
     )
     for symbol in ["last_slack_sum", "last_slack_mean", "last_slack_max"]:
         require(symbol in header or symbol in src, f"mpc_secbf: missing slack metric {symbol}")
     require("epsilon" in src, "mpc_secbf.cpp: SECBF constraints must use explicit slack variables")
     for field in ["first_attempt_status", "final_status", "accepted_beta_source", "slack_max"]:
         require(field in node, f"mpc_secbf_node.cpp: planner CSV missing field {field}")
+    require(
+        "const bool obstacle_contract_valid = validateObstacleContractLocked();" in node and
+        "const int constrained_obs_count = obstacle_contract_valid" in node and
+        "!obstacle_contract_valid" in node,
+        "mpc_secbf_node.cpp: audit must reject stale solver obstacle state on contract mismatch",
+    )
+
+
+def check_global_csv_source() -> None:
+    src = read("planner/vomp_planner/traj_planner/include/obs_manager/obs_manager.hpp")
+    header_chunks = [
+        '"t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"',
+        '"margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms,"',
+        '"tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\\n"',
+    ]
+    for chunk in header_chunks:
+        require(chunk in src, f"obs_manager.hpp: global SEESM CSV missing header chunk {chunk}")
+    for field in [
+        "tau_result.tau", "tau_result.T_i", "tau_result.f_r", "tau_result.f_v",
+        "tau_result.f_T", "tau_result.valid",
+    ]:
+        require(field in src, f"obs_manager.hpp: global SEESM CSV missing {field}")
+    for expression in [
+        "sanitizeCsvField(accepted_source)",
+        "sanitizeCsvField(reason)",
+        "sanitizeCsvField(tau_result.reason)",
+    ]:
+        require(expression in src, f"obs_manager.hpp: CSV field must use {expression}")
 
 
 def check_safety_verifier() -> None:
@@ -80,6 +125,7 @@ def main() -> int:
         lambda: check_guard_source("planner/semantic_guard/src/beta_guard_node.cpp"),
         lambda: check_guard_source("planner/semantic_guard/src/beta_ground_truth_node.cpp"),
         check_mpc_source,
+        check_global_csv_source,
         check_safety_verifier,
     ]
     for check in checks:
