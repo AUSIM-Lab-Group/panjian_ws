@@ -107,25 +107,59 @@ TEST(DynamicTauPolicy, NonPositiveMaxTauNeverCreatesAnActiveValue) {
 }
 
 TEST(DynamicTauPolicy, InvalidConfigReasonOverridesClosingAndRecedingInputs) {
+  struct InvalidConfigCase {
+    const char* name;
+    DynamicTauParams config;
+    double radius;
+  };
+
+  DynamicTauParams negative_ke = params();
+  negative_ke.ke = -1.0;
+  DynamicTauParams negative_t_max = params();
+  negative_t_max.t_max = -1.0;
+  DynamicTauParams negative_min_speed = params();
+  negative_min_speed.min_speed = -1.0;
+  DynamicTauParams negative_min_distance = params();
+  negative_min_distance.min_distance = -1.0;
+  DynamicTauParams zero_max_tau = params();
+  zero_max_tau.max_tau = 0.0;
   DynamicTauParams negative_max_tau = params();
   negative_max_tau.max_tau = -1.0;
-  const auto closing_negative_max =
-      computeDynamicTau(2.0, 0.0, -0.5, 0.0, 0.5, negative_max_tau);
-  const auto receding_negative_max =
-      computeDynamicTau(2.0, 0.0, 0.5, 0.0, 0.5, negative_max_tau);
 
-  const auto closing_negative_radius =
-      computeDynamicTau(2.0, 0.0, -0.5, 0.0, -0.5, params());
-  const auto receding_negative_radius =
-      computeDynamicTau(2.0, 0.0, 0.5, 0.0, -0.5, params());
+  const InvalidConfigCase cases[] = {
+      {"negative_ke", negative_ke, 0.5},
+      {"negative_t_max", negative_t_max, 0.5},
+      {"negative_min_speed", negative_min_speed, 0.5},
+      {"negative_min_distance", negative_min_distance, 0.5},
+      {"negative_radius", params(), -0.5},
+      {"zero_max_tau", zero_max_tau, 0.5},
+      {"negative_max_tau", negative_max_tau, 0.5},
+  };
 
-  for (const DynamicTauResult* result :
-       {&closing_negative_max, &receding_negative_max,
-        &closing_negative_radius, &receding_negative_radius}) {
-    EXPECT_DOUBLE_EQ(result->tau, 0.0);
-    EXPECT_FALSE(result->valid);
-    EXPECT_EQ(result->reason, "invalid_config");
+  for (const InvalidConfigCase& test_case : cases) {
+    SCOPED_TRACE(test_case.name);
+    const auto closing =
+        computeDynamicTau(2.0, 0.0, -0.5, 0.0, test_case.radius,
+                          test_case.config);
+    const auto receding =
+        computeDynamicTau(2.0, 0.0, 0.5, 0.0, test_case.radius,
+                          test_case.config);
+    for (const DynamicTauResult* result : {&closing, &receding}) {
+      EXPECT_DOUBLE_EQ(result->tau, 0.0);
+      EXPECT_FALSE(result->valid);
+      EXPECT_EQ(result->reason, "invalid_config");
+    }
   }
+}
+
+TEST(DynamicTauPolicy, NonFiniteInputTakesPriorityOverInvalidConfig) {
+  DynamicTauParams invalid_config = params();
+  invalid_config.max_tau = -1.0;
+  const auto result =
+      computeDynamicTau(NAN, 0.0, -0.5, 0.0, 0.5, invalid_config);
+  EXPECT_DOUBLE_EQ(result.tau, 0.0);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "non_finite_input");
 }
 
 TEST(DynamicTauPolicy, ActiveTauIsClampedToMaxTau) {
