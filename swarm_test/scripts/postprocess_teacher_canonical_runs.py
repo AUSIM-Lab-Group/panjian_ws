@@ -17,6 +17,7 @@ except ImportError:
 
 METHOD_LABELS = {
     "Fixed_margin": "Standard MPC-CBF",
+    "Standard_MPC_CBF": "Standard MPC-CBF",
     "No_semantic": "EESM-MPC-ECBF",
     "Unguarded_SEESM": "SEESM w/o FPU",
     "SEESM_Ours": "Proposed MPC-SECBF",
@@ -37,6 +38,7 @@ RUN_FIELDS = [
     "success",
     "goal_reached",
     "collision_count",
+    "collision_episode_count",
     "d_min_m",
     "min_h_seesm",
     "semantic_violation_ratio",
@@ -83,6 +85,7 @@ TABLE_FIELDS = [
     "success_rate",
     "goal_reached_rate",
     "collision_rate",
+    "collision_episode_mean",
     "d_min_mean_m",
     "d_min_min_m",
     "min_h_seesm_mean",
@@ -318,6 +321,58 @@ def paper_outcome(summary_row: dict[str, str]) -> tuple[int, int, int]:
     return int(goal_reached == 1 and collision_count == 0), goal_reached, collision_count
 
 
+def collision_episode_metrics(run_dir: Path) -> dict[str, int]:
+    robot_radius = 0.4
+    meta_path = run_dir / "meta.yaml"
+    if yaml is not None and meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as handle:
+                meta = yaml.safe_load(handle) or {}
+            robot_radius = float(meta.get("robot_radius", robot_radius))
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            pass
+
+    samples_by_obstacle: dict[str, list[tuple[float, float]]] = {}
+    for row in read_csv(run_dir / "obstacle_log.csv"):
+        timestamp = parse_float(row.get("t"))
+        radius = parse_float(row.get("radius"))
+        distance = parse_float(row.get("d_i"))
+        if timestamp is None or radius is None or distance is None:
+            continue
+        obstacle_id = str(row.get("id") or "unknown")
+        samples_by_obstacle.setdefault(obstacle_id, []).append(
+            (timestamp, distance - radius - robot_radius)
+        )
+
+    episode_count = 0
+    for samples in samples_by_obstacle.values():
+        samples.sort()
+        intervals = [
+            samples[index][0] - samples[index - 1][0]
+            for index in range(1, len(samples))
+            if samples[index][0] > samples[index - 1][0]
+        ]
+        nominal_period = percentile(intervals, 0.90)
+        max_gap = 2.5 * nominal_period if nominal_period is not None else 0.0
+        in_episode = False
+        previous_negative_time = None
+        for timestamp, clearance in samples:
+            if clearance >= 0.0:
+                in_episode = False
+                previous_negative_time = None
+                continue
+            if (
+                not in_episode
+                or previous_negative_time is None
+                or timestamp - previous_negative_time > max_gap
+            ):
+                episode_count += 1
+                in_episode = True
+            previous_negative_time = timestamp
+
+    return {"collision_episode_count": episode_count}
+
+
 def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     scenario_meta = load_scenario_meta(config_path)
     summary_rows = collect_summary_rows(output_root)
@@ -360,6 +415,7 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         sem = semantic_violation_metrics(output_dir)
         plan = planner_metrics(output_dir, summary)
         global_metrics = global_seesm_metrics(output_dir)
+        collision_episodes = collision_episode_metrics(output_dir)
         success, goal_reached, collision_count = paper_outcome(summary)
         min_h = parse_float(summary.get("h_see_min"))
         if min_h is None:
@@ -380,6 +436,7 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "success": success,
                 "goal_reached": goal_reached,
                 "collision_count": collision_count,
+                "collision_episode_count": collision_episodes["collision_episode_count"],
                 "d_min_m": fmt(metric_from_summary(summary, "log_min_distance_m", "nav_min_distance_m")),
                 "min_h_seesm": fmt(min_h),
                 "semantic_violation_ratio": fmt(sem["semantic_violation_ratio"]),
@@ -427,6 +484,7 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
         success = values("success")
         goal_reached = values("goal_reached")
         collision_count = values("collision_count")
+        collision_episode_count = values("collision_episode_count")
         d_min = values("d_min_m")
         min_h = values("min_h_seesm")
         summary_rows.append(
@@ -440,6 +498,7 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
                 "success_rate": fmt(mean(success)),
                 "goal_reached_rate": fmt(mean(goal_reached)),
                 "collision_rate": fmt(mean([float(value > 0.0) for value in collision_count])),
+                "collision_episode_mean": fmt(mean(collision_episode_count)),
                 "d_min_mean_m": fmt(mean(d_min)),
                 "d_min_min_m": fmt(min(d_min) if d_min else None),
                 "min_h_seesm_mean": fmt(mean(min_h)),

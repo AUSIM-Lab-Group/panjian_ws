@@ -33,6 +33,19 @@ def test_acbf_launch_supplies_required_initial_yaw():
     assert args["init_yaw_"] == "0.0"
 
 
+def test_quarantine_incomplete_run_dir_preserves_corrupt_logs(tmp_path):
+    run_dir = tmp_path / "formal_002_head_on_context_bl_SEESM_Ours"
+    run_dir.mkdir()
+    corrupt_log = run_dir / "margin_guard_log.csv"
+    corrupt_log.write_bytes(b"header\n\x00\x00\x00")
+
+    quarantined = runner.quarantine_incomplete_run_dir(run_dir, "20260713_120000")
+
+    assert not run_dir.exists()
+    assert quarantined.name == ".interrupted_formal_002_head_on_context_bl_SEESM_Ours_20260713_120000"
+    assert (quarantined / "margin_guard_log.csv").read_bytes() == b"header\n\x00\x00\x00"
+
+
 def test_applied_margin_message_contract():
     path = REPO_ROOT / "planner/semantic_guard/msg/AppliedMarginArray.msg"
     text = path.read_text(encoding="utf-8")

@@ -1133,6 +1133,16 @@ def write_aggregate_summary(output_root: Path, run_dirs: list):
     return aggregate_csv
 
 
+def quarantine_incomplete_run_dir(run_dir: Path, timestamp: str) -> Path:
+    candidate = run_dir.parent / f".interrupted_{run_dir.name}_{timestamp}"
+    suffix = 1
+    while candidate.exists():
+        candidate = run_dir.parent / f".interrupted_{run_dir.name}_{timestamp}_{suffix}"
+        suffix += 1
+    run_dir.rename(candidate)
+    return candidate
+
+
 def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp: str,
             trial=None, requested_baseline_label=None):
     run_suffix = trial["trial_id"] if trial is not None else timestamp
@@ -1141,6 +1151,9 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
     if getattr(args, "skip_existing_complete", False) and summary_path.exists() and summary_path.stat().st_size > 0:
         print(f"Skipped complete {scenario_id} / {baseline_id}: {run_dir}")
         return run_dir
+    if run_dir.exists() and not summary_path.exists():
+        quarantined = quarantine_incomplete_run_dir(run_dir, timestamp)
+        print(f"Quarantined incomplete {scenario_id} / {baseline_id}: {quarantined}")
     if trial is not None:
         scenario, obstacles = materialize_trial(scenario, trial)
     else:
