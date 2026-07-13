@@ -31,6 +31,12 @@
   <arg name="global_seesm_enable" default="false"/>
   <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="fixed_beta" default="0.4"/>
+  <arg name="dynamic_tau_enabled" default="false"/>
+  <arg name="dynamic_tau_ke" default="0.30"/>
+  <arg name="dynamic_tau_tmax" default="2.0"/>
+  <arg name="dynamic_tau_min_speed" default="1e-6"/>
+  <arg name="dynamic_tau_min_distance" default="1e-6"/>
+  <arg name="dynamic_tau_max_tau" default="2.0"/>
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
   <arg name="max_cbf_obstacles" default="6"/>
@@ -107,6 +113,12 @@
     <arg name="enable_available_projection" value="$(arg enable_available_projection)"/>
     <arg name="enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
     <arg name="fixed_beta" value="$(arg fixed_beta)"/>
+    <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
+    <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
+    <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
+    <arg name="dynamic_tau_min_distance" value="$(arg dynamic_tau_min_distance)"/>
+    <arg name="dynamic_tau_max_tau" value="$(arg dynamic_tau_max_tau)"/>
     <arg name="scenario_id" value="$(arg scenario_id)"/>
     <arg name="baseline_id" value="$(arg baseline_id)"/>
     <arg name="odom_topic" value="/robot1/odom"/>

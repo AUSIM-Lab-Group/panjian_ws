@@ -13,6 +13,7 @@
 #include "semantic_fusion/SemanticObstacle.h"
 #include "semantic_fusion/SemanticObstacleArray.h"
 #include "semantic_guard/GuardLog.h"
+#include "semantic_guard/dynamic_tau.hpp"
 
 class BetaGuardNode {
 public:
@@ -37,7 +38,13 @@ public:
         nh_.param("guard/enabled",        guard_enabled_,   true);
         nh_.param("guard/eta",            eta_,            0.1);
         nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
-        nh_.param("guard/tau",            tau_,            0.2);
+        nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
+        nh_.param("dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
+        nh_.param("dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
+        nh_.param("dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
+        nh_.param("dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
+        nh_.param("dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
+        nh_.param("guard/tau",            tau_,            0.20);
         nh_.param<std::string>("semantic_mode", semantic_mode_, "full");
         nh_.param("guard/enable_rate_limit", enable_rate_limit_, true);
         nh_.param("guard/enable_available_projection", enable_available_projection_, true);
@@ -58,7 +65,7 @@ public:
                           << "guard_upper_bound,guard_passed,guard_status,"
                           << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
-                          << "h_ee,h_see,R_base,R_sem\n";
+                          << "h_ee,h_see,R_base,R_sem,tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
             }
         }
@@ -131,7 +138,18 @@ private:
             double inv_ttc = std::isfinite(ttc) && ttc > 1e-6 ? 1.0 / ttc : 0.0;
             double ttc_norm = obs.ttc_norm;
             double rho_norm = obs.density_norm;
-            Eigen::Vector2d lookahead_rel_pos = p_rel + tau_ * v_rel;
+            const double inflated_radius = obs.radius + robot_radius_;
+            semantic_guard::DynamicTauResult tau_result;
+            if (dynamic_tau_enabled_) {
+                tau_result = semantic_guard::computeDynamicTau(
+                    p_rel.x(), p_rel.y(), v_rel.x(), v_rel.y(),
+                    inflated_radius, dynamic_tau_params_);
+            } else {
+                tau_result.tau = tau_;
+                tau_result.valid = true;
+                tau_result.reason = "fixed_config";
+            }
+            Eigen::Vector2d lookahead_rel_pos = p_rel + tau_result.tau * v_rel;
             double h_ee = lookahead_rel_pos.norm() - obs.radius - robot_radius_;
             double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
 
@@ -207,7 +225,11 @@ private:
                           << (std::isfinite(ttc) ? ttc : -1.0) << "," << ttc_norm << "," << inv_ttc << ","
                           << cos_delta << "," << obs.density_norm << "," << rho_norm << ",0,"
                           << h_ee << "," << h_see << ","
-                          << r_base << "," << r_sem << "\n";
+                          << r_base << "," << r_sem << ","
+                          << tau_result.tau << "," << tau_result.T_i << ","
+                          << tau_result.f_r << "," << tau_result.f_v << ","
+                          << tau_result.f_T << "," << tau_result.valid << ","
+                          << sanitizeCsvField(tau_result.reason) << "\n";
             }
         }
 
@@ -255,6 +277,8 @@ private:
     double eta_, max_delta_beta_, tau_, fixed_beta_;
     double robot_radius_;
     bool guard_enabled_, enable_rate_limit_, enable_available_projection_, enable_guard_fallback_;
+    bool dynamic_tau_enabled_ = false;
+    semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::string semantic_mode_;
 
     // State
@@ -266,6 +290,14 @@ private:
 
     // Logging
     std::ofstream csv_file_;
+
+    static std::string sanitizeCsvField(const std::string& field) {
+        std::string sanitized = field;
+        std::replace(sanitized.begin(), sanitized.end(), ',', ';');
+        std::replace(sanitized.begin(), sanitized.end(), '\n', ' ');
+        std::replace(sanitized.begin(), sanitized.end(), '\r', ' ');
+        return sanitized;
+    }
 };
 
 int main(int argc, char** argv) {

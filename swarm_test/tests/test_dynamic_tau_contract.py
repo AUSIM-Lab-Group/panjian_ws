@@ -975,7 +975,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
         ("tau_valid", "tau_result.valid"),
-        ("tau_reason", "tau_result.reason"),
+        ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
     )
     guard_header_fields = csv_header_fields(guard_header_if_raw, 'csv_file_ << "time,')
     assert "csv_file_" in guard_header_if
