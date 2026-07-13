@@ -53,6 +53,13 @@ inline DynamicTauResult computeDynamicTau(double lx, double ly,
     }
   }
 
+  if (inflated_radius < 0.0 || params.ke < 0.0 || params.t_max < 0.0 ||
+      params.min_speed < 0.0 || params.min_distance < 0.0 ||
+      params.max_tau <= 0.0) {
+    result.reason = "invalid_config";
+    return result;
+  }
+
   const double distance = std::hypot(lx, ly);
   const double speed = std::hypot(vx, vy);
   if (distance <= params.min_distance) {
@@ -61,14 +68,6 @@ inline DynamicTauResult computeDynamicTau(double lx, double ly,
   }
   if (speed <= params.min_speed) {
     result.reason = "speed_degenerate";
-    return result;
-  }
-
-  // These parameters describe non-negative physical quantities. Treat an
-  // unusable configuration as invalid before evaluating any gate algebra.
-  if (inflated_radius < 0.0 || params.ke < 0.0 || params.t_max < 0.0 ||
-      params.min_speed < 0.0 || params.min_distance < 0.0) {
-    result.reason = "invalid";
     return result;
   }
 
@@ -134,8 +133,7 @@ inline DynamicTauResult computeDynamicTau(double lx, double ly,
 
   const double raw_tau =
       result.f_r * result.f_v * result.f_T * params.ke * result.T_i;
-  if (!detail::dynamicTauFinite(raw_tau) || raw_tau <= 0.0 ||
-      params.max_tau <= 0.0) {
+  if (!detail::dynamicTauFinite(raw_tau) || raw_tau <= 0.0) {
     result.reason = "tau_invalid";
     return result;
   }

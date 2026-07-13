@@ -25,6 +25,8 @@ TEST(DynamicTauPolicy, StationaryAndRecedingReturnZero) {
   EXPECT_DOUBLE_EQ(stationary.tau, 0.0);
   EXPECT_DOUBLE_EQ(receding.tau, 0.0);
   EXPECT_DOUBLE_EQ(receding.f_T, 1.0);
+  EXPECT_EQ(stationary.reason, "speed_degenerate");
+  EXPECT_EQ(receding.reason, "receding_or_nonclosing");
   EXPECT_TRUE(std::isfinite(stationary.tau));
   EXPECT_TRUE(std::isfinite(receding.tau));
 }
@@ -38,6 +40,7 @@ TEST(DynamicTauPolicy, ClosingMotionProducesFiniteNonNegativeTau) {
   EXPECT_GE(result.tau, 0.0);
   EXPECT_LE(result.tau, p.max_tau);
   EXPECT_TRUE(std::isfinite(result.T_i));
+  EXPECT_EQ(result.reason, "active");
 }
 
 TEST(DynamicTauPolicy, VelocityObstacleGateRejectsOutsideCone) {
@@ -62,6 +65,11 @@ TEST(DynamicTauPolicy, DegenerateInputsAreFinite) {
   DynamicTauParams nan_params = params();
   nan_params.ke = NAN;
   const auto nan_parameter = computeDynamicTau(5.0, 0.0, -1.0, 0.0, 0.8, nan_params);
+  EXPECT_EQ(zero_speed.reason, "speed_degenerate");
+  EXPECT_EQ(near_zero_distance.reason, "distance_degenerate");
+  EXPECT_EQ(nan_position.reason, "non_finite_input");
+  EXPECT_EQ(inf_velocity.reason, "non_finite_input");
+  EXPECT_EQ(nan_parameter.reason, "non_finite_input");
   for (const DynamicTauResult* result :
        {&zero_speed, &near_zero_distance, &nan_position, &inf_velocity,
         &nan_parameter}) {
@@ -92,9 +100,31 @@ TEST(DynamicTauPolicy, NonPositiveMaxTauNeverCreatesAnActiveValue) {
     const auto result = computeDynamicTau(2.0, 0.0, -0.5, 0.0, 0.5, p);
     EXPECT_DOUBLE_EQ(result.tau, 0.0);
     EXPECT_FALSE(result.valid);
-    EXPECT_EQ(result.reason, "tau_invalid");
+    EXPECT_EQ(result.reason, "invalid_config");
     EXPECT_TRUE(std::isfinite(result.tau));
     EXPECT_TRUE(std::isfinite(result.T_i));
+  }
+}
+
+TEST(DynamicTauPolicy, InvalidConfigReasonOverridesClosingAndRecedingInputs) {
+  DynamicTauParams negative_max_tau = params();
+  negative_max_tau.max_tau = -1.0;
+  const auto closing_negative_max =
+      computeDynamicTau(2.0, 0.0, -0.5, 0.0, 0.5, negative_max_tau);
+  const auto receding_negative_max =
+      computeDynamicTau(2.0, 0.0, 0.5, 0.0, 0.5, negative_max_tau);
+
+  const auto closing_negative_radius =
+      computeDynamicTau(2.0, 0.0, -0.5, 0.0, -0.5, params());
+  const auto receding_negative_radius =
+      computeDynamicTau(2.0, 0.0, 0.5, 0.0, -0.5, params());
+
+  for (const DynamicTauResult* result :
+       {&closing_negative_max, &receding_negative_max,
+        &closing_negative_radius, &receding_negative_radius}) {
+    EXPECT_DOUBLE_EQ(result->tau, 0.0);
+    EXPECT_FALSE(result->valid);
+    EXPECT_EQ(result->reason, "invalid_config");
   }
 }
 
