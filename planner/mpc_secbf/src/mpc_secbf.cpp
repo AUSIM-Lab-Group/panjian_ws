@@ -352,10 +352,10 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
         dynamic_tau_params_.t_max - T_i > 0.0, 1.0, 0.0);
     casadi::MX raw_tau = f_r * f_v * f_T * dynamic_tau_params_.ke * T_i;
     const double max_tau = std::max(dynamic_tau_params_.max_tau, 0.0);
+    // This reference helper returns tau itself. Production h_cbf() applies the
+    // lookahead norm separately using the numeric stage-frozen tau.
     casadi::MX tau = casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);
-    casadi::MX lookahead_x = lx + tau * vx;
-    casadi::MX lookahead_y = ly + tau * vy;
-    return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y);
+    return casadi::MX::fmax(0.0, tau);
 }
 
 casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {

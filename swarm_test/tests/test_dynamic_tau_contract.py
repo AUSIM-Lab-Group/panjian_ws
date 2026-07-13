@@ -829,6 +829,19 @@ def test_mpc_reference_symbolic_tau_is_not_the_production_solve_path():
     assert "semantic_guard::computeDynamicTau" in source
 
 
+def test_mpc_reference_symbolic_tau_returns_clamped_tau():
+    source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    helper = cpp_function_body_raw(
+        source, "casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi("
+    )
+
+    assert "casadi::MX raw_tau =" in helper
+    assert "casadi::MX tau = casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);" in helper
+    assert "return casadi::MX::fmax(0.0, tau);" in helper
+    assert "lookahead_x" not in helper
+    assert "lookahead_y" not in helper
+
+
 def test_mpc_stage_frozen_tau_keeps_standard_instantaneous_path():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
     h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
