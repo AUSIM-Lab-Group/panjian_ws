@@ -42,12 +42,8 @@ def read(relative):
 @contextmanager
 def runner_module():
     original_sys_path = list(sys.path)
+    original_sys_modules = dict(sys.modules)
     module_name = "dynamic_tau_runner"
-    sentinel = object()
-    saved_modules = {
-        name: sys.modules.get(name, sentinel)
-        for name in (module_name, "reference_path_waypoints")
-    }
     try:
         script_dir = str(RUNNER_PATH.parent)
         if script_dir not in sys.path:
@@ -57,12 +53,17 @@ def runner_module():
         spec.loader.exec_module(module)
         yield module
     finally:
+        for name in list(sys.modules):
+            if name not in original_sys_modules:
+                del sys.modules[name]
+        for name, module in original_sys_modules.items():
+            sys.modules[name] = module
         sys.path[:] = original_sys_path
-        for name, previous in saved_modules.items():
-            if previous is sentinel:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = previous
+        assert set(sys.modules) == set(original_sys_modules)
+        assert all(
+            sys.modules[name] is module
+            for name, module in original_sys_modules.items()
+        )
         assert sys.path == original_sys_path
 
 
@@ -120,12 +121,64 @@ def literal_values(nodes):
     return values
 
 
-def string_literals(node):
-    return [
-        child.value
-        for child in ast.walk(node)
-        if isinstance(child, ast.Constant) and isinstance(child.value, str)
-    ]
+def assigned_values(function_node, name):
+    values = []
+    for node in ast.walk(function_node):
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            values.append(node.value)
+    return values
+
+
+def dict_key(node):
+    if node is None:
+        return None
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, TypeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def dict_value(node, key):
+    if not isinstance(node, ast.Dict):
+        return None
+    for key_node, value_node in zip(node.keys, node.values):
+        if dict_key(key_node) == key:
+            return value_node
+    return None
+
+
+def dict_keys(node):
+    if not isinstance(node, ast.Dict):
+        return set()
+    return {key for key in (dict_key(item) for item in node.keys) if key is not None}
+
+
+def membership_sets(function_node):
+    sets = []
+    for node in ast.walk(function_node):
+        if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+            continue
+        if len(node.test.ops) != 1 or not isinstance(node.test.ops[0], ast.In):
+            continue
+        if not isinstance(node.test.left, ast.Name) or node.test.left.id != "baseline_id":
+            continue
+        try:
+            value = ast.literal_eval(node.test.comparators[0])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, (set, frozenset, tuple, list)):
+            sets.append(set(value))
+    return sets
+
+
+def ast_contains_text(node, text):
+    for child in ast.walk(node):
+        if isinstance(child, ast.Constant) and isinstance(child.value, str) and text in child.value:
+            return True
+    return False
 
 
 def minimal_scenario():
@@ -159,25 +212,157 @@ def write_meta(runner, tmp_path, baseline_id):
     )
 
 
-def cpp_function_body(source, signature):
-    signature_start = source.find(signature)
+def strip_cpp_non_code(source):
+    masked = list(source)
+    state = "code"
+    index = 0
+
+    def mask(position):
+        if masked[position] != "\n":
+            masked[position] = " "
+
+    while index < len(source):
+        if state == "code":
+            if source.startswith("//", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "line_comment"
+            elif source.startswith("/*", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "block_comment"
+            elif source[index] == '"':
+                mask(index)
+                index += 1
+                state = "string"
+            elif source[index] == "'":
+                mask(index)
+                index += 1
+                state = "char"
+            else:
+                index += 1
+        elif state == "line_comment":
+            if source[index] == "\n":
+                state = "code"
+            else:
+                mask(index)
+            index += 1
+        elif state == "block_comment":
+            if source.startswith("*/", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "code"
+            else:
+                mask(index)
+                index += 1
+        else:
+            if source[index] == "\\":
+                mask(index)
+                index += 1
+                if index < len(source):
+                    mask(index)
+                    index += 1
+            elif source[index] == ("\"" if state == "string" else "'"):
+                mask(index)
+                index += 1
+                state = "code"
+            else:
+                mask(index)
+                index += 1
+    return "".join(masked)
+
+
+def cpp_function_bounds(source, signature):
+    clean_source = strip_cpp_non_code(source)
+    signature_start = clean_source.find(signature)
     assert signature_start >= 0, f"C++ function not found: {signature}"
-    opening_brace = source.find("{", signature_start)
+    opening_brace = clean_source.find("{", signature_start)
     assert opening_brace >= 0, f"C++ function body not found: {signature}"
     depth = 0
-    for index in range(opening_brace, len(source)):
-        if source[index] == "{":
+    for index in range(opening_brace, len(clean_source)):
+        if clean_source[index] == "{":
             depth += 1
-        elif source[index] == "}":
+        elif clean_source[index] == "}":
             depth -= 1
             if depth == 0:
-                return source[opening_brace + 1:index]
+                return opening_brace + 1, index
     raise AssertionError(f"unterminated C++ function: {signature}")
 
 
-def assert_tau_csv_contract(header_body, row_body, row_tokens):
+def cpp_function_body(source, signature):
+    start, end = cpp_function_bounds(source, signature)
+    return strip_cpp_non_code(source)[start:end]
+
+
+def cpp_function_body_raw(source, signature):
+    start, end = cpp_function_bounds(source, signature)
+    return source[start:end]
+
+
+def cpp_string_literals(source):
+    literals = []
+    state = "code"
+    buffer = []
+    index = 0
+    while index < len(source):
+        if state == "code":
+            if source.startswith("//", index):
+                state = "line_comment"
+                index += 2
+            elif source.startswith("/*", index):
+                state = "block_comment"
+                index += 2
+            elif source[index] == '"':
+                buffer = []
+                state = "string"
+                index += 1
+            elif source[index] == "'":
+                state = "char"
+                index += 1
+            else:
+                index += 1
+        elif state == "line_comment":
+            if source[index] == "\n":
+                state = "code"
+            index += 1
+        elif state == "block_comment":
+            if source.startswith("*/", index):
+                state = "code"
+                index += 2
+            else:
+                index += 1
+        else:
+            terminator = '"' if state == "string" else "'"
+            if source[index] == "\\":
+                if state == "string" and index + 1 < len(source):
+                    buffer.append(source[index + 1])
+                index += 2
+            elif source[index] == terminator:
+                if state == "string":
+                    literals.append("".join(buffer))
+                state = "code"
+                index += 1
+            else:
+                if state == "string":
+                    buffer.append(source[index])
+                index += 1
+    return literals
+
+
+def csv_header_schema(source, stream_prefix):
+    start = source.find(stream_prefix)
+    assert start >= 0, f"CSV header writer not found: {stream_prefix}"
+    end = source.find(";", start)
+    assert end >= 0, f"CSV header writer terminator not found: {stream_prefix}"
+    return "\n".join(cpp_string_literals(source[start:end]))
+
+
+def assert_tau_csv_contract(header_schema, row_body, row_tokens):
     for field in TAU_FIELDS:
-        assert field in header_body
+        assert field in header_schema
     for token in row_tokens:
         assert token in row_body
 
@@ -186,6 +371,15 @@ def bool_value(value):
     if isinstance(value, bool):
         return value
     return str(value).lower() == "true"
+
+
+def assert_runtime_snapshot(path_snapshot, module_snapshot):
+    assert sys.path == path_snapshot
+    assert set(sys.modules) == set(module_snapshot)
+    assert all(
+        sys.modules[name] is module
+        for name, module in module_snapshot.items()
+    )
 
 
 def test_shared_policy_is_the_numeric_source_of_truth():
@@ -197,16 +391,35 @@ def test_shared_policy_is_the_numeric_source_of_truth():
     assert "max_tau" in header
 
 
+def test_runner_import_context_is_reentrant_and_isolated():
+    path_snapshot = list(sys.path)
+    module_snapshot = dict(sys.modules)
+    for _ in range(2):
+        with runner_module() as runner:
+            assert runner.resolve_baseline_alias("Standard_MPC_CBF") == "Standard_MPC_CBF"
+        assert_runtime_snapshot(path_snapshot, module_snapshot)
+
+
 def test_runner_source_has_structured_baseline_and_writer_assignments():
     tree = runner_tree()
+    defaults = literal_assignment(tree, "DEFAULT_EXPERIMENT_SWITCHES")
+    for key in DYNAMIC_TAU_SWITCHES:
+        assert key in defaults
+
     baselines = literal_assignment(tree, "BASELINES")
-    assert baselines["Standard_MPC_CBF"]["planner"] == "secbf_planner.launch"
+    for baseline_id, _, expected_metric, _, _ in BASELINE_CONTRACT:
+        assert baseline_id in baselines
+        assert baselines[baseline_id]["planner"] == "secbf_planner.launch"
+        if baseline_id == "Standard_MPC_CBF":
+            assert baselines[baseline_id]["cbf_metric"] == expected_metric
     assert baselines["B1_ACBF_fixed"]["planner"] == "acbf0_planner.launch"
 
     switches_fn = top_level_function(tree, "baseline_switches")
+    baseline_sets = membership_sets(switches_fn)
+    assert {"No_semantic", "Unguarded_SEESM", "SEESM_Ours"} in baseline_sets
+    assert {"Unguarded_SEESM", "SEESM_Ours"} in baseline_sets
     assignments = subscript_assignments(switches_fn)
-    for key in DYNAMIC_TAU_SWITCHES:
-        assert key in assignments
+    assert "dynamic_tau_enabled" in assignments
     assert True in literal_values(assignments["dynamic_tau_enabled"])
     assert False in literal_values(assignments["dynamic_tau_enabled"])
     assert "seesm" in literal_values(assignments["cbf_metric"])
@@ -215,12 +428,19 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
 
     build_fn = top_level_function(tree, "build_commands")
     write_meta_fn = top_level_function(tree, "write_run_meta")
-    build_literals = string_literals(build_fn)
-    metadata_literals = string_literals(write_meta_fn)
-    for key in DYNAMIC_TAU_SWITCHES:
-        assert any(key in value for value in build_literals)
-    for key in ("dynamic_tau", "beta_source") + DYNAMIC_TAU_METADATA:
-        assert key in metadata_literals
+    planner_lists = assigned_values(build_fn, "planner")
+    assert any(
+        all(ast_contains_text(planner, key) for key in DYNAMIC_TAU_SWITCHES)
+        for planner in planner_lists
+    )
+    meta_dicts = [node for node in assigned_values(write_meta_fn, "meta") if isinstance(node, ast.Dict)]
+    assert meta_dicts
+    dynamic_tau_dict = dict_value(meta_dicts[0], "dynamic_tau")
+    assert isinstance(dynamic_tau_dict, ast.Dict)
+    assert dict_keys(dynamic_tau_dict) >= {
+        "enabled", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
+        "formula", "h_ee", "h_see", "beta_source",
+    }
 
 
 @pytest.mark.parametrize(
@@ -266,31 +486,37 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
 
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
-    mpc_constructor = cpp_function_body(mpc, "MpcSecbfNode(ros::NodeHandle& nh)")
+    mpc_constructor_raw = cpp_function_body_raw(mpc, "MpcSecbfNode(ros::NodeHandle& nh)")
     publish_region = cpp_function_body(mpc, "void publishAcceptedMargins")
     planner_row = cpp_function_body(mpc, "void writePlannerCsv")
-    assert '"/safety_margin/beta_applied_final"' in mpc_constructor
+    planner_header_start = mpc_constructor_raw.index("openCsv(planner_csv_")
+    planner_header_end = mpc_constructor_raw.index("openCsv(timing_csv_", planner_header_start)
+    planner_header_schema = "\n".join(
+        cpp_string_literals(mpc_constructor_raw[planner_header_start:planner_header_end])
+    )
+    assert '"/safety_margin/beta_applied_final"' in mpc_constructor_raw
     assert "out.beta_applied.assign(beta.begin(), beta.end())" in publish_region
     assert "pub_beta_applied_final_.publish(out)" in publish_region
     for field in TAU_FIELDS:
-        assert field in mpc_constructor
+        assert field in planner_header_schema
     for token in ("tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"):
         assert token in planner_row
 
     obs_manager = read("planner/vomp_planner/traj_planner/include/obs_manager/obs_manager.hpp")
-    obs_init = cpp_function_body(obs_manager, "void init(ros::NodeHandle &nh)")
+    obs_init_raw = cpp_function_body_raw(obs_manager, "void init(ros::NodeHandle &nh)")
     unsafe_region = cpp_function_body(obs_manager, "bool is_SEESM_unsafe")
-    global_header = cpp_function_body(obs_manager, "void prepareGlobalSeesmLog")
+    global_header_raw = cpp_function_body_raw(obs_manager, "void prepareGlobalSeesmLog")
     global_row = cpp_function_body(obs_manager, "void writeGlobalSeesmLog")
-    assert 'subscribe("/safety_margin/beta_applied_final"' in obs_init
+    global_header_schema = "\n".join(cpp_string_literals(global_header_raw))
+    assert 'subscribe("/safety_margin/beta_applied_final"' in obs_init_raw
     assert "beta_applied = margin_entry.beta_applied" in unsafe_region
     assert "- beta_applied" in unsafe_region
     for field in TAU_FIELDS:
-        assert field in global_header
+        assert field in global_header_schema
         assert field in global_row
 
     guard = read("planner/semantic_guard/src/beta_guard_node.cpp")
-    guard_header = cpp_function_body(guard, "BetaGuardNode(ros::NodeHandle& nh)")
+    guard_header_raw = cpp_function_body_raw(guard, "BetaGuardNode(ros::NodeHandle& nh)")
     guard_row = cpp_function_body(
         guard, "void semanticCb(const semantic_fusion::SemanticObstacleArrayConstPtr& msg)"
     )
@@ -298,14 +524,18 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         "tau_result.tau", "tau_result.T_i", "tau_result.f_r", "tau_result.f_v",
         "tau_result.f_T", "tau_result.valid", "tau_result.reason",
     )
-    assert_tau_csv_contract(guard_header, guard_row, row_tokens)
+    assert_tau_csv_contract(
+        csv_header_schema(guard_header_raw, 'csv_file_ << "time,'), guard_row, row_tokens
+    )
 
     ground_truth = read("planner/semantic_guard/src/beta_ground_truth_node.cpp")
-    ground_header = cpp_function_body(ground_truth, "BetaGroundTruthNode(ros::NodeHandle& nh)")
+    ground_header_raw = cpp_function_body_raw(ground_truth, "BetaGroundTruthNode(ros::NodeHandle& nh)")
     ground_row = cpp_function_body(
         ground_truth, "void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg)"
     )
-    assert_tau_csv_contract(ground_header, ground_row, row_tokens)
+    assert_tau_csv_contract(
+        csv_header_schema(ground_header_raw, 'csv_file_ << "time,'), ground_row, row_tokens
+    )
 
 
 def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
@@ -337,10 +567,14 @@ def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
         legacy,
         "void MPC_SOLVE::set_safety_st(std::string& smetric, casadi::Opti& opt, int index)",
     )
+    legacy_safety_raw = cpp_function_body_raw(
+        legacy,
+        "void MPC_SOLVE::set_safety_st(std::string& smetric, casadi::Opti& opt, int index)",
+    )
     legacy_tau = cpp_function_body(
         legacy, "double MPC_SOLVE::set_tau_value(Eigen::VectorXd _rob, Eigen::VectorXd _obs)"
     )
-    assert 'if(smetric == "ACBF")' in legacy_safety
+    assert 'if(smetric == "ACBF")' in legacy_safety_raw
     assert "set_tau_value" in legacy_safety
     assert "dynamic_tau_enabled" not in legacy_safety
     assert "double tau_max" in legacy_tau

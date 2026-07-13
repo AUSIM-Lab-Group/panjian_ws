@@ -74,3 +74,8 @@ TEST(DynamicTauPolicy, ReferenceFactorsAreAuditable) {
   EXPECT_NEAR(result.tau, 0.9, 1e-9);
 }
 }  // namespace
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}
