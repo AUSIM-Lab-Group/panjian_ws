@@ -45,6 +45,8 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     assert "obs(5) - curpos(3)" in source
     assert "obs(6) - curpos(4)" in source
     assert "lx + tau * vx" in source and "ly + tau * vy" in source
+    assert "if (!config_valid)" in source
+    assert "return casadi::MX(0.0);" in source
     assert (
         "return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y)\n"
         "         - obs_radius - robot_radius_ - beta_i;"
@@ -69,6 +71,11 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     assert "const bool obstacle_contract_valid = validateObstacleContractLocked();" in node
     assert "const int constrained_obs_count = obstacle_contract_valid" in node
     assert "!obstacle_contract_valid" in node
+    assert "resetAuditMetrics" in header and "resetAuditMetrics" in node
+    assert "std::isfinite" in node
+    assert "accepted_beta_ids_ == obstacle_ids_" in node
+    assert "accepted_beta_ids_ = obstacle_ids_" in node
+    assert "accepted_beta_list_.clear()" in node
 
 
 def test_mpc_launch_exposes_seesm_default_metric():

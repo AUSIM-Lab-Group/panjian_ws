@@ -40,6 +40,8 @@ public:
     bool solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
                Eigen::MatrixXd* obs_matrix, const std::vector<double>& beta_list);
 
+    void resetAuditMetrics();
+
     // Results
     std::vector<double> predict_x;  // Predicted states [x,y,θ,vx,vy] × (N+1)
     std::vector<double> predict_u;  // Predicted controls [v,ω] × N

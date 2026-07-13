@@ -6,6 +6,8 @@
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/UInt32MultiArray.h>
 #include <Eigen/Dense>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -153,15 +155,31 @@ private:
 
     void betaCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
         std::lock_guard<std::mutex> lock(beta_mutex_);
+        const bool finite_payload = std::all_of(
+            msg->data.begin(), msg->data.end(), [](float value) {
+                return std::isfinite(static_cast<double>(value));
+            });
+        if (!finite_payload) {
+            beta_list_.clear();
+            beta_payload_valid_ = false;
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting non-finite beta payload");
+            return;
+        }
         beta_list_.assign(msg->data.begin(), msg->data.end());
+        beta_payload_valid_ = true;
     }
 
     void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
         std::lock_guard<std::mutex> lock(obs_mutex_);
-        if (N_ <= 0 || msg->data.size() % (7 * N_) != 0) {
-            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Invalid obstacle payload size=%zu for N=%d",
-                               msg->data.size(), N_);
+        const bool finite_payload = std::all_of(
+            msg->data.begin(), msg->data.end(), [](float value) {
+                return std::isfinite(static_cast<double>(value));
+            });
+        if (N_ <= 0 || msg->data.size() % (7 * N_) != 0 || !finite_payload) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting invalid obstacle payload size=%zu finite=%s for N=%d",
+                               msg->data.size(), finite_payload ? "true" : "false", N_);
             obs_matrix_.resize(7, 0);
+            obs_payload_valid_ = false;
             return;
         }
         int obs_cols = msg->data.size() / 7;
@@ -170,6 +188,7 @@ private:
             for (int j = 0; j < 7; j++)
                 obs_matrix_(j, i) = msg->data[7 * i + j];
         }
+        obs_payload_valid_ = true;
     }
 
     void obsIdsCb(const std_msgs::UInt32MultiArrayConstPtr& msg) {
@@ -188,13 +207,28 @@ private:
         std::lock_guard<std::mutex> lock_obs(obs_mutex_);
 
         if (!has_odom_ || !has_path_) return;
+        if (!obs_payload_valid_ || !beta_payload_valid_ || !cur_state_.allFinite()) {
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting cycle with invalid finite payload");
+            cmd_vel_.linear.x = 0.0;
+            cmd_vel_.angular.z = 0.0;
+            solver_.resetAuditMetrics();
+            writePlannerCsv("payload_invalid", "payload_invalid", "payload_invalid", "none",
+                            false, false, 0.0);
+            return;
+        }
         if (!validateObstacleContractLocked()) {
             ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting cycle because obstacle payload and IDs do not match");
             cmd_vel_.linear.x = 0.0;
             cmd_vel_.angular.z = 0.0;
+            solver_.resetAuditMetrics();
             writePlannerCsv("count_mismatch", "count_mismatch", "count_mismatch", "none",
                             false, false, 0.0);
             return;
+        }
+
+        if (accepted_beta_ids_ != obstacle_ids_) {
+            accepted_beta_list_.clear();
+            accepted_beta_ids_.clear();
         }
 
         // Choose goal states from global path
@@ -224,7 +258,11 @@ private:
         if (!success) {
             if (mpc_feasibility_guard_enabled_) {
                 mpc_guard_used = true;
-                if (!accepted_beta_list_.empty() && validateBetaCountLocked(accepted_beta_list_, "previous")) {
+                const bool previous_beta_matches =
+                    !accepted_beta_list_.empty() &&
+                    accepted_beta_ids_ == obstacle_ids_ &&
+                    validateBetaCountLocked(accepted_beta_list_, "previous");
+                if (previous_beta_matches) {
                     success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, accepted_beta_list_);
                     if (success) {
                         mpc_status = "guard_previous";
@@ -242,6 +280,7 @@ private:
                         final_status = "success";
                         accepted_beta_source = "zero";
                         accepted_beta_list_ = zero_beta;
+                        accepted_beta_ids_ = obstacle_ids_;
                         final_beta_values = zero_beta;
                     }
                 }
@@ -275,10 +314,13 @@ private:
                 final_status = "success";
                 accepted_beta_source = "no_cbf";
                 final_beta_values.assign(obstacle_ids_.size(), 0.0);
+                accepted_beta_list_.clear();
+                accepted_beta_ids_.clear();
                 ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
         } else if (accepted_beta_source == "candidate") {
             accepted_beta_list_ = beta_list_;
+            accepted_beta_ids_ = obstacle_ids_;
             final_beta_values = beta_list_;
         }
 
@@ -346,7 +388,7 @@ private:
                          << beta_list_.size() << ","
                          << (used_fallback ? 1 : 0) << ","
                          << (mpc_guard_used ? 1 : 0) << ","
-                         << solver_.last_slack_max << ","
+                         << solver_.last_slack_sum << ","
                          << solver_.last_slack_sum << ","
                          << solver_.last_slack_mean << ","
                          << solver_.last_slack_max << ","
@@ -475,9 +517,12 @@ private:
     std::vector<uint32_t> obstacle_ids_;
     std::vector<double> beta_list_;
     std::vector<double> accepted_beta_list_;
+    std::vector<uint32_t> accepted_beta_ids_;
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
     bool mpc_feasibility_guard_enabled_;
+    bool obs_payload_valid_ = true;
+    bool beta_payload_valid_ = true;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::ofstream planner_csv_, timing_csv_;

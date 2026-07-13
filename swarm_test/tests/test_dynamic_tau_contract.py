@@ -885,7 +885,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("beta_count", "beta_list_.size()"),
         ("used_fallback", "(used_fallback ? 1 : 0)"),
         ("mpc_feasibility_guard_used", "(mpc_guard_used ? 1 : 0)"),
-        ("slack", "solver_.last_slack_max"),
+        ("slack", "solver_.last_slack_sum"),
         ("slack_sum", "solver_.last_slack_sum"),
         ("slack_mean", "solver_.last_slack_mean"),
         ("slack_max", "solver_.last_slack_max"),
@@ -938,7 +938,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
         ("tau_valid", "tau_result.valid"),
-        ("tau_reason", "tau_result.reason"),
+        ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
     )
     global_header_clean = cpp_function_body(obs_manager, "void prepareGlobalSeesmLog")
     global_open_guard = cpp_function_body(

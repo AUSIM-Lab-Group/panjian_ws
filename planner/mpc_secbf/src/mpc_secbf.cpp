@@ -39,11 +39,11 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     cur_state_ptr_ = cur_state;
     goal_state_ptr_ = goal_state;
     obs_matrix_ptr_ = obs_matrix;
-    last_slack_sum = 0.0;
-    last_slack_mean = 0.0;
-    last_slack_max = 0.0;
-    last_constrained_obs_count = 0;
-    last_constrained_obs_index = -1;
+    resetAuditMetrics();
+    if (cur_state == nullptr || goal_state == nullptr || obs_matrix == nullptr ||
+        !cur_state->allFinite() || !goal_state->allFinite() || !obs_matrix->allFinite()) {
+        return false;
+    }
 
     int obs_num = (N_ > 0 && obs_matrix->cols() > 0) ? (obs_matrix->cols() / N_) : 0;
 
@@ -236,6 +236,10 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 }
 
 casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
+    if (obs.size() < 7 || !obs.allFinite() || !std::isfinite(beta_i)) {
+        return casadi::MX(0.0);
+    }
+
     // obs layout: [x, y, radius, radius, theta, vx, vy].
     casadi::MX lx = obs(0) - curpos(0);
     casadi::MX ly = obs(1) - curpos(1);
@@ -336,6 +340,14 @@ casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {
     });
 
     return casadi::Function("kinematic_eq", {state, ctrl}, {rhs});
+}
+
+void MPC_SECBF_SOLVE::resetAuditMetrics() {
+    last_slack_sum = 0.0;
+    last_slack_mean = 0.0;
+    last_slack_max = 0.0;
+    last_constrained_obs_count = 0;
+    last_constrained_obs_index = -1;
 }
 
 void MPC_SECBF_SOLVE::rotateSolution() {

@@ -62,6 +62,10 @@ def check_mpc_source() -> None:
         "mpc_secbf.cpp: dynamic h_cbf must use dynamicTauCasadi",
     )
     require(
+        "if (!config_valid)" in src and "return casadi::MX(0.0);" in src,
+        "mpc_secbf.cpp: invalid dynamic tau config must return symbolic zero early",
+    )
+    require(
         "casadi::MX lookahead_x = lx + tau * vx" in src and
         "casadi::MX lookahead_y = ly + tau * vy" in src,
         "mpc_secbf.cpp: dynamic h_cbf must use l + tau*v lookahead",
@@ -88,6 +92,20 @@ def check_mpc_source() -> None:
         "const int constrained_obs_count = obstacle_contract_valid" in node and
         "!obstacle_contract_valid" in node,
         "mpc_secbf_node.cpp: audit must reject stale solver obstacle state on contract mismatch",
+    )
+    require(
+        "resetAuditMetrics" in header and "solver_.resetAuditMetrics();" in node,
+        "mpc_secbf: audit metrics must be reset before invalid-cycle logging",
+    )
+    require(
+        "accepted_beta_ids_ == obstacle_ids_" in node and
+        "accepted_beta_ids_ = obstacle_ids_" in node and
+        "accepted_beta_list_.clear()" in node,
+        "mpc_secbf_node.cpp: previous beta fallback must be bound to obstacle IDs",
+    )
+    require(
+        "std::isfinite" in node,
+        "mpc_secbf_node.cpp: payload validation must reject non-finite values",
     )
 
 
