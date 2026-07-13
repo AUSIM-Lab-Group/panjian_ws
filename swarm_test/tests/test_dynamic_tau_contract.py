@@ -1,6 +1,8 @@
 import ast
+import csv
 from contextlib import contextmanager
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -27,11 +29,17 @@ METADATA_TO_SWITCH = {
     "max_tau": "dynamic_tau_max_tau",
 }
 TAU_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason")
+MPC_TAU_FIELDS = ("dynamic_tau_enabled",) + TAU_FIELDS
+EXPECTED_DYNAMIC_TAU_METADATA = {
+    "formula": "tau=f_r*f_v*f_T*Ke*T_i",
+    "h_ee": "||l+tau*v||-R_obs-R_robot",
+    "h_see": "h_ee-beta",
+}
 BASELINE_CONTRACT = (
-    ("Standard_MPC_CBF", False, "distance", False, "fixed_config"),
-    ("No_semantic", True, "seesm", False, "zero"),
-    ("Unguarded_SEESM", True, "seesm", True, "candidate"),
-    ("SEESM_Ours", True, "seesm", True, "beta_applied_final"),
+    ("Standard_MPC_CBF", False, "distance", False, "fixed", "fixed_config", 0.4),
+    ("No_semantic", True, "seesm", False, "none", "zero", 0.0),
+    ("Unguarded_SEESM", True, "seesm", True, "full", "candidate", None),
+    ("SEESM_Ours", True, "seesm", True, "full", "beta_applied_final", None),
 )
 
 
@@ -338,7 +346,14 @@ def cpp_string_literals(source):
             terminator = '"' if state == "string" else "'"
             if source[index] == "\\":
                 if state == "string" and index + 1 < len(source):
-                    buffer.append(source[index + 1])
+                    escaped = source[index + 1]
+                    buffer.append({
+                        "n": "\n",
+                        "r": "\r",
+                        "t": "\t",
+                        "\\": "\\",
+                        '"': '"',
+                    }.get(escaped, escaped))
                 index += 2
             elif source[index] == terminator:
                 if state == "string":
@@ -352,19 +367,34 @@ def cpp_string_literals(source):
     return literals
 
 
-def csv_header_schema(source, stream_prefix):
+def csv_header_fields(source, stream_prefix, end_marker=";"):
     start = source.find(stream_prefix)
     assert start >= 0, f"CSV header writer not found: {stream_prefix}"
-    end = source.find(";", start)
+    end = source.find(end_marker, start)
     assert end >= 0, f"CSV header writer terminator not found: {stream_prefix}"
-    return "\n".join(cpp_string_literals(source[start:end]))
+    header = "".join(cpp_string_literals(source[start:end])).rstrip("\r\n")
+    rows = list(csv.reader([header]))
+    assert len(rows) == 1, f"CSV header is not one record: {stream_prefix}"
+    return rows[0]
 
 
-def assert_tau_csv_contract(header_schema, row_body, row_tokens):
-    for field in TAU_FIELDS:
-        assert field in header_schema
-    for token in row_tokens:
-        assert token in row_body
+def assert_csv_fields(header_fields, required_fields):
+    assert len(header_fields) == len(set(header_fields))
+    assert set(required_fields).issubset(set(header_fields))
+
+
+def cpp_stream_operands(source):
+    return [
+        re.sub(r"\s+", "", operand)
+        for operand in source.split("<<")[1:]
+    ]
+
+
+def assert_stream_writes(writer_body, expressions):
+    operands = cpp_stream_operands(writer_body)
+    for expression in expressions:
+        normalized = re.sub(r"\s+", "", expression)
+        assert any(normalized in operand for operand in operands), expression
 
 
 def bool_value(value):
@@ -407,7 +437,7 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
         assert key in defaults
 
     baselines = literal_assignment(tree, "BASELINES")
-    for baseline_id, _, expected_metric, _, _ in BASELINE_CONTRACT:
+    for baseline_id, _, expected_metric, _, _, _, _ in BASELINE_CONTRACT:
         assert baseline_id in baselines
         assert baselines[baseline_id]["planner"] == "secbf_planner.launch"
         if baseline_id == "Standard_MPC_CBF":
@@ -444,11 +474,15 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
 
 
 @pytest.mark.parametrize(
-    ("baseline_id", "dynamic_enabled", "cbf_metric", "global_enabled", "beta_source"),
+    (
+        "baseline_id", "dynamic_enabled", "cbf_metric", "global_enabled",
+        "semantic_mode", "beta_source", "fixed_beta",
+    ),
     BASELINE_CONTRACT,
 )
 def test_runner_generates_all_baseline_contracts_at_write_sites(
-    tmp_path, baseline_id, dynamic_enabled, cbf_metric, global_enabled, beta_source
+    tmp_path, baseline_id, dynamic_enabled, cbf_metric, global_enabled,
+    semantic_mode, beta_source, fixed_beta
 ):
     original_sys_path = list(sys.path)
     try:
@@ -461,6 +495,12 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
 
             args = launch_args(planner_cmd)
             switches = runner.baseline_switches(runner.resolve_baseline_alias(baseline_id))
+            assert switches["semantic_mode"] == semantic_mode
+            assert bool_value(switches["dynamic_tau_enabled"]) is dynamic_enabled
+            assert switches["cbf_metric"] == cbf_metric
+            assert bool_value(switches["global_seesm_enable"]) is global_enabled
+            if fixed_beta is not None:
+                assert float(switches["fixed_beta"]) == fixed_beta
             for key in DYNAMIC_TAU_SWITCHES:
                 assert key in args
                 assert key in switches
@@ -475,8 +515,13 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
             dynamic_tau = meta["dynamic_tau"]
             assert dynamic_tau["enabled"] is dynamic_enabled
             assert dynamic_tau["beta_source"] == beta_source
+            for key, expected in EXPECTED_DYNAMIC_TAU_METADATA.items():
+                assert dynamic_tau[key] == expected
             assert meta["cbf_metric"] == cbf_metric
             assert bool_value(meta["global_seesm_enable"]) is global_enabled
+            assert meta["semantic_mode"] == semantic_mode
+            if fixed_beta is not None:
+                assert float(meta["fixed_beta"]) == fixed_beta
             for field in DYNAMIC_TAU_METADATA:
                 assert field in dynamic_tau
                 assert float(dynamic_tau[field]) == float(switches[METADATA_TO_SWITCH[field]])
@@ -487,54 +532,115 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
     mpc_constructor_raw = cpp_function_body_raw(mpc, "MpcSecbfNode(ros::NodeHandle& nh)")
+    open_csv = cpp_function_body(
+        mpc,
+        "void openCsv(std::ofstream& file, const std::string& path, const std::string& header)",
+    )
     publish_region = cpp_function_body(mpc, "void publishAcceptedMargins")
-    planner_row = cpp_function_body(mpc, "void writePlannerCsv")
+    planner_row_if = cpp_function_body(mpc, "if (planner_csv_.is_open())")
     planner_header_start = mpc_constructor_raw.index("openCsv(planner_csv_")
     planner_header_end = mpc_constructor_raw.index("openCsv(timing_csv_", planner_header_start)
-    planner_header_schema = "\n".join(
-        cpp_string_literals(mpc_constructor_raw[planner_header_start:planner_header_end])
+    planner_header_fields = csv_header_fields(
+        mpc_constructor_raw[planner_header_start:planner_header_end],
+        '"t,mpc_status,',
     )
-    assert '"/safety_margin/beta_applied_final"' in mpc_constructor_raw
+    assert "if (file.is_open())" in open_csv
+    assert "file << header" in open_csv
+    assert "/safety_margin/beta_applied_final" in cpp_string_literals(mpc_constructor_raw)
     assert "out.beta_applied.assign(beta.begin(), beta.end())" in publish_region
     assert "pub_beta_applied_final_.publish(out)" in publish_region
-    for field in TAU_FIELDS:
-        assert field in planner_header_schema
-    for token in ("tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"):
-        assert token in planner_row
+    assert_csv_fields(planner_header_fields, MPC_TAU_FIELDS)
+    assert "planner_csv_" in planner_row_if
+    assert_stream_writes(
+        planner_row_if,
+        (
+            "dynamic_tau_enabled",
+            "tau_result.tau",
+            "tau_result.T_i",
+            "tau_result.f_r",
+            "tau_result.f_v",
+            "tau_result.f_T",
+            "tau_result.valid",
+            "tau_result.reason",
+        ),
+    )
 
     obs_manager = read("planner/vomp_planner/traj_planner/include/obs_manager/obs_manager.hpp")
     obs_init_raw = cpp_function_body_raw(obs_manager, "void init(ros::NodeHandle &nh)")
     unsafe_region = cpp_function_body(obs_manager, "bool is_SEESM_unsafe")
     global_header_raw = cpp_function_body_raw(obs_manager, "void prepareGlobalSeesmLog")
     global_row = cpp_function_body(obs_manager, "void writeGlobalSeesmLog")
-    global_header_schema = "\n".join(cpp_string_literals(global_header_raw))
-    assert 'subscribe("/safety_margin/beta_applied_final"' in obs_init_raw
+    global_header_clean = cpp_function_body(obs_manager, "void prepareGlobalSeesmLog")
+    global_header_fields = csv_header_fields(global_header_raw, '"t,replan_id,')
+    assert "/safety_margin/beta_applied_final" in cpp_string_literals(obs_init_raw)
     assert "beta_applied = margin_entry.beta_applied" in unsafe_region
     assert "- beta_applied" in unsafe_region
-    for field in TAU_FIELDS:
-        assert field in global_header_schema
-        assert field in global_row
+    assert "global_seesm_log_stream_" in global_header_clean
+    assert_csv_fields(global_header_fields, TAU_FIELDS)
+    assert "global_seesm_log_stream_" in global_row
+    assert_stream_writes(
+        global_row,
+        (
+            "tau_result.tau",
+            "tau_result.T_i",
+            "tau_result.f_r",
+            "tau_result.f_v",
+            "tau_result.f_T",
+            "tau_result.valid",
+            "tau_result.reason",
+        ),
+    )
 
     guard = read("planner/semantic_guard/src/beta_guard_node.cpp")
     guard_header_raw = cpp_function_body_raw(guard, "BetaGuardNode(ros::NodeHandle& nh)")
-    guard_row = cpp_function_body(
-        guard, "void semanticCb(const semantic_fusion::SemanticObstacleArrayConstPtr& msg)"
+    guard_header_if_raw = cpp_function_body_raw(guard_header_raw, "if (csv_file_.is_open())")
+    guard_header_if = cpp_function_body(guard_header_raw, "if (csv_file_.is_open())")
+    guard_callback = cpp_function_body_raw(
+        guard,
+        "void semanticCb(const semantic_fusion::SemanticObstacleArrayConstPtr& msg)",
     )
-    row_tokens = (
-        "tau_result.tau", "tau_result.T_i", "tau_result.f_r", "tau_result.f_v",
-        "tau_result.f_T", "tau_result.valid", "tau_result.reason",
-    )
-    assert_tau_csv_contract(
-        csv_header_schema(guard_header_raw, 'csv_file_ << "time,'), guard_row, row_tokens
+    guard_row_if = cpp_function_body(guard_callback, "if (csv_file_.is_open())")
+    guard_header_fields = csv_header_fields(guard_header_if_raw, 'csv_file_ << "time,')
+    assert "csv_file_" in guard_header_if
+    assert_csv_fields(guard_header_fields, TAU_FIELDS)
+    assert "csv_file_" in guard_row_if
+    assert_stream_writes(
+        guard_row_if,
+        (
+            "tau_result.tau",
+            "tau_result.T_i",
+            "tau_result.f_r",
+            "tau_result.f_v",
+            "tau_result.f_T",
+            "tau_result.valid",
+            "tau_result.reason",
+        ),
     )
 
     ground_truth = read("planner/semantic_guard/src/beta_ground_truth_node.cpp")
     ground_header_raw = cpp_function_body_raw(ground_truth, "BetaGroundTruthNode(ros::NodeHandle& nh)")
-    ground_row = cpp_function_body(
-        ground_truth, "void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg)"
+    ground_header_if_raw = cpp_function_body_raw(ground_header_raw, "if (csv_file_.is_open())")
+    ground_header_if = cpp_function_body(ground_header_raw, "if (csv_file_.is_open())")
+    ground_callback = cpp_function_body_raw(
+        ground_truth,
+        "void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg)",
     )
-    assert_tau_csv_contract(
-        csv_header_schema(ground_header_raw, 'csv_file_ << "time,'), ground_row, row_tokens
+    ground_row_if = cpp_function_body(ground_callback, "if (csv_file_.is_open())")
+    ground_header_fields = csv_header_fields(ground_header_if_raw, 'csv_file_ << "time,')
+    assert "csv_file_" in ground_header_if
+    assert_csv_fields(ground_header_fields, TAU_FIELDS)
+    assert "csv_file_" in ground_row_if
+    assert_stream_writes(
+        ground_row_if,
+        (
+            "tau_result.tau",
+            "tau_result.T_i",
+            "tau_result.f_r",
+            "tau_result.f_v",
+            "tau_result.f_T",
+            "tau_result.valid",
+            "tau_result.reason",
+        ),
     )
 
 
@@ -574,7 +680,8 @@ def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
     legacy_tau = cpp_function_body(
         legacy, "double MPC_SOLVE::set_tau_value(Eigen::VectorXd _rob, Eigen::VectorXd _obs)"
     )
-    assert 'if(smetric == "ACBF")' in legacy_safety_raw
+    assert "if(smetric ==" in legacy_safety
+    assert "ACBF" in cpp_string_literals(legacy_safety_raw)
     assert "set_tau_value" in legacy_safety
     assert "dynamic_tau_enabled" not in legacy_safety
     assert "double tau_max" in legacy_tau
