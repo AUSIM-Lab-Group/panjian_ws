@@ -430,12 +430,82 @@ def cpp_string_literals(source):
     return literals
 
 
+def cpp_string_spans(source):
+    clean_source = strip_cpp_comments_only(source)
+    spans = []
+    state = "code"
+    raw_delimiter = None
+    start = None
+    index = 0
+    while index < len(clean_source):
+        if state == "code":
+            raw_match = CPP_RAW_STRING_START.match(clean_source, index)
+            if raw_match:
+                raw_delimiter = raw_match.group(1)
+                index = raw_match.end()
+                state = "raw"
+            elif clean_source[index] == '"':
+                start = index
+                index += 1
+                state = "string"
+            elif clean_source[index] == "'":
+                index += 1
+                state = "char"
+            else:
+                index += 1
+        elif state == "raw":
+            terminator = ")" + raw_delimiter + '"'
+            end = clean_source.find(terminator, index)
+            if end < 0:
+                index = len(clean_source)
+            else:
+                index = end + len(terminator)
+                raw_delimiter = None
+                state = "code"
+        else:
+            if clean_source[index] == "\\":
+                index += 2
+            elif clean_source[index] == '"':
+                spans.append((start, index + 1))
+                start = None
+                index += 1
+                state = "code"
+            else:
+                index += 1
+    return spans
+
+
+def cpp_statement_from_prefix(source, stream_prefix, end_marker=";"):
+    clean_source = strip_cpp_comments_only(source)
+    if stream_prefix.startswith('"'):
+        starts = (
+            start
+            for start, _ in cpp_string_spans(clean_source)
+            if clean_source.startswith(stream_prefix, start)
+        )
+    else:
+        starts = (
+            index
+            for index in cpp_code_positions(clean_source)
+            if clean_source.startswith(stream_prefix, index)
+        )
+    start = next(starts, None)
+    assert start is not None, f"CSV header writer not found: {stream_prefix}"
+    end = next(
+        (
+            index
+            for index in cpp_code_positions(clean_source, start)
+            if clean_source.startswith(end_marker, index)
+        ),
+        None,
+    )
+    assert end is not None, f"CSV header writer terminator not found: {stream_prefix}"
+    return clean_source[start:end]
+
+
 def csv_header_fields(source, stream_prefix, end_marker=";"):
-    start = source.find(stream_prefix)
-    assert start >= 0, f"CSV header writer not found: {stream_prefix}"
-    end = source.find(end_marker, start)
-    assert end >= 0, f"CSV header writer terminator not found: {stream_prefix}"
-    header = "".join(cpp_string_literals(source[start:end])).rstrip("\r\n")
+    statement = cpp_statement_from_prefix(source, stream_prefix, end_marker)
+    header = "".join(cpp_string_literals(statement)).rstrip("\r\n")
     rows = list(csv.reader([header]))
     assert len(rows) == 1, f"CSV header is not one record: {stream_prefix}"
     return rows[0]
@@ -588,6 +658,20 @@ void writer() {
     ]
     assert_cpp_include(source, "semantic_guard/dynamic_tau.hpp")
 
+    header_source = r'''
+// csv_file_ << "fake,comment\n";
+R"raw(
+csv_file_ << "fake,raw\n";
+)raw";
+if (csv_file_.is_open()) {
+  csv_file_ << "real,header" << "\n";
+}
+'''
+    assert csv_header_fields(header_source, 'csv_file_ << "real,') == [
+        "real",
+        "header",
+    ]
+
 
 def test_cpp_parser_rejects_comment_and_string_pseudo_declarations():
     source = r'''
@@ -599,6 +683,17 @@ R"raw(
 '''
     with pytest.raises(AssertionError):
         assert_cpp_include(source, "semantic_guard/dynamic_tau.hpp")
+
+
+def test_csv_header_parser_rejects_comment_and_raw_string_pseudo_headers():
+    source = r'''
+// csv_file_ << "fake,comment\n";
+R"raw(
+csv_file_ << "fake,raw\n";
+)raw";
+'''
+    with pytest.raises(AssertionError):
+        csv_header_fields(source, 'csv_file_ << "fake,')
 
 
 def bool_value(value):
