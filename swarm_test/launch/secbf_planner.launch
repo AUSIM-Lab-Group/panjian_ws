@@ -157,6 +157,12 @@
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
+    <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
+    <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
+    <arg name="dynamic_tau_min_distance" value="$(arg dynamic_tau_min_distance)"/>
+    <arg name="dynamic_tau_max_tau" value="$(arg dynamic_tau_max_tau)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="cmd_vel_topic" value="/cmd_vel1"/>
     <arg name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub"/>

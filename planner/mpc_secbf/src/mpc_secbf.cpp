@@ -243,9 +243,9 @@ casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, doubl
     casadi::MX vy = obs(6) - curpos(4);
     double obs_radius = obs(2);
 
-    // Standard MPC-CBF keeps the instantaneous distance barrier and ignores beta_i.
+    // Standard MPC-CBF keeps the instantaneous fixed-distance barrier.
     if (!dynamic_tau_enabled_) {
-        return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_;
+        return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;
     }
 
     casadi::MX tau = dynamicTauCasadi(lx, ly, vx, vy,

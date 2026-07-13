@@ -26,7 +26,10 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     # Standard MPC-CBF is instantaneous distance with fixed beta=0.4 selected by the runner.
     assert 'dynamic_tau_enabled = false' in header
     assert "if (!dynamic_tau_enabled_)" in source
-    assert "sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_" in source
+    assert (
+        "return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;"
+        in source
+    )
     assert "R_safe" not in source and "R_safe" not in header
     assert "switches[\"fixed_beta\"]" in (
         REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
@@ -42,7 +45,11 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     assert "obs(5) - curpos(3)" in source
     assert "obs(6) - curpos(4)" in source
     assert "lx + tau * vx" in source and "ly + tau * vy" in source
-    assert "- beta_i" in source
+    assert (
+        "return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y)\n"
+        "         - obs_radius - robot_radius_ - beta_i;"
+        in source
+    )
     assert "dynamic_tau_enabled" in node
     for param in (
         "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
@@ -97,6 +104,35 @@ def test_top_level_launch_forwards_distance_metric_and_adsm():
     assert '<arg name="front_adsm" default="true"/>' in launch
     assert '<arg name="cbf_metric" value="$(arg cbf_metric)"/>' in launch
     assert '<arg name="used_adsm_" value="$(arg front_adsm)"/>' in launch
+
+
+def test_top_level_launch_forwards_dynamic_tau_to_mpc():
+    launch = (REPO_ROOT / "swarm_test/launch/secbf_planner.launch").read_text(encoding="utf-8")
+    mpc_include = launch.split('<include file="$(find mpc_secbf)/launch/mpc_secbf.launch">', 1)[1].split(
+        "</include>", 1
+    )[0]
+
+    dynamic_args = (
+        ("dynamic_tau_enabled", "false"),
+        ("dynamic_tau_ke", "0.30"),
+        ("dynamic_tau_tmax", "2.0"),
+        ("dynamic_tau_min_speed", "1e-6"),
+        ("dynamic_tau_min_distance", "1e-6"),
+        ("dynamic_tau_max_tau", "2.0"),
+    )
+    for name, default in dynamic_args:
+        assert f'<arg name="{name}" default="{default}"/>' in launch
+        assert f'<arg name="{name}" value="$(arg {name})"/>' in mpc_include
+
+    # The nested MPC launch owns the typed ROS params; the top-level launch preserves
+    # the existing Guard/global forwarding while passing these args through.
+    mpc_launch = (REPO_ROOT / "planner/mpc_secbf/launch/mpc_secbf.launch").read_text(encoding="utf-8")
+    for name in (
+        "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
+        "dynamic_tau/min_distance", "dynamic_tau/max_tau",
+    ):
+        assert f'<param name="{name}"' in mpc_launch
+        assert f'<param name="{name}"' in mpc_launch and 'type="double"' in mpc_launch
 
 
 def test_runner_metadata_records_distance_metric_and_adsm_switch():
