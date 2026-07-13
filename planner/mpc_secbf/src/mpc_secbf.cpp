@@ -8,7 +8,9 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    std::vector<double> Q, std::vector<double> R,
                                    double gamma, double beta_bar_unknown, double robot_radius,
                                    double epsilon_max, double slack_weight,
-                                   int max_cbf_obstacles, const std::string& cbf_metric) {
+                                   int max_cbf_obstacles, const std::string& cbf_metric,
+                                   bool dynamic_tau_enabled,
+                                   const semantic_guard::DynamicTauParams& dynamic_tau_params) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -23,10 +25,13 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     slack_weight_ = slack_weight;
     max_cbf_obstacles_ = std::max(1, max_cbf_obstacles);
     cbf_metric_ = cbf_metric;
+    dynamic_tau_enabled_ = dynamic_tau_enabled;
+    dynamic_tau_params_ = dynamic_tau_params;
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d",
-             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_, max_cbf_obstacles_);
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s",
+             N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_,
+             max_cbf_obstacles_, dynamic_tau_enabled_ ? "true" : "false");
 }
 
 bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
@@ -38,6 +43,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     last_slack_mean = 0.0;
     last_slack_max = 0.0;
     last_constrained_obs_count = 0;
+    last_constrained_obs_index = -1;
 
     int obs_num = (N_ > 0 && obs_matrix->cols() > 0) ? (obs_matrix->cols() / N_) : 0;
 
@@ -157,6 +163,9 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
             prob.subject_to(cbf <= epsilon(choose_num, i));
         }
         choose_num++;
+        if (last_constrained_obs_index < 0) {
+            last_constrained_obs_index = original_idx;
+        }
     }
     last_constrained_obs_count = choose_num;
 
@@ -227,23 +236,79 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 }
 
 casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i) {
-    // 统一安全函数:
-    //   h_EE  = ||l|| - R_obs - R_robot
-    //   h_SEE = h_EE - β_i
-    //
-    // 注: obs 的位置已经是 globalFsm 预测的未来位置 (含 τv 外推)
-    // 所以 dx, dy 直接就是 "l + τv" 的效果
-
-    casadi::MX dx = obs(0) - curpos(0);  // l_x (已含预测)
-    casadi::MX dy = obs(1) - curpos(1);  // l_y (已含预测)
+    // obs layout: [x, y, radius, radius, theta, vx, vy].
+    casadi::MX lx = obs(0) - curpos(0);
+    casadi::MX ly = obs(1) - curpos(1);
+    casadi::MX vx = obs(5) - curpos(3);
+    casadi::MX vy = obs(6) - curpos(4);
     double obs_radius = obs(2);
 
-    // h_EE = ||l|| - R_obs - R_robot
-    casadi::MX h_EE = casadi::MX::sqrt(dx * dx + dy * dy) - obs_radius - robot_radius_;
+    // Standard MPC-CBF keeps the instantaneous distance barrier and ignores beta_i.
+    if (!dynamic_tau_enabled_) {
+        return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_;
+    }
 
-    // h_SEE = h_EE - β_i  (β 是在 EESM 裕度上再扣的语义余量)
-    casadi::MX h_SEE = h_EE - beta_i;
-    return h_SEE;
+    casadi::MX tau = dynamicTauCasadi(lx, ly, vx, vy,
+                                      obs_radius + robot_radius_);
+    casadi::MX lookahead_x = lx + tau * vx;
+    casadi::MX lookahead_y = ly + tau * vy;
+    return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y)
+         - obs_radius - robot_radius_ - beta_i;
+}
+
+casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
+                                               const casadi::MX& ly,
+                                               const casadi::MX& vx,
+                                               const casadi::MX& vy,
+                                               double inflated_radius) {
+    // Keep the symbolic expression aligned with semantic_guard::computeDynamicTau.
+    // The guards make every denominator finite while the validity gate preserves the
+    // numeric policy for degenerate inputs and invalid configuration.
+    const double min_distance = std::max(dynamic_tau_params_.min_distance, 1e-12);
+    const double min_speed = std::max(dynamic_tau_params_.min_speed, 1e-12);
+    const bool config_valid = std::isfinite(inflated_radius) && inflated_radius >= 0.0 &&
+                              std::isfinite(dynamic_tau_params_.ke) &&
+                              dynamic_tau_params_.ke >= 0.0 &&
+                              std::isfinite(dynamic_tau_params_.t_max) &&
+                              dynamic_tau_params_.t_max >= 0.0 &&
+                              std::isfinite(dynamic_tau_params_.min_speed) &&
+                              dynamic_tau_params_.min_speed >= 0.0 &&
+                              std::isfinite(dynamic_tau_params_.min_distance) &&
+                              dynamic_tau_params_.min_distance >= 0.0 &&
+                              std::isfinite(dynamic_tau_params_.max_tau) &&
+                              dynamic_tau_params_.max_tau > 0.0;
+
+    casadi::MX distance = casadi::MX::sqrt(lx * lx + ly * ly);
+    casadi::MX speed = casadi::MX::sqrt(vx * vx + vy * vy);
+    casadi::MX distance_safe = casadi::MX::fmax(distance, min_distance);
+    casadi::MX speed_safe = casadi::MX::fmax(speed, min_speed);
+    casadi::MX distance_valid = casadi::MX::if_else(
+        distance > dynamic_tau_params_.min_distance, 1.0, 0.0);
+    casadi::MX speed_valid = casadi::MX::if_else(
+        speed > dynamic_tau_params_.min_speed, 1.0, 0.0);
+    casadi::MX valid = distance_valid * speed_valid * (config_valid ? 1.0 : 0.0);
+
+    casadi::MX nx = lx / distance_safe;
+    casadi::MX ny = ly / distance_safe;
+    casadi::MX nvx = vx / speed_safe;
+    casadi::MX nvy = vy / speed_safe;
+    casadi::MX cos_delta = nx * nvx + ny * nvy;
+    casadi::MX f_r = valid * casadi::MX::if_else(cos_delta < 0.0, 1.0, 0.0);
+
+    casadi::MX dot = lx * vx + ly * vy;
+    casadi::MX cone_value = dot * dot +
+                            (inflated_radius * inflated_radius - distance * distance) *
+                            speed * speed;
+    casadi::MX f_v = valid * casadi::MX::if_else(cone_value > 0.0, 1.0, 0.0);
+
+    casadi::MX approach_cos = casadi::MX::fmax(-cos_delta, 0.0);
+    casadi::MX clearance = casadi::MX::fmax(distance - inflated_radius, 0.0);
+    casadi::MX T_i = valid * clearance * approach_cos / speed_safe;
+    casadi::MX f_T = valid * casadi::MX::if_else(
+        dynamic_tau_params_.t_max - T_i > 0.0, 1.0, 0.0);
+    casadi::MX raw_tau = f_r * f_v * f_T * dynamic_tau_params_.ke * T_i;
+    const double max_tau = std::max(dynamic_tau_params_.max_tau, 0.0);
+    return casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);
 }
 
 casadi::Function MPC_SECBF_SOLVE::setKinematicEquation() {

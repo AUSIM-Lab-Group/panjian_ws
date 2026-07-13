@@ -11,6 +11,12 @@
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="dynamic_tau_enabled" default="false"/>
+  <arg name="dynamic_tau_ke" default="0.30"/>
+  <arg name="dynamic_tau_tmax" default="2.0"/>
+  <arg name="dynamic_tau_min_speed" default="1e-6"/>
+  <arg name="dynamic_tau_min_distance" default="1e-6"/>
+  <arg name="dynamic_tau_max_tau" default="2.0"/>
   <arg name="v_min" default="0.3"/>
   <arg name="o_max" default="0.8"/>
   <arg name="odom_topic" default="/Odometry"/>
@@ -38,6 +44,12 @@
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+    <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
+    <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
+    <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
+    <param name="dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)" type="double"/>
+    <param name="dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
     <param name="planner_log_path" value="$(arg planner_log_path)"/>
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
 

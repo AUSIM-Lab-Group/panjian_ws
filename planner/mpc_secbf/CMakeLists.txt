@@ -32,6 +32,7 @@ catkin_package(
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+  ${semantic_guard_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
 )
@@ -40,7 +41,11 @@ add_executable(mpc_secbf_node
   src/mpc_secbf_node.cpp
   src/mpc_secbf.cpp
 )
-add_dependencies(mpc_secbf_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(mpc_secbf_node
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+  ${semantic_guard_EXPORTED_TARGETS}
+)
 target_link_libraries(mpc_secbf_node
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}

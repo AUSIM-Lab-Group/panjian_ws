@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <casadi/casadi.hpp>
+#include <semantic_guard/dynamic_tau.hpp>
 #include <vector>
 #include <string>
 #include <memory>
@@ -23,13 +24,16 @@ public:
                      double gamma, double beta_bar_unknown, double robot_radius,
                      double epsilon_max = 0.05, double slack_weight = 1000.0,
                      int max_cbf_obstacles = 6,
-                     const std::string& cbf_metric = "seesm");
+                     const std::string& cbf_metric = "seesm",
+                     bool dynamic_tau_enabled = false,
+                     const semantic_guard::DynamicTauParams& dynamic_tau_params =
+                         semantic_guard::DynamicTauParams());
 
     /**
      * Solve the MPC-SECBF problem.
      * @param cur_state  [x, y, theta, vx, vy] (5×1)
      * @param goal_state [x, y, theta] × N (3×N reference trajectory)
-     * @param obs_matrix [x, y, R, vx_pred...] × (N*num_obs) obstacle predictions
+     * @param obs_matrix [x, y, radius, radius, theta, vx, vy] × (N*num_obs) predictions
      * @param beta_list  per-obstacle β values from semantic_guard
      * @return true if solved successfully
      */
@@ -43,10 +47,16 @@ public:
     double last_slack_mean = 0.0;
     double last_slack_max = 0.0;
     int last_constrained_obs_count = 0;
+    int last_constrained_obs_index = -1;
 
 private:
-    // Shared distance barrier; the caller selects predicted or frozen obstacle state.
+    // The caller selects predicted or frozen obstacle state before evaluating h.
     casadi::MX h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i);
+
+    // Symbolic dynamic lookahead. Numeric dynamic_tau policy is reserved for audit logs.
+    casadi::MX dynamicTauCasadi(const casadi::MX& lx, const casadi::MX& ly,
+                                const casadi::MX& vx, const casadi::MX& vy,
+                                double inflated_radius);
 
     // Kinematic model
     casadi::Function setKinematicEquation();
@@ -67,6 +77,8 @@ private:
     double slack_weight_ = 1000.0;
     int max_cbf_obstacles_ = 6;
     std::string cbf_metric_ = "seesm";
+    bool dynamic_tau_enabled_ = false;
+    semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::vector<double> Q_, R_;
 
     // CasADi objects

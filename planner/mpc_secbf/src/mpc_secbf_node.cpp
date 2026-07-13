@@ -15,6 +15,7 @@
 
 #include "mpc_secbf/mpc_secbf.h"
 #include "semantic_guard/AppliedMarginArray.h"
+#include "semantic_guard/dynamic_tau.hpp"
 #include "semantic_fusion/SemanticObstacleArray.h"
 
 class MpcSecbfNode {
@@ -28,6 +29,12 @@ public:
         bool mpc_feasibility_guard_enabled;
         double v_max, v_min, o_max;
         std::string cbf_metric;
+        nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
+        nh_.param("dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
+        nh_.param("dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
+        nh_.param("dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
+        nh_.param("dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
+        nh_.param("dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
         nh_.param("mpc/step_time", Ts, 0.2);
         nh_.param("mpc/pre_step", N, 20);
@@ -48,6 +55,7 @@ public:
         if (!nh_.getParam("mpc/robot_radius", robot_radius)) {
             nh_.param("robot/radius", robot_radius, 0.4);
         }
+        robot_radius_ = robot_radius;
         std::string planner_log_path;
         std::string timing_log_path;
         nh_.param<std::string>("planner_log_path", planner_log_path, "");
@@ -62,12 +70,14 @@ public:
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
-                            epsilon_max, slack_weight, max_cbf_obstacles, cbf_metric);
+                            epsilon_max, slack_weight, max_cbf_obstacles, cbf_metric,
+                            dynamic_tau_enabled_, dynamic_tau_params_);
 
         openCsv(planner_csv_, planner_log_path,
                 "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
                 "cmd_v,cmd_w,obs_count,constrained_obs_count,beta_count,used_fallback,mpc_feasibility_guard_used,"
-                "slack,slack_sum,slack_mean,slack_max,solve_time_ms\n");
+                "slack,slack_sum,slack_mean,slack_max,solve_time_ms,"
+                "dynamic_tau_enabled,tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
 
@@ -304,6 +314,22 @@ private:
         const double t = ros::Time::now().toSec();
         const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
         const int constrained_obs_count = solver_.last_constrained_obs_count;
+        const bool dynamic_tau_enabled = dynamic_tau_enabled_;
+        semantic_guard::DynamicTauResult tau_result;
+        if (solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
+            solver_.last_constrained_obs_index * N_ >= obs_matrix_.cols()) {
+            tau_result.reason = "no_constrained_obstacle";
+        } else if (!dynamic_tau_enabled) {
+            tau_result.reason = "disabled";
+        } else {
+            const Eigen::VectorXd obs = obs_matrix_.col(solver_.last_constrained_obs_index * N_);
+            const double lx = obs(0) - cur_state_(0);
+            const double ly = obs(1) - cur_state_(1);
+            const double vx = obs(5) - cur_state_(3);
+            const double vy = obs(6) - cur_state_(4);
+            tau_result = semantic_guard::computeDynamicTau(
+                lx, ly, vx, vy, obs(2) + robot_radius_, dynamic_tau_params_);
+        }
         if (planner_csv_.is_open()) {
             planner_csv_ << t << ","
                          << mpc_status << ","
@@ -321,7 +347,15 @@ private:
                          << solver_.last_slack_sum << ","
                          << solver_.last_slack_mean << ","
                          << solver_.last_slack_max << ","
-                         << solve_time_ms << "\n";
+                         << solve_time_ms << ","
+                         << dynamic_tau_enabled << ","
+                         << tau_result.tau << ","
+                         << tau_result.T_i << ","
+                         << tau_result.f_r << ","
+                         << tau_result.f_v << ","
+                         << tau_result.f_T << ","
+                         << tau_result.valid << ","
+                         << tau_result.reason << "\n";
             planner_csv_.flush();
         }
         if (timing_csv_.is_open()) {
@@ -428,6 +462,7 @@ private:
     MPC_SECBF_SOLVE solver_;
     int N_;
     double Ts_;
+    double robot_radius_ = 0.4;
 
     std::mutex odom_mutex_, path_mutex_, beta_mutex_, obs_mutex_;
     Eigen::VectorXd cur_state_;
@@ -440,6 +475,8 @@ private:
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
     bool mpc_feasibility_guard_enabled_;
+    bool dynamic_tau_enabled_ = false;
+    semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::ofstream planner_csv_, timing_csv_;
 };
 

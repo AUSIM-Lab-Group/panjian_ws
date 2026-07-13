@@ -15,6 +15,52 @@ def test_distance_metric_freezes_obstacle_position_for_the_horizon():
     assert "h_cbf" in source
 
 
+def test_standard_and_dynamic_kernel_barrier_contracts():
+    source = (REPO_ROOT / "planner/mpc_secbf/src/mpc_secbf.cpp").read_text(encoding="utf-8")
+    header = (REPO_ROOT / "planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h").read_text(encoding="utf-8")
+    node = (REPO_ROOT / "planner/mpc_secbf/src/mpc_secbf_node.cpp").read_text(encoding="utf-8")
+    launch = (REPO_ROOT / "planner/mpc_secbf/launch/mpc_secbf.launch").read_text(encoding="utf-8")
+    cmake = (REPO_ROOT / "planner/mpc_secbf/CMakeLists.txt").read_text(encoding="utf-8")
+    package = (REPO_ROOT / "planner/mpc_secbf/package.xml").read_text(encoding="utf-8")
+
+    # Standard MPC-CBF is instantaneous distance with fixed beta=0.4 selected by the runner.
+    assert 'dynamic_tau_enabled = false' in header
+    assert "if (!dynamic_tau_enabled_)" in source
+    assert "sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_" in source
+    assert "R_safe" not in source and "R_safe" not in header
+    assert "switches[\"fixed_beta\"]" in (
+        REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
+    ).read_text(encoding="utf-8")
+    assert "0.4" in (
+        REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
+    ).read_text(encoding="utf-8")
+
+    # Dynamic methods use the CasADi kernel and the shared semantic_guard parameter contract.
+    assert "semantic_guard/dynamic_tau.hpp" in header
+    assert "dynamicTauCasadi" in header and "dynamicTauCasadi" in source
+    assert '<arg name="dynamic_tau_enabled" default="false"/>' in launch
+    assert "obs(5) - curpos(3)" in source
+    assert "obs(6) - curpos(4)" in source
+    assert "lx + tau * vx" in source and "ly + tau * vy" in source
+    assert "- beta_i" in source
+    assert "dynamic_tau_enabled" in node
+    for param in (
+        "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
+        "dynamic_tau/min_distance", "dynamic_tau/max_tau",
+    ):
+        assert param in launch and 'type="double"' in launch
+        assert param in node
+    assert "semantic_guard" in cmake
+    assert "${semantic_guard_INCLUDE_DIRS}" in cmake
+    assert "<build_export_depend>semantic_guard</build_export_depend>" in package
+    for field in (
+        "dynamic_tau_enabled", "tau", "T_i", "f_r", "f_v", "f_T",
+        "tau_valid", "tau_reason",
+    ):
+        assert field in node
+    assert 'tau_result.reason = "no_constrained_obstacle"' in node
+
+
 def test_mpc_launch_exposes_seesm_default_metric():
     launch = (REPO_ROOT / "planner/mpc_secbf/launch/mpc_secbf.launch").read_text(encoding="utf-8")
 
