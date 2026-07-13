@@ -28,8 +28,6 @@ METADATA_TO_SWITCH = {
     "min_distance": "dynamic_tau_min_distance",
     "max_tau": "dynamic_tau_max_tau",
 }
-TAU_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason")
-MPC_TAU_FIELDS = ("dynamic_tau_enabled",) + TAU_FIELDS
 EXPECTED_DYNAMIC_TAU_METADATA = {
     "formula": "tau=f_r*f_v*f_T*Ke*T_i",
     "h_ee": "||l+tau*v||-R_obs-R_robot",
@@ -378,23 +376,126 @@ def csv_header_fields(source, stream_prefix, end_marker=";"):
     return rows[0]
 
 
-def assert_csv_fields(header_fields, required_fields):
-    assert len(header_fields) == len(set(header_fields))
-    assert set(required_fields).issubset(set(header_fields))
+def strip_cpp_comments(source):
+    masked = list(source)
+    state = "code"
+    index = 0
+
+    def mask(position):
+        if masked[position] != "\n":
+            masked[position] = " "
+
+    while index < len(source):
+        if state == "code":
+            if source.startswith("//", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "line_comment"
+            elif source.startswith("/*", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "block_comment"
+            elif source[index] == '"':
+                index += 1
+                state = "string"
+            elif source[index] == "'":
+                index += 1
+                state = "char"
+            else:
+                index += 1
+        elif state == "line_comment":
+            if source[index] == "\n":
+                state = "code"
+            else:
+                mask(index)
+            index += 1
+        elif state == "block_comment":
+            if source.startswith("*/", index):
+                mask(index)
+                mask(index + 1)
+                index += 2
+                state = "code"
+            else:
+                mask(index)
+                index += 1
+        else:
+            if source[index] == "\\":
+                index += 2
+            elif source[index] == ('"' if state == "string" else "'"):
+                index += 1
+                state = "code"
+            else:
+                index += 1
+    return "".join(masked)
 
 
 def cpp_stream_operands(source):
+    clean_source = strip_cpp_comments(source)
+    shifts = []
+    state = "code"
+    index = 0
+    while index < len(clean_source):
+        if state == "code":
+            if clean_source.startswith("<<", index):
+                shifts.append(index)
+                index += 2
+            elif clean_source[index] == '"':
+                index += 1
+                state = "string"
+            elif clean_source[index] == "'":
+                index += 1
+                state = "char"
+            else:
+                index += 1
+        else:
+            if clean_source[index] == "\\":
+                index += 2
+            elif clean_source[index] == ('"' if state == "string" else "'"):
+                index += 1
+                state = "code"
+            else:
+                index += 1
+    assert shifts, "CSV writer has no stream insertion expressions"
     return [
-        re.sub(r"\s+", "", operand)
-        for operand in source.split("<<")[1:]
+        clean_source[start + 2:end]
+        for start, end in zip(shifts, shifts[1:] + [len(clean_source)])
     ]
 
 
-def assert_stream_writes(writer_body, expressions):
-    operands = cpp_stream_operands(writer_body)
-    for expression in expressions:
-        normalized = re.sub(r"\s+", "", expression)
-        assert any(normalized in operand for operand in operands), expression
+def csv_value_expressions(writer_block):
+    values = []
+    for operand in cpp_stream_operands(writer_block):
+        literals = cpp_string_literals(operand)
+        if len(literals) == 1:
+            literal = literals[0]
+            if literal == "," or literal == "\n":
+                continue
+            if literal.startswith(",") and literal.endswith(","):
+                values.extend(
+                    fragment
+                    for fragment in literal.split(",")[1:-1]
+                    if fragment
+                )
+                continue
+        values.append(re.sub(r"\s+", "", operand).rstrip(";").rstrip())
+    return values
+
+
+def assert_csv_writer_contract(header_fields, writer_block, expected_columns):
+    expected_fields = [field for field, _ in expected_columns]
+    expected_expressions = [
+        re.sub(r"\s+", "", expression)
+        for _, expression in expected_columns
+    ]
+    assert header_fields == expected_fields
+    assert csv_value_expressions(writer_block) == expected_expressions
+
+
+def assert_cpp_include(source, header):
+    pattern = re.compile(r'^\s*#\s*include\s+"' + re.escape(header) + r'"\s*$')
+    assert any(pattern.fullmatch(line) for line in strip_cpp_comments(source).splitlines())
 
 
 def bool_value(value):
@@ -501,6 +602,8 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
             assert bool_value(switches["global_seesm_enable"]) is global_enabled
             if fixed_beta is not None:
                 assert float(switches["fixed_beta"]) == fixed_beta
+            assert args["semantic_mode"] == semantic_mode
+            assert float(args["fixed_beta"]) == float(switches["fixed_beta"])
             for key in DYNAMIC_TAU_SWITCHES:
                 assert key in args
                 assert key in switches
@@ -520,6 +623,7 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
             assert meta["cbf_metric"] == cbf_metric
             assert bool_value(meta["global_seesm_enable"]) is global_enabled
             assert meta["semantic_mode"] == semantic_mode
+            assert float(meta["fixed_beta"]) == float(args["fixed_beta"])
             if fixed_beta is not None:
                 assert float(meta["fixed_beta"]) == fixed_beta
             for field in DYNAMIC_TAU_METADATA:
@@ -531,13 +635,41 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
 
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
+    assert_cpp_include(mpc, "semantic_guard/dynamic_tau.hpp")
     mpc_constructor_raw = cpp_function_body_raw(mpc, "MpcSecbfNode(ros::NodeHandle& nh)")
     open_csv = cpp_function_body(
         mpc,
         "void openCsv(std::ofstream& file, const std::string& path, const std::string& header)",
     )
     publish_region = cpp_function_body(mpc, "void publishAcceptedMargins")
-    planner_row_if = cpp_function_body(mpc, "if (planner_csv_.is_open())")
+    planner_row_if = cpp_function_body(mpc, "if (planner_csv_.is_open()) {")
+    mpc_columns = (
+        ("t", "t"),
+        ("mpc_status", "mpc_status"),
+        ("first_attempt_status", "first_attempt_status"),
+        ("final_status", "final_status"),
+        ("accepted_beta_source", "accepted_beta_source"),
+        ("cmd_v", "cmd_vel_.linear.x"),
+        ("cmd_w", "cmd_vel_.angular.z"),
+        ("obs_count", "obs_count"),
+        ("constrained_obs_count", "constrained_obs_count"),
+        ("beta_count", "beta_list_.size()"),
+        ("used_fallback", "(used_fallback ? 1 : 0)"),
+        ("mpc_feasibility_guard_used", "(mpc_guard_used ? 1 : 0)"),
+        ("slack", "solver_.last_slack_max"),
+        ("slack_sum", "solver_.last_slack_sum"),
+        ("slack_mean", "solver_.last_slack_mean"),
+        ("slack_max", "solver_.last_slack_max"),
+        ("solve_time_ms", "solve_time_ms"),
+        ("dynamic_tau_enabled", "dynamic_tau_enabled"),
+        ("tau", "tau_result.tau"),
+        ("T_i", "tau_result.T_i"),
+        ("f_r", "tau_result.f_r"),
+        ("f_v", "tau_result.f_v"),
+        ("f_T", "tau_result.f_T"),
+        ("tau_valid", "tau_result.valid"),
+        ("tau_reason", "tau_result.reason"),
+    )
     planner_header_start = mpc_constructor_raw.index("openCsv(planner_csv_")
     planner_header_end = mpc_constructor_raw.index("openCsv(timing_csv_", planner_header_start)
     planner_header_fields = csv_header_fields(
@@ -549,99 +681,118 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     assert "/safety_margin/beta_applied_final" in cpp_string_literals(mpc_constructor_raw)
     assert "out.beta_applied.assign(beta.begin(), beta.end())" in publish_region
     assert "pub_beta_applied_final_.publish(out)" in publish_region
-    assert_csv_fields(planner_header_fields, MPC_TAU_FIELDS)
-    assert "planner_csv_" in planner_row_if
-    assert_stream_writes(
-        planner_row_if,
-        (
-            "dynamic_tau_enabled",
-            "tau_result.tau",
-            "tau_result.T_i",
-            "tau_result.f_r",
-            "tau_result.f_v",
-            "tau_result.f_T",
-            "tau_result.valid",
-            "tau_result.reason",
-        ),
-    )
+    assert_csv_writer_contract(planner_header_fields, planner_row_if, mpc_columns)
 
     obs_manager = read("planner/vomp_planner/traj_planner/include/obs_manager/obs_manager.hpp")
     obs_init_raw = cpp_function_body_raw(obs_manager, "void init(ros::NodeHandle &nh)")
     unsafe_region = cpp_function_body(obs_manager, "bool is_SEESM_unsafe")
     global_header_raw = cpp_function_body_raw(obs_manager, "void prepareGlobalSeesmLog")
+    global_row_raw = cpp_function_body_raw(obs_manager, "void writeGlobalSeesmLog")
     global_row = cpp_function_body(obs_manager, "void writeGlobalSeesmLog")
+    global_columns = (
+        ("t", "t"),
+        ("replan_id", "current_global_replan_id_"),
+        ("global_seesm_enable", "(global_seesm_enable_ ? 1 : 0)"),
+        ("obs_id", "obs_id"),
+        ("beta_applied", "beta_applied"),
+        ("accepted_source", "sanitizeCsvField(accepted_source)"),
+        ("margin_age_ms", "margin_age_ms"),
+        ("h_ee", "h_ee"),
+        ("h_see", "h_see"),
+        ("primitive_rejected", "(primitive_rejected ? 1 : 0)"),
+        ("shot_rejected", "(shot_rejected ? 1 : 0)"),
+        ("reason", "sanitizeCsvField(reason)"),
+        ("global_replan_ms", "global_replan_ms"),
+        ("tau", "tau_result.tau"),
+        ("T_i", "tau_result.T_i"),
+        ("f_r", "tau_result.f_r"),
+        ("f_v", "tau_result.f_v"),
+        ("f_T", "tau_result.f_T"),
+        ("tau_valid", "tau_result.valid"),
+        ("tau_reason", "tau_result.reason"),
+    )
     global_header_clean = cpp_function_body(obs_manager, "void prepareGlobalSeesmLog")
+    global_open_guard = cpp_function_body(
+        global_row_raw, "if (!global_seesm_log_stream_.is_open()) {"
+    )
     global_header_fields = csv_header_fields(global_header_raw, '"t,replan_id,')
     assert "/safety_margin/beta_applied_final" in cpp_string_literals(obs_init_raw)
     assert "beta_applied = margin_entry.beta_applied" in unsafe_region
     assert "- beta_applied" in unsafe_region
     assert "global_seesm_log_stream_" in global_header_clean
-    assert_csv_fields(global_header_fields, TAU_FIELDS)
+    assert "return;" in global_open_guard
     assert "global_seesm_log_stream_" in global_row
-    assert_stream_writes(
-        global_row,
-        (
-            "tau_result.tau",
-            "tau_result.T_i",
-            "tau_result.f_r",
-            "tau_result.f_v",
-            "tau_result.f_T",
-            "tau_result.valid",
-            "tau_result.reason",
-        ),
-    )
+    assert_csv_writer_contract(global_header_fields, global_row, global_columns)
 
     guard = read("planner/semantic_guard/src/beta_guard_node.cpp")
     guard_header_raw = cpp_function_body_raw(guard, "BetaGuardNode(ros::NodeHandle& nh)")
-    guard_header_if_raw = cpp_function_body_raw(guard_header_raw, "if (csv_file_.is_open())")
-    guard_header_if = cpp_function_body(guard_header_raw, "if (csv_file_.is_open())")
+    guard_header_if_raw = cpp_function_body_raw(guard_header_raw, "if (csv_file_.is_open()) {")
+    guard_header_if = cpp_function_body(guard_header_raw, "if (csv_file_.is_open()) {")
     guard_callback = cpp_function_body_raw(
         guard,
         "void semanticCb(const semantic_fusion::SemanticObstacleArrayConstPtr& msg)",
     )
-    guard_row_if = cpp_function_body(guard_callback, "if (csv_file_.is_open())")
+    guard_row_if = cpp_function_body(guard_callback, "if (csv_file_.is_open()) {")
+    guard_columns = (
+        ("time", "ros::Time::now().toSec()"),
+        ("obs_id", "obs.id"),
+        ("class", "cls"),
+        ("beta_bar", "beta_bar_val"),
+        ("mu", "mu"),
+        ("beta_requested", "beta_hat"),
+        ("beta_applied", "beta_final"),
+        ("guard_upper_bound", "guard_upper_bound"),
+        ("guard_passed", "(guard_pass ? 1 : 0)"),
+        ("guard_status", "guard_status"),
+        ("semantic_mode", "semantic_mode_"),
+        ("delta_beta", "delta_beta"),
+        ("rate_limit_active", "(rate_limit_active ? 1 : 0)"),
+        ("projection_active", "(projection_active ? 1 : 0)"),
+        ("d_i", "d_i"),
+        ("rel_v_norm", "rel_v_norm"),
+        ("ttc", "(std::isfinite(ttc) ? ttc : -1.0)"),
+        ("ttc_norm", "ttc_norm"),
+        ("inv_ttc", "inv_ttc"),
+        ("cos_delta", "cos_delta"),
+        ("rho_i", "obs.density_norm"),
+        ("rho_norm", "rho_norm"),
+        ("group_flag", "0"),
+        ("h_ee", "h_ee"),
+        ("h_see", "h_see"),
+        ("R_base", "r_base"),
+        ("R_sem", "r_sem"),
+        ("tau", "tau_result.tau"),
+        ("T_i", "tau_result.T_i"),
+        ("f_r", "tau_result.f_r"),
+        ("f_v", "tau_result.f_v"),
+        ("f_T", "tau_result.f_T"),
+        ("tau_valid", "tau_result.valid"),
+        ("tau_reason", "tau_result.reason"),
+    )
     guard_header_fields = csv_header_fields(guard_header_if_raw, 'csv_file_ << "time,')
     assert "csv_file_" in guard_header_if
-    assert_csv_fields(guard_header_fields, TAU_FIELDS)
-    assert "csv_file_" in guard_row_if
-    assert_stream_writes(
-        guard_row_if,
-        (
-            "tau_result.tau",
-            "tau_result.T_i",
-            "tau_result.f_r",
-            "tau_result.f_v",
-            "tau_result.f_T",
-            "tau_result.valid",
-            "tau_result.reason",
-        ),
-    )
+    assert_csv_writer_contract(guard_header_fields, guard_row_if, guard_columns)
 
     ground_truth = read("planner/semantic_guard/src/beta_ground_truth_node.cpp")
     ground_header_raw = cpp_function_body_raw(ground_truth, "BetaGroundTruthNode(ros::NodeHandle& nh)")
-    ground_header_if_raw = cpp_function_body_raw(ground_header_raw, "if (csv_file_.is_open())")
-    ground_header_if = cpp_function_body(ground_header_raw, "if (csv_file_.is_open())")
+    ground_header_if_raw = cpp_function_body_raw(ground_header_raw, "if (csv_file_.is_open()) {")
+    ground_header_if = cpp_function_body(ground_header_raw, "if (csv_file_.is_open()) {")
     ground_callback = cpp_function_body_raw(
         ground_truth,
         "void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg)",
     )
-    ground_row_if = cpp_function_body(ground_callback, "if (csv_file_.is_open())")
+    ground_row_if = cpp_function_body(ground_callback, "if (csv_file_.is_open()) {")
+    ground_columns = tuple(
+        (
+            field,
+            "obstacle_id" if field == "obs_id" else
+            "density_norm" if field in {"rho_i", "rho_norm"} else expression,
+        )
+        for field, expression in guard_columns
+    )
     ground_header_fields = csv_header_fields(ground_header_if_raw, 'csv_file_ << "time,')
     assert "csv_file_" in ground_header_if
-    assert_csv_fields(ground_header_fields, TAU_FIELDS)
-    assert "csv_file_" in ground_row_if
-    assert_stream_writes(
-        ground_row_if,
-        (
-            "tau_result.tau",
-            "tau_result.T_i",
-            "tau_result.f_r",
-            "tau_result.f_v",
-            "tau_result.f_T",
-            "tau_result.valid",
-            "tau_result.reason",
-        ),
-    )
+    assert_csv_writer_contract(ground_header_fields, ground_row_if, ground_columns)
 
 
 def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
