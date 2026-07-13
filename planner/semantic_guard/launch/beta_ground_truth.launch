@@ -42,11 +42,11 @@
     <param name="guard/enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
     <param name="fixed_beta" value="$(arg fixed_beta)"/>
     <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
-    <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)"/>
-    <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)"/>
-    <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)"/>
-    <param name="dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)"/>
-    <param name="dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)"/>
+    <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
+    <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
+    <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
+    <param name="dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)" type="double"/>
+    <param name="dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
     <param name="scenario_id" value="$(arg scenario_id)"/>
     <param name="baseline_id" value="$(arg baseline_id)"/>
     <param name="beta_bar/box" value="$(arg beta_bar_box)"/>

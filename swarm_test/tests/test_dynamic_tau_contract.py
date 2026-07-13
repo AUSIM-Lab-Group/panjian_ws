@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import importlib.util
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ DYNAMIC_TAU_SWITCHES = (
     "dynamic_tau_max_tau",
 )
 DYNAMIC_TAU_METADATA = ("Ke", "Tmax", "min_speed", "min_distance", "max_tau")
+DYNAMIC_TAU_NUMERIC_PARAMS = tuple(f"dynamic_tau/{field}" for field in DYNAMIC_TAU_METADATA)
 METADATA_TO_SWITCH = {
     "Ke": "dynamic_tau_ke",
     "Tmax": "dynamic_tau_tmax",
@@ -719,6 +721,25 @@ def test_shared_policy_is_the_numeric_source_of_truth():
     assert "computeDynamicTau" in header
     assert "f_r" in header and "f_v" in header and "f_T" in header
     assert "max_tau" in header
+
+
+def test_margin_launch_dynamic_tau_numeric_params_are_explicit_doubles():
+    launch_files = (
+        "planner/semantic_guard/launch/beta_guard.launch",
+        "planner/semantic_guard/launch/beta_ground_truth.launch",
+    )
+    for relative_path in launch_files:
+        root = ET.parse(REPO_ROOT / relative_path).getroot()
+        params = {
+            param.attrib["name"]: param
+            for param in root.iter("param")
+            if "name" in param.attrib
+        }
+        for name in DYNAMIC_TAU_NUMERIC_PARAMS:
+            assert name in params, f"missing dynamic tau param: {relative_path}: {name}"
+            assert params[name].attrib.get("type") == "double", (
+                f"dynamic tau param must be type=double: {relative_path}: {name}"
+            )
 
 
 def test_runner_import_context_is_reentrant_and_isolated():
