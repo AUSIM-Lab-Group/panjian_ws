@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 
+CPP_RAW_STRING_START = re.compile(r'(?:u8|u|U|L)?R"([^ ()\\]*)\(')
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
 DYNAMIC_TAU_SWITCHES = (
@@ -34,11 +35,17 @@ EXPECTED_DYNAMIC_TAU_METADATA = {
     "h_see": "h_ee-beta",
 }
 BASELINE_CONTRACT = (
-    ("Standard_MPC_CBF", False, "distance", False, "fixed", "fixed_config", 0.4),
-    ("No_semantic", True, "seesm", False, "none", "zero", 0.0),
-    ("Unguarded_SEESM", True, "seesm", True, "full", "candidate", None),
-    ("SEESM_Ours", True, "seesm", True, "full", "beta_applied_final", None),
+    ("Standard_MPC_CBF", False, "distance", False, "fixed", "fixed_config", 0.4, "false", 6),
+    ("No_semantic", True, "seesm", False, "none", "zero", 0.0, "true", 6),
+    ("Unguarded_SEESM", True, "seesm", True, "full", "candidate", None, "false", 6),
+    ("SEESM_Ours", True, "seesm", True, "full", "beta_applied_final", None, "true", 6),
 )
+ALIAS_CONTRACT = {
+    "Standard_MPC_CBF": "Standard_MPC_CBF",
+    "EESM_MPC_ECBF": "No_semantic",
+    "SEESM_Without_FPU": "Unguarded_SEESM",
+    "Proposed_MPC_SECBF": "SEESM_Ours",
+}
 
 
 def read(relative):
@@ -48,6 +55,7 @@ def read(relative):
 @contextmanager
 def runner_module():
     original_sys_path = list(sys.path)
+    original_path_importer_cache = dict(sys.path_importer_cache)
     original_sys_modules = dict(sys.modules)
     module_name = "dynamic_tau_runner"
     try:
@@ -65,12 +73,15 @@ def runner_module():
         for name, module in original_sys_modules.items():
             sys.modules[name] = module
         sys.path[:] = original_sys_path
+        sys.path_importer_cache.clear()
+        sys.path_importer_cache.update(original_path_importer_cache)
         assert set(sys.modules) == set(original_sys_modules)
         assert all(
             sys.modules[name] is module
             for name, module in original_sys_modules.items()
         )
         assert sys.path == original_sys_path
+        assert sys.path_importer_cache == original_path_importer_cache
 
 
 def runner_tree():
@@ -218,9 +229,10 @@ def write_meta(runner, tmp_path, baseline_id):
     )
 
 
-def strip_cpp_non_code(source):
+def strip_cpp_comments_only(source):
     masked = list(source)
     state = "code"
+    raw_delimiter = None
     index = 0
 
     def mask(position):
@@ -229,7 +241,12 @@ def strip_cpp_non_code(source):
 
     while index < len(source):
         if state == "code":
-            if source.startswith("//", index):
+            raw_match = CPP_RAW_STRING_START.match(source, index)
+            if raw_match:
+                raw_delimiter = raw_match.group(1)
+                index = raw_match.end()
+                state = "raw"
+            elif source.startswith("//", index):
                 mask(index)
                 mask(index + 1)
                 index += 2
@@ -264,6 +281,15 @@ def strip_cpp_non_code(source):
             else:
                 mask(index)
                 index += 1
+        elif state == "raw":
+            terminator = ")" + raw_delimiter + '"'
+            end = source.find(terminator, index)
+            if end < 0:
+                index = len(source)
+            else:
+                index = end + len(terminator)
+                raw_delimiter = None
+                state = "code"
         else:
             if source[index] == "\\":
                 mask(index)
@@ -281,14 +307,61 @@ def strip_cpp_non_code(source):
     return "".join(masked)
 
 
+def cpp_code_positions(source, start=0):
+    state = "code"
+    raw_delimiter = None
+    index = start
+    while index < len(source):
+        if state == "code":
+            raw_match = CPP_RAW_STRING_START.match(source, index)
+            if raw_match:
+                raw_delimiter = raw_match.group(1)
+                index = raw_match.end()
+                state = "raw"
+            elif source[index] == '"':
+                index += 1
+                state = "string"
+            elif source[index] == "'":
+                index += 1
+                state = "char"
+            else:
+                yield index
+                index += 1
+        elif state == "raw":
+            terminator = ")" + raw_delimiter + '"'
+            end = source.find(terminator, index)
+            if end < 0:
+                index = len(source)
+            else:
+                index = end + len(terminator)
+                raw_delimiter = None
+                state = "code"
+        else:
+            if source[index] == "\\":
+                index += 2
+            elif source[index] == ('"' if state == "string" else "'"):
+                index += 1
+                state = "code"
+            else:
+                index += 1
+
+
 def cpp_function_bounds(source, signature):
-    clean_source = strip_cpp_non_code(source)
-    signature_start = clean_source.find(signature)
-    assert signature_start >= 0, f"C++ function not found: {signature}"
-    opening_brace = clean_source.find("{", signature_start)
-    assert opening_brace >= 0, f"C++ function body not found: {signature}"
+    clean_source = strip_cpp_comments_only(source)
+    signature_start = next(
+        (index for index in cpp_code_positions(clean_source)
+         if clean_source.startswith(signature, index)),
+        None,
+    )
+    assert signature_start is not None, f"C++ function not found: {signature}"
+    opening_brace = next(
+        (index for index in cpp_code_positions(clean_source, signature_start)
+         if clean_source[index] == "{"),
+        None,
+    )
+    assert opening_brace is not None, f"C++ function body not found: {signature}"
     depth = 0
-    for index in range(opening_brace, len(clean_source)):
+    for index in cpp_code_positions(clean_source, opening_brace):
         if clean_source[index] == "{":
             depth += 1
         elif clean_source[index] == "}":
@@ -300,7 +373,7 @@ def cpp_function_bounds(source, signature):
 
 def cpp_function_body(source, signature):
     start, end = cpp_function_bounds(source, signature)
-    return strip_cpp_non_code(source)[start:end]
+    return strip_cpp_comments_only(source)[start:end]
 
 
 def cpp_function_body_raw(source, signature):
@@ -376,79 +449,40 @@ def csv_header_fields(source, stream_prefix, end_marker=";"):
     return rows[0]
 
 
-def strip_cpp_comments(source):
-    masked = list(source)
-    state = "code"
-    index = 0
-
-    def mask(position):
-        if masked[position] != "\n":
-            masked[position] = " "
-
-    while index < len(source):
-        if state == "code":
-            if source.startswith("//", index):
-                mask(index)
-                mask(index + 1)
-                index += 2
-                state = "line_comment"
-            elif source.startswith("/*", index):
-                mask(index)
-                mask(index + 1)
-                index += 2
-                state = "block_comment"
-            elif source[index] == '"':
-                index += 1
-                state = "string"
-            elif source[index] == "'":
-                index += 1
-                state = "char"
-            else:
-                index += 1
-        elif state == "line_comment":
-            if source[index] == "\n":
-                state = "code"
-            else:
-                mask(index)
-            index += 1
-        elif state == "block_comment":
-            if source.startswith("*/", index):
-                mask(index)
-                mask(index + 1)
-                index += 2
-                state = "code"
-            else:
-                mask(index)
-                index += 1
-        else:
-            if source[index] == "\\":
-                index += 2
-            elif source[index] == ('"' if state == "string" else "'"):
-                index += 1
-                state = "code"
-            else:
-                index += 1
-    return "".join(masked)
-
-
 def cpp_stream_operands(source):
-    clean_source = strip_cpp_comments(source)
+    clean_source = strip_cpp_comments_only(source)
     shifts = []
     state = "code"
+    raw_delimiter = None
     index = 0
     while index < len(clean_source):
         if state == "code":
             if clean_source.startswith("<<", index):
                 shifts.append(index)
                 index += 2
-            elif clean_source[index] == '"':
-                index += 1
-                state = "string"
-            elif clean_source[index] == "'":
-                index += 1
-                state = "char"
             else:
-                index += 1
+                raw_match = CPP_RAW_STRING_START.match(clean_source, index)
+                if raw_match:
+                    raw_delimiter = raw_match.group(1)
+                    index = raw_match.end()
+                    state = "raw"
+                elif clean_source[index] == '"':
+                    index += 1
+                    state = "string"
+                elif clean_source[index] == "'":
+                    index += 1
+                    state = "char"
+                else:
+                    index += 1
+        elif state == "raw":
+            terminator = ")" + raw_delimiter + '"'
+            end = clean_source.find(terminator, index)
+            if end < 0:
+                index = len(clean_source)
+            else:
+                index = end + len(terminator)
+                raw_delimiter = None
+                state = "code"
         else:
             if clean_source[index] == "\\":
                 index += 2
@@ -495,7 +529,46 @@ def assert_csv_writer_contract(header_fields, writer_block, expected_columns):
 
 def assert_cpp_include(source, header):
     pattern = re.compile(r'^\s*#\s*include\s+"' + re.escape(header) + r'"\s*$')
-    assert any(pattern.fullmatch(line) for line in strip_cpp_comments(source).splitlines())
+    state = "code"
+    raw_delimiter = None
+    found = False
+    for line in strip_cpp_comments_only(source).splitlines():
+        if state == "code" and pattern.fullmatch(line):
+            found = True
+        index = 0
+        while index < len(line):
+            if state == "code":
+                match = CPP_RAW_STRING_START.match(line, index)
+                if match:
+                    raw_delimiter = match.group(1)
+                    state = "raw"
+                    index = match.end()
+                elif line[index] == '"':
+                    state = "string"
+                    index += 1
+                elif line[index] == "'":
+                    state = "char"
+                    index += 1
+                else:
+                    index += 1
+            elif state == "raw":
+                terminator = ")" + raw_delimiter + '"'
+                end = line.find(terminator, index)
+                if end < 0:
+                    index = len(line)
+                else:
+                    state = "code"
+                    raw_delimiter = None
+                    index = end + len(terminator)
+            else:
+                if line[index] == "\\":
+                    index += 2
+                elif line[index] == ('"' if state == "string" else "'"):
+                    state = "code"
+                    index += 1
+                else:
+                    index += 1
+    assert found
 
 
 def bool_value(value):
@@ -504,8 +577,9 @@ def bool_value(value):
     return str(value).lower() == "true"
 
 
-def assert_runtime_snapshot(path_snapshot, module_snapshot):
+def assert_runtime_snapshot(path_snapshot, importer_cache_snapshot, module_snapshot):
     assert sys.path == path_snapshot
+    assert sys.path_importer_cache == importer_cache_snapshot
     assert set(sys.modules) == set(module_snapshot)
     assert all(
         sys.modules[name] is module
@@ -524,11 +598,18 @@ def test_shared_policy_is_the_numeric_source_of_truth():
 
 def test_runner_import_context_is_reentrant_and_isolated():
     path_snapshot = list(sys.path)
+    importer_cache_snapshot = dict(sys.path_importer_cache)
     module_snapshot = dict(sys.modules)
-    for _ in range(2):
+    for _ in range(3):
         with runner_module() as runner:
             assert runner.resolve_baseline_alias("Standard_MPC_CBF") == "Standard_MPC_CBF"
-        assert_runtime_snapshot(path_snapshot, module_snapshot)
+        assert_runtime_snapshot(path_snapshot, importer_cache_snapshot, module_snapshot)
+
+
+def test_runner_alias_mapping_is_explicit_and_resolved():
+    with runner_module() as runner:
+        for requested, resolved in ALIAS_CONTRACT.items():
+            assert runner.resolve_baseline_alias(requested) == resolved
 
 
 def test_runner_source_has_structured_baseline_and_writer_assignments():
@@ -538,7 +619,7 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
         assert key in defaults
 
     baselines = literal_assignment(tree, "BASELINES")
-    for baseline_id, _, expected_metric, _, _, _, _ in BASELINE_CONTRACT:
+    for baseline_id, _, expected_metric, _, _, _, _, _, _ in BASELINE_CONTRACT:
         assert baseline_id in baselines
         assert baselines[baseline_id]["planner"] == "secbf_planner.launch"
         if baseline_id == "Standard_MPC_CBF":
@@ -577,41 +658,42 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
 @pytest.mark.parametrize(
     (
         "baseline_id", "dynamic_enabled", "cbf_metric", "global_enabled",
-        "semantic_mode", "beta_source", "fixed_beta",
+        "semantic_mode", "beta_source", "fixed_beta", "guard_enabled", "controller_index",
     ),
     BASELINE_CONTRACT,
 )
 def test_runner_generates_all_baseline_contracts_at_write_sites(
     tmp_path, baseline_id, dynamic_enabled, cbf_metric, global_enabled,
-    semantic_mode, beta_source, fixed_beta
+    semantic_mode, beta_source, fixed_beta, guard_enabled, controller_index
 ):
     original_sys_path = list(sys.path)
+    original_importer_cache = dict(sys.path_importer_cache)
+    original_sys_modules = dict(sys.modules)
     try:
         with runner_module() as runner:
             scenario = minimal_scenario()
             obstacle_params = tmp_path / "obstacles_param.yaml"
-            planner_cmd, _ = runner.build_commands(
+            planner_cmd, start_cmd = runner.build_commands(
                 "head_on_context_bl", baseline_id, tmp_path, obstacle_params, "[adult]", 1, scenario
             )
 
             args = launch_args(planner_cmd)
-            switches = runner.baseline_switches(runner.resolve_baseline_alias(baseline_id))
-            assert switches["semantic_mode"] == semantic_mode
-            assert bool_value(switches["dynamic_tau_enabled"]) is dynamic_enabled
-            assert switches["cbf_metric"] == cbf_metric
-            assert bool_value(switches["global_seesm_enable"]) is global_enabled
-            if fixed_beta is not None:
-                assert float(switches["fixed_beta"]) == fixed_beta
+            start_args = launch_args(start_cmd)
             assert args["semantic_mode"] == semantic_mode
-            assert float(args["fixed_beta"]) == float(switches["fixed_beta"])
+            assert args["guard_enabled"] == guard_enabled
+            assert bool_value(args["dynamic_tau_enabled"]) is dynamic_enabled
+            assert args["cbf_metric"] == cbf_metric
+            assert bool_value(args["global_seesm_enable"]) is global_enabled
+            assert start_args["controller_index"] == str(controller_index)
+            assert start_args["record_data"] == "true"
+            assert start_args["scenario_index"] == str(runner.SCENARIO_INDEX["head_on_context_bl"])
+            assert runner.resolve_baseline_alias(baseline_id) == baseline_id
+            if fixed_beta is not None:
+                assert float(args["fixed_beta"]) == fixed_beta
+            else:
+                assert "fixed_beta" in args
             for key in DYNAMIC_TAU_SWITCHES:
                 assert key in args
-                assert key in switches
-                if key != "dynamic_tau_enabled":
-                    assert float(args[key]) == float(switches[key])
-            assert args["dynamic_tau_enabled"].lower() == str(dynamic_enabled).lower()
-            assert args["cbf_metric"] == cbf_metric
-            assert args["global_seesm_enable"].lower() == str(global_enabled).lower()
 
             meta_path = write_meta(runner, tmp_path, baseline_id)
             meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
@@ -623,14 +705,15 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
             assert meta["cbf_metric"] == cbf_metric
             assert bool_value(meta["global_seesm_enable"]) is global_enabled
             assert meta["semantic_mode"] == semantic_mode
+            assert meta["guard_enable"] == guard_enabled
             assert float(meta["fixed_beta"]) == float(args["fixed_beta"])
             if fixed_beta is not None:
                 assert float(meta["fixed_beta"]) == fixed_beta
             for field in DYNAMIC_TAU_METADATA:
                 assert field in dynamic_tau
-                assert float(dynamic_tau[field]) == float(switches[METADATA_TO_SWITCH[field]])
+                assert float(dynamic_tau[field]) == float(args[METADATA_TO_SWITCH[field]])
     finally:
-        assert sys.path == original_sys_path
+        assert_runtime_snapshot(original_sys_path, original_importer_cache, original_sys_modules)
 
 
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
@@ -802,6 +885,8 @@ def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
     assert baselines["B1_ACBF_fixed"]["planner"] == "acbf0_planner.launch"
 
     original_sys_path = list(sys.path)
+    original_importer_cache = dict(sys.path_importer_cache)
+    original_sys_modules = dict(sys.modules)
     try:
         with runner_module() as runner:
             standard_cmd, _ = runner.build_commands(
@@ -817,7 +902,7 @@ def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
             assert all(not token.startswith("dynamic_tau_") for token in legacy_cmd)
             assert all(not token.startswith("cbf_metric:=") for token in legacy_cmd)
     finally:
-        assert sys.path == original_sys_path
+        assert_runtime_snapshot(original_sys_path, original_importer_cache, original_sys_modules)
 
     legacy = read("planner/mpc_dcbf/src/mpc_cbf.cpp")
     legacy_safety = cpp_function_body(
