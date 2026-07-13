@@ -262,6 +262,23 @@ def run_csv_checker(run_dir):
     )
 
 
+@contextmanager
+def checker_module():
+    module_name = "dynamic_tau_csv_checker"
+    original_sys_modules = dict(sys.modules)
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, CSV_CHECKER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        for name in list(sys.modules):
+            if name not in original_sys_modules:
+                del sys.modules[name]
+        for name, module in original_sys_modules.items():
+            sys.modules[name] = module
+
+
 def launch_args(command):
     return {
         token.split(":=", 1)[0]: token.split(":=", 1)[1]
@@ -834,6 +851,33 @@ def test_csv_checker_requires_tau_fields_when_metadata_enables_dynamic_tau(tmp_p
     assert "missing complete tau field group" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    (
+        "dynamic_tau: [\n",
+        "dynamic_tau: false\n",
+        "dynamic_tau:\n  enabled: maybe\n",
+        "dynamic_tau:\n",
+    ),
+)
+def test_csv_checker_rejects_invalid_dynamic_tau_metadata(tmp_path, metadata):
+    run_dir = tmp_path / "invalid_metadata"
+    write_checker_fixture(run_dir)
+    (run_dir / "meta.yaml").write_text(metadata, encoding="utf-8")
+    result = run_csv_checker(run_dir)
+    assert result.returncode != 0
+    assert "meta.yaml" in result.stdout
+
+
+def test_csv_checker_fails_closed_when_pyyaml_is_unavailable(tmp_path, monkeypatch):
+    run_dir = tmp_path / "no_yaml"
+    write_checker_fixture(run_dir, metadata_enabled=True)
+    with checker_module() as checker:
+        monkeypatch.setattr(checker, "yaml", None)
+        monkeypatch.setattr(sys, "argv", [str(CSV_CHECKER_PATH), str(run_dir)])
+        assert checker.main() == 1
+
+
 def test_csv_checker_accepts_complete_tau_fields_when_metadata_enables_dynamic_tau(tmp_path):
     run_dir = tmp_path / "dynamic_complete"
     write_checker_fixture(
@@ -894,6 +938,74 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
         assert summary["tau_source"] == "planner_log.csv"
         assert summary["dynamic_tau_enabled"] == "True"
         assert summary["dynamic_tau_beta_source"] == "beta_applied_final"
+
+
+def test_runner_tau_summary_ignores_invalid_rows_and_falls_back(tmp_path):
+    with runner_module() as runner:
+        run_dir = tmp_path / "tau_fallback"
+        run_dir.mkdir()
+        headers = [*TAU_HEADERS]
+
+        def write_tau_log(path, rows):
+            with path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=headers)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        invalid_row = {
+            "tau": "9.0", "T_i": "1.0", "f_r": "1.0", "f_v": "1.0",
+            "f_T": "1.0", "tau_valid": "false", "tau_reason": "tau_invalid",
+        }
+        valid_row = {
+            "tau": "0.4", "T_i": "1.0", "f_r": "1.0", "f_v": "1.0",
+            "f_T": "1.0", "tau_valid": "true", "tau_reason": "active",
+        }
+        write_tau_log(run_dir / "margin_guard_log.csv", [invalid_row])
+        write_tau_log(run_dir / "planner_log.csv", [valid_row])
+        metrics = runner.summarize_tau_log(run_dir)
+        assert metrics["tau_source"] == "planner_log.csv"
+        assert metrics["tau_mean"] == "0.400000"
+        assert metrics["tau_max"] == "0.400000"
+        assert metrics["tau_active_fraction"] == "1.000000"
+        assert metrics["tau_invalid_count"] == 0
+
+        write_tau_log(run_dir / "margin_guard_log.csv", [valid_row, invalid_row])
+        metrics = runner.summarize_tau_log(run_dir)
+        assert metrics["tau_source"] == "margin_guard_log.csv"
+        assert metrics["tau_mean"] == "0.400000"
+        assert metrics["tau_max"] == "0.400000"
+        assert metrics["tau_active_fraction"] == "1.000000"
+        assert metrics["tau_invalid_count"] == 1
+        assert metrics["tau_reason_counts"] == "active:1;tau_invalid:1"
+
+
+def test_runner_aggregate_summary_unions_legacy_and_new_columns(tmp_path):
+    with runner_module() as runner:
+        old_dir = tmp_path / "old"
+        new_dir = tmp_path / "new"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        with (old_dir / "summary.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["scenario", "baseline", "success"])
+            writer.writeheader()
+            writer.writerow({"scenario": "old", "baseline": "Standard", "success": "1"})
+        with (new_dir / "summary.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["scenario", "baseline", "success", "tau_source"]
+            )
+            writer.writeheader()
+            writer.writerow({
+                "scenario": "new", "baseline": "SEESM_Ours", "success": "1",
+                "tau_source": "planner_log.csv",
+            })
+
+        aggregate = runner.write_aggregate_summary(tmp_path / "aggregate", [old_dir, new_dir])
+        with aggregate.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            assert reader.fieldnames == ["scenario", "baseline", "success", "tau_source"]
+            rows = list(reader)
+        assert rows[0]["tau_source"] == ""
+        assert rows[1]["tau_source"] == "planner_log.csv"
 
 
 def test_runner_source_has_structured_baseline_and_writer_assignments():

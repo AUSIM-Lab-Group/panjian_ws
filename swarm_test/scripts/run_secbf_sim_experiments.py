@@ -954,11 +954,12 @@ def summarize_tau_log(run_dir: Path) -> dict:
             if valid not in {"0", "1", "true", "false", "yes", "no"} or not reason:
                 continue
             tau = values[0]
-            tau_values.append(tau)
-            active_count += int(tau > 0.0)
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
             if valid in {"0", "false", "no"}:
                 invalid_count += 1
+                continue
+            tau_values.append(tau)
+            active_count += int(tau > 0.0)
 
         if not tau_values:
             continue
@@ -1320,15 +1321,18 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
 
 def write_aggregate_summary(output_root: Path, run_dirs: list):
     rows = []
-    fieldnames = None
+    fieldnames = []
+    fieldname_set = set()
     for run_dir in run_dirs:
         summary_csv = run_dir / "summary.csv"
         if not summary_csv.exists():
             continue
         with summary_csv.open("r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            if fieldnames is None:
-                fieldnames = reader.fieldnames
+            for fieldname in reader.fieldnames or ():
+                if fieldname not in fieldname_set:
+                    fieldnames.append(fieldname)
+                    fieldname_set.add(fieldname)
             try:
                 rows.append(next(reader))
             except StopIteration:
@@ -1342,7 +1346,8 @@ def write_aggregate_summary(output_root: Path, run_dirs: list):
     with aggregate_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({fieldname: row.get(fieldname, "") for fieldname in fieldnames})
     return aggregate_csv
 
 

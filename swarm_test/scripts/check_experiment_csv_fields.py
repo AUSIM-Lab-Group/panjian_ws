@@ -83,21 +83,40 @@ def read_rows(path):
         return list(csv.DictReader(f))
 
 
-def dynamic_tau_enabled(run_dir):
+def dynamic_tau_enabled(run_dir, errors=None):
     meta_path = run_dir / "meta.yaml"
-    if yaml is None or not meta_path.exists():
+    if not meta_path.exists():
+        return False
+    if yaml is None:
+        if errors is not None:
+            errors.append("meta.yaml: PyYAML is unavailable; cannot validate dynamic_tau")
         return False
     try:
         with meta_path.open("r", encoding="utf-8") as f:
-            meta = yaml.safe_load(f) or {}
-        dynamic_tau = meta.get("dynamic_tau", {})
-        if not isinstance(dynamic_tau, dict):
+            meta = yaml.safe_load(f)
+        if meta is None:
+            meta = {}
+        if not isinstance(meta, dict):
+            raise ValueError("top-level YAML value must be a mapping")
+        if "dynamic_tau" not in meta:
             return False
-        value = dynamic_tau.get("enabled", False)
+        dynamic_tau = meta["dynamic_tau"]
+        if not isinstance(dynamic_tau, dict):
+            raise ValueError("dynamic_tau must be a mapping")
+        if "enabled" not in dynamic_tau:
+            raise ValueError("dynamic_tau.enabled is missing")
+        value = dynamic_tau["enabled"]
         if isinstance(value, bool):
             return value
-        return str(value).strip().lower() in {"1", "true", "yes", "on"}
-    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError("dynamic_tau.enabled must be a boolean")
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        if errors is not None:
+            errors.append(f"meta.yaml: invalid dynamic_tau metadata: {exc}")
         return False
 
 
@@ -144,7 +163,7 @@ def main():
 
     headers = {}
     errors = []
-    dynamic_enabled = dynamic_tau_enabled(args.run_dir)
+    dynamic_enabled = dynamic_tau_enabled(args.run_dir, errors)
     for file_name, required in FILE_FIELDS.items():
         path = args.run_dir / file_name
         if not path.exists():
