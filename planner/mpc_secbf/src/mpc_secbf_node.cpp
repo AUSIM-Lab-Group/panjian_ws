@@ -388,7 +388,7 @@ private:
                          << beta_list_.size() << ","
                          << (used_fallback ? 1 : 0) << ","
                          << (mpc_guard_used ? 1 : 0) << ","
-                         << solver_.last_slack_sum << ","
+                         << solver_.last_slack_max << ","
                          << solver_.last_slack_sum << ","
                          << solver_.last_slack_mean << ","
                          << solver_.last_slack_max << ","
