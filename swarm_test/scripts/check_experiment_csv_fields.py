@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import math
 from pathlib import Path
 import sys
 
@@ -14,15 +15,35 @@ FILE_FIELDS = {
         "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
         "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
+        "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
     },
     "planner_log.csv": {
         "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
         "solve_time_ms", "mpc_feasibility_guard_used",
+        "dynamic_tau_enabled", "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
     },
     "timing_log.csv": {"t", "mpc_secbf_ms", "total_loop_time_ms"},
     "event_log.csv": {"t", "event", "detail"},
 }
+
+OPTIONAL_FILE_FIELDS = {
+    "global_seesm_log.csv": {
+        "t", "replan_id", "global_seesm_enable", "obs_id", "beta_applied",
+        "accepted_source", "margin_age_ms", "h_ee", "h_see",
+        "primitive_rejected", "shot_rejected", "reason", "global_replan_ms",
+        "tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason",
+    },
+}
+
+TAU_NUMERIC_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T")
+KNOWN_TAU_REASONS = {
+    "invalid", "non_finite_input", "invalid_config", "speed_degenerate",
+    "distance_degenerate", "angle_invalid", "receding_or_nonclosing",
+    "velocity_gate", "time_gate", "tau_invalid", "active", "fixed_config",
+    "disabled", "no_constrained_obstacle",
+}
+BOOL_VALUES = {"0", "1", "true", "false", "yes", "no"}
 
 PAPER_FIELDS = {
     "t": [("robot_log.csv", "t"), ("margin_guard_log.csv", "time")],
@@ -54,6 +75,32 @@ def read_header(path):
             return set()
 
 
+def read_rows(path):
+    with path.open("r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def validate_tau_rows(file_name, path, errors):
+    rows = read_rows(path)
+    for row_index, row in enumerate(rows, start=2):
+        for field in TAU_NUMERIC_FIELDS:
+            try:
+                value = float(row[field])
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"{file_name}:{row_index}: invalid numeric field {field}")
+                continue
+            if not math.isfinite(value):
+                errors.append(f"{file_name}:{row_index}: non-finite field {field}")
+
+        tau_valid = str(row.get("tau_valid", "")).strip().lower()
+        if tau_valid not in BOOL_VALUES:
+            errors.append(f"{file_name}:{row_index}: invalid tau_valid {tau_valid!r}")
+
+        tau_reason = str(row.get("tau_reason", "")).strip()
+        if tau_reason not in KNOWN_TAU_REASONS:
+            errors.append(f"{file_name}:{row_index}: unknown tau_reason {tau_reason!r}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check Phase 5 CSV field contract")
     parser.add_argument("run_dir", type=Path)
@@ -71,6 +118,20 @@ def main():
         missing = sorted(required - header)
         if missing:
             errors.append(f"{file_name}: missing fields {missing}")
+        elif file_name in {"margin_guard_log.csv", "planner_log.csv"}:
+            validate_tau_rows(file_name, path, errors)
+
+    for file_name, required in OPTIONAL_FILE_FIELDS.items():
+        path = args.run_dir / file_name
+        if not path.exists():
+            continue
+        header = read_header(path)
+        headers[file_name] = header
+        missing = sorted(required - header)
+        if missing:
+            errors.append(f"{file_name}: missing fields {missing}")
+        else:
+            validate_tau_rows(file_name, path, errors)
 
     for field, choices in PAPER_FIELDS.items():
         if not any(file_name in headers and column in headers[file_name] for file_name, column in choices):

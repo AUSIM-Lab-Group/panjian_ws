@@ -87,12 +87,16 @@ BASELINES = {
         "enable_available_projection": "false",
         "enable_guard_fallback": "false",
         "experiment_label": "Unguarded_SEESM",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
     },
     "B3_SECBF_with_guard": {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
         "guard_enabled": "true",
         "experiment_label": "SEESM_Ours",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
     },
     "Fixed_margin": {
         "planner": "secbf_planner.launch",
@@ -153,9 +157,16 @@ BASELINES = {
     "No_semantic": {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
-        "guard_enabled": "true",
+        "guard_enabled": "false",
         "experiment_label": "No_semantic",
         "semantic_mode": "none",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
+        "fixed_beta": 0.0,
+        "mpc_feasibility_guard_enabled": "false",
+        "enable_rate_limit": "false",
+        "enable_available_projection": "false",
+        "enable_guard_fallback": "false",
     },
     "Unguarded_SEESM": {
         "planner": "secbf_planner.launch",
@@ -166,12 +177,16 @@ BASELINES = {
         "enable_rate_limit": "false",
         "enable_available_projection": "false",
         "enable_guard_fallback": "false",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
     },
     "SEESM_Ours": {
         "planner": "secbf_planner.launch",
         "controller_index": 6,
         "guard_enabled": "true",
         "experiment_label": "SEESM_Ours",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
     },
 }
 
@@ -212,7 +227,41 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "cbf_metric": "seesm",
     "front_adsm": "true",
     "global_seesm_enable": "false",
+    "dynamic_tau_enabled": False,
+    "dynamic_tau_ke": 0.30,
+    "dynamic_tau_tmax": 2.0,
+    "dynamic_tau_min_speed": 1e-6,
+    "dynamic_tau_min_distance": 1e-6,
+    "dynamic_tau_max_tau": 2.0,
 }
+
+DYNAMIC_TAU_SWITCHES = (
+    "dynamic_tau_enabled",
+    "dynamic_tau_ke",
+    "dynamic_tau_tmax",
+    "dynamic_tau_min_speed",
+    "dynamic_tau_min_distance",
+    "dynamic_tau_max_tau",
+)
+
+
+def bool_switch(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ros_bool(value) -> str:
+    return "true" if bool_switch(value) else "false"
+
+
+def baseline_beta_source(baseline_id: str) -> str:
+    return {
+        "Standard_MPC_CBF": "fixed_config",
+        "No_semantic": "zero",
+        "Unguarded_SEESM": "candidate",
+        "SEESM_Ours": "beta_applied_final",
+    }.get(baseline_id, "candidate")
 
 
 def resolve_baseline_alias(value: str) -> str:
@@ -396,7 +445,18 @@ def baseline_switches(baseline_id: str) -> dict:
     for key in values:
         if key in baseline:
             values[key] = baseline[key]
-    values["global_seesm_enable"] = "true" if baseline_id in {"Unguarded_SEESM", "SEESM_Ours"} else "false"
+    if baseline_id in {"No_semantic", "Unguarded_SEESM", "SEESM_Ours"}:
+        values["dynamic_tau_enabled"] = True
+    else:
+        values["dynamic_tau_enabled"] = False
+    if baseline_id == "Standard_MPC_CBF":
+        values["cbf_metric"] = "distance"
+    else:
+        values["cbf_metric"] = "seesm"
+    if baseline_id in {"Unguarded_SEESM", "SEESM_Ours"}:
+        values["global_seesm_enable"] = "true"
+    else:
+        values["global_seesm_enable"] = "false"
     return values
 
 
@@ -522,6 +582,18 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "cbf_metric": switches["cbf_metric"],
         "front_adsm": switches["front_adsm"],
         "global_seesm_enable": switches["global_seesm_enable"],
+        "dynamic_tau": {
+            "enabled": bool_switch(switches["dynamic_tau_enabled"]),
+            "Ke": float(switches["dynamic_tau_ke"]),
+            "Tmax": float(switches["dynamic_tau_tmax"]),
+            "min_speed": float(switches["dynamic_tau_min_speed"]),
+            "min_distance": float(switches["dynamic_tau_min_distance"]),
+            "max_tau": float(switches["dynamic_tau_max_tau"]),
+            "formula": "tau=f_r*f_v*f_T*Ke*T_i",
+            "h_ee": "||l+tau*v||-R_obs-R_robot",
+            "h_see": "h_ee-beta",
+            "beta_source": baseline_beta_source(baseline_id),
+        },
         "guard_tau": 0.20,
         "mpc_horizon": 20,
         "dt": 0.10,
@@ -623,6 +695,12 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"cbf_metric:={switches['cbf_metric']}",
             f"front_adsm:={switches['front_adsm']}",
             f"global_seesm_enable:={switches['global_seesm_enable']}",
+            f"dynamic_tau_enabled:={ros_bool(switches['dynamic_tau_enabled'])}",
+            f"dynamic_tau_ke:={switches['dynamic_tau_ke']}",
+            f"dynamic_tau_tmax:={switches['dynamic_tau_tmax']}",
+            f"dynamic_tau_min_speed:={switches['dynamic_tau_min_speed']}",
+            f"dynamic_tau_min_distance:={switches['dynamic_tau_min_distance']}",
+            f"dynamic_tau_max_tau:={switches['dynamic_tau_max_tau']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
             f"map_size_x:={map_cfg.get('x', 50.0)}",
@@ -835,6 +913,58 @@ def summarize_planner_log(planner_log: Path) -> dict:
     return metrics
 
 
+def summarize_tau_log(run_dir: Path) -> dict:
+    metrics = {
+        "tau_mean": "",
+        "tau_max": "",
+        "tau_active_fraction": "",
+        "tau_invalid_count": 0,
+        "tau_reason_counts": "",
+    }
+    candidates = (
+        run_dir / "margin_guard_log.csv",
+        run_dir / "planner_log.csv",
+        run_dir / "global_seesm_log.csv",
+    )
+    source = next((path for path in candidates if path.exists()), None)
+    if source is None:
+        return metrics
+
+    with source.open("r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows or "tau" not in (rows[0] if rows else {}):
+        return metrics
+
+    tau_values = []
+    active_count = 0
+    invalid_count = 0
+    reason_counts = {}
+    for row in rows:
+        try:
+            tau = float(row["tau"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(tau):
+            tau_values.append(tau)
+            active_count += int(tau > 0.0)
+        reason = str(row.get("tau_reason", "")).strip()
+        if reason:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        valid = str(row.get("tau_valid", "")).strip().lower()
+        if valid in {"0", "false", "no", "invalid"}:
+            invalid_count += 1
+
+    if tau_values:
+        metrics["tau_mean"] = f"{sum(tau_values) / len(tau_values):.6f}"
+        metrics["tau_max"] = f"{max(tau_values):.6f}"
+        metrics["tau_active_fraction"] = f"{active_count / len(tau_values):.6f}"
+    metrics["tau_invalid_count"] = invalid_count
+    metrics["tau_reason_counts"] = ";".join(
+        f"{reason}:{reason_counts[reason]}" for reason in sorted(reason_counts)
+    )
+    return metrics
+
+
 def summarize_data_processor(data_summary: Path, duration_sec: int) -> dict:
     metrics = {
         "nav_records": 0,
@@ -1017,6 +1147,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     planner_log = run_dir / "planner_log.csv"
     guard_metrics = summarize_guard_log(guard_log)
     planner_metrics = summarize_planner_log(planner_log)
+    tau_metrics = summarize_tau_log(run_dir)
     nav_metrics = summarize_data_processor(data_summary, duration_sec)
     phase5_metrics = summarize_phase5_logs(run_dir)
 
@@ -1055,6 +1186,11 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- slack_max: {planner_metrics['slack_max']}",
         f"- slack_mean: {planner_metrics['slack_mean']}",
         f"- solve_time_mean_ms: {planner_metrics['solve_time_mean_ms']}",
+        f"- tau_mean: {tau_metrics['tau_mean']}",
+        f"- tau_max: {tau_metrics['tau_max']}",
+        f"- tau_active_fraction: {tau_metrics['tau_active_fraction']}",
+        f"- tau_invalid_count: {tau_metrics['tau_invalid_count']}",
+        f"- tau_reason_counts: {tau_metrics['tau_reason_counts']}",
         "",
         "## Commands",
         "",
@@ -1085,7 +1221,9 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "first_infeasible_count", "first_infeasible_rate",
                 "mpc_guard_used_count", "mpc_guard_used_rate", "no_cbf_fallback_count",
                 "no_cbf_fallback_rate", "slack_max", "slack_mean",
-                "solve_time_mean_ms", "solve_time_max_ms", "output_dir",
+                "solve_time_mean_ms", "solve_time_max_ms",
+                "tau_mean", "tau_max", "tau_active_fraction", "tau_invalid_count",
+                "tau_reason_counts", "output_dir",
             ],
         )
         writer.writeheader()
@@ -1101,6 +1239,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             "safety_bound_passed": verify_passed,
             **guard_metrics,
             **planner_metrics,
+            **tau_metrics,
             "output_dir": str(run_dir),
         })
 

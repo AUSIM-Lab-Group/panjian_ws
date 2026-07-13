@@ -38,7 +38,7 @@ EXPECTED_DYNAMIC_TAU_METADATA = {
 }
 BASELINE_CONTRACT = (
     ("Standard_MPC_CBF", False, "distance", False, "fixed", "fixed_config", 0.4, "false", 6),
-    ("No_semantic", True, "seesm", False, "none", "zero", 0.0, "true", 6),
+    ("No_semantic", True, "seesm", False, "none", "zero", 0.0, "false", 6),
     ("Unguarded_SEESM", True, "seesm", True, "full", "candidate", None, "false", 6),
     ("SEESM_Ours", True, "seesm", True, "full", "beta_applied_final", None, "true", 6),
 )
