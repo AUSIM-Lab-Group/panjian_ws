@@ -397,7 +397,7 @@ private:
         pub_vis_.publish(markers);
     }
 
-    double getPrevBeta(int id) {
+    double getPrevBeta(uint32_t id) {
         if (beta_prev_.count(id)) return beta_prev_[id];
         return 0.0;
     }
@@ -442,7 +442,7 @@ private:
     std::vector<uint32_t> obstacle_ids_;
     Eigen::Vector2d robot_pos_, robot_vel_;
     bool has_odom_;
-    std::map<int, double> beta_prev_;
+    std::map<uint32_t, double> beta_prev_;
     uint32_t total_rollbacks_;
     std::ofstream csv_file_;
 
