@@ -280,10 +280,11 @@ Run:
 RUN=swarm_test/output/secbf_runs/20260712_r18_standard_mpc_cbf_smoke
 rg -n 'resolved_baseline_id: Standard_MPC_CBF|cbf_metric: distance|fixed_beta: 0.4|front_adsm: false|global_seesm_enable: false' "$RUN"/*/meta.yaml
 find "$RUN" -type f \( -name robot_log.csv -o -name obstacle_log.csv -o -name margin_guard_log.csv -o -name planner_log.csv -o -name timing_log.csv -o -name event_log.csv \) -size +1c -print
-test ! -s "$RUN"/*/global_seesm_log.csv
+test "$(wc -l < "$RUN"/*/global_seesm_log.csv)" -eq 1
 ```
 
-Expected: all six log types are non-empty and global SEESM evidence is absent or empty.
+Expected: all six runtime log types are non-empty, while the disabled global
+SEESM log contains only its canonical header and no fabricated data rows.
 
 - [ ] **Step 4: Commit source and test changes only**
 
@@ -296,4 +297,3 @@ git commit -m "test: verify standard MPC-CBF smoke contract"
 ```
 
 Do not commit generated run output.
-

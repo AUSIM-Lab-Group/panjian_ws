@@ -301,6 +301,19 @@ def validate_event_log(path, errors):
         errors.append("event_log.csv: requires start and stop events")
 
 
+def validate_global_seesm_activity(path, global_enabled, errors):
+    rows = read_rows(path)
+    if global_enabled is True and not rows:
+        errors.append(
+            "global_seesm_log.csv: global_seesm_enable=true requires data rows"
+        )
+    if global_enabled is False and rows:
+        errors.append(
+            "global_seesm_log.csv: global_seesm_enable=false requires "
+            "a canonical header and zero data rows"
+        )
+
+
 def parse_meta_bool(value, field):
     if isinstance(value, bool):
         return value
@@ -861,11 +874,8 @@ def main():
                     )
                 except ValueError as exc:
                     errors.append(f"meta.yaml: {exc}")
-                    global_enabled = False
-                if global_enabled and not read_rows(path):
-                    errors.append(
-                        "global_seesm_log.csv: global_seesm_enable=true requires data rows"
-                    )
+                    global_enabled = None
+                validate_global_seesm_activity(path, global_enabled, errors)
 
     teacher_mode = dynamic_contract["mode"] in TEACHER_TAU_MODES
     tau_stage_path = args.run_dir / "tau_stage_log.csv"

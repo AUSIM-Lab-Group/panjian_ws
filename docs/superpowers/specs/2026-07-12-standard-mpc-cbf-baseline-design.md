@@ -71,8 +71,8 @@ switch to an EESM constraint.
    recorder.
 4. The smoke output must contain non-empty robot, obstacle, margin/Guard,
    planner, timing, and event logs. Metadata must show the fixed-distance
-   configuration and `global_seesm_log.csv` must be absent or empty because
-   global SEESM is disabled.
+   configuration. Because global SEESM is disabled, `global_seesm_log.csv`
+   must contain the canonical header and zero data rows.
 
 ## Non-Goals
 

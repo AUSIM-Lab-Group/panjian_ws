@@ -1822,6 +1822,8 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     prepare_call = obs_init_raw.index("prepareGlobalSeesmLog();")
     enable_guard = obs_init_raw.index("if (global_seesm_enable_)")
     assert prepare_call < enable_guard
+    enabled_body = cpp_function_body(obs_init_raw, "if (global_seesm_enable_)")
+    assert "/safety_margin/beta_applied_final" in cpp_string_literals(enabled_body)
     assert "beta_applied = margin_entry.beta_applied" in unsafe_region
     assert "- beta_applied" in unsafe_region
     assert "global_seesm_log_stream_" in global_header_clean

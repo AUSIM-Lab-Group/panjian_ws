@@ -375,6 +375,42 @@ def test_teacher_profile_missing_runtime_logs_fails_closed(tmp_path, runner):
     assert "missing file" in output
 
 
+def test_disabled_global_seesm_log_must_be_header_only(tmp_path, runner):
+    checker = load_checker()
+    run_dir = tmp_path / "standard_global_disabled"
+    write_meta(runner, run_dir, baseline="Standard_MPC_CBF")
+    global_log = run_dir / "global_seesm_log.csv"
+    fields = sorted(
+        checker.OPTIONAL_FILE_FIELDS["global_seesm_log.csv"]
+        | checker.TEACHER_CANONICAL_FILE_FIELDS["global_seesm_log.csv"]
+        | checker.TAU_FIELDS
+    )
+    _write_csv(global_log, fields, [])
+
+    _, errors = runner.audit_required_logs(run_dir, "Standard_MPC_CBF")
+    assert not any("global_seesm_enable=false" in error for error in errors)
+    checker_errors = []
+    checker.validate_global_seesm_activity(global_log, False, checker_errors)
+    assert checker_errors == []
+
+    _write_csv(global_log, fields, [{field: "0" for field in fields}])
+    _, errors = runner.audit_required_logs(run_dir, "Standard_MPC_CBF")
+    assert any("global_seesm_enable=false" in error for error in errors)
+    checker_errors = []
+    checker.validate_global_seesm_activity(global_log, False, checker_errors)
+    assert any("global_seesm_enable=false" in error for error in checker_errors)
+
+    enabled_dir = tmp_path / "teacher_global_enabled"
+    write_meta(runner, enabled_dir, baseline="SEESM_Ours")
+    enabled_log = enabled_dir / "global_seesm_log.csv"
+    _write_csv(enabled_log, fields, [])
+    _, errors = runner.audit_required_logs(enabled_dir, "SEESM_Ours")
+    assert any("global_seesm_enable=true" in error for error in errors)
+    checker_errors = []
+    checker.validate_global_seesm_activity(enabled_log, True, checker_errors)
+    assert any("global_seesm_enable=true" in error for error in checker_errors)
+
+
 def test_disabled_tau_contract_requires_zero_inactive_computed_rows(tmp_path):
     checker = load_checker()
     path = tmp_path / "planner_log.csv"

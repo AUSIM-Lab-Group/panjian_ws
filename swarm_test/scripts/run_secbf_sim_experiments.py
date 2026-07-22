@@ -1775,13 +1775,19 @@ def audit_required_logs(run_dir: Path, baseline_id: str):
                 "global_seesm_enable",
             )
         except (TypeError, ValueError):
-            global_seesm_enabled = False
+            global_seesm_enabled = None
             errors.append("global_seesm_enable metadata is not boolean")
-        if global_seesm_enabled and not csv_has_data_rows(
+        global_log_has_rows = csv_has_data_rows(
             run_dir / "global_seesm_log.csv"
-        ):
+        )
+        if global_seesm_enabled is True and not global_log_has_rows:
             errors.append(
                 "global_seesm_enable=true requires global_seesm_log.csv data rows"
+            )
+        if global_seesm_enabled is False and global_log_has_rows:
+            errors.append(
+                "global_seesm_enable=false requires global_seesm_log.csv "
+                "to contain only its header"
             )
 
         try:
