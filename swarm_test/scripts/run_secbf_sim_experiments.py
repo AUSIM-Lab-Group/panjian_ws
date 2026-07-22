@@ -25,6 +25,18 @@ if str(SCRIPT_DIR) not in sys.path:
 from reference_path_waypoints import generate_waypoints, initial_yaw
 
 
+REQUIRED_TRIAL_LOGS = (
+    "robot_log.csv",
+    "obstacle_log.csv",
+    "margin_guard_log.csv",
+    "planner_log.csv",
+    "timing_log.csv",
+    "event_log.csv",
+)
+GOAL_TOLERANCE_M = 0.55
+DEADLOCK_MEAN_ABS_V_MPS = 0.05
+
+
 SCENARIO_INDEX = {
     "head_on_context_bl": 101,
     "head_on_context_int": 102,
@@ -51,10 +63,20 @@ SCENARIO_INDEX = {
     "Exp2_category_adult": 22,
     "Exp2_category_child_like": 23,
     "Exp2_category_cyclist": 24,
+    "Exp2_category_pedestrian": 25,
+    "Exp2_category_vehicle": 26,
     "Exp3_context_static": 31,
     "Exp3_context_same_direction": 32,
     "Exp3_context_crossing": 33,
     "Exp3_context_frontal_approaching": 34,
+    "guard_audit_pressure": 35,
+    "stress_high_candidate_margin": 36,
+    "stress_short_ttc": 37,
+    "stress_local_crowding": 38,
+    "runtime_scaling_n1": 41,
+    "runtime_scaling_n2": 42,
+    "runtime_scaling_n4": 44,
+    "runtime_scaling_n6": 46,
 }
 
 BASELINES = {
@@ -77,6 +99,7 @@ BASELINES = {
         "cbf_metric": "distance",
         "front_adsm": "false",
         "global_seesm_enable": "false",
+        "side_preference_enabled": "false",
     },
     "B2_SECBF_no_guard": {
         "planner": "secbf_planner.launch",
@@ -188,6 +211,35 @@ BASELINES = {
         "dynamic_tau_enabled": True,
         "cbf_metric": "seesm",
     },
+    "No_J_side": {
+        "planner": "secbf_planner.launch",
+        "controller_index": 6,
+        "guard_enabled": "true",
+        "experiment_label": "No_J_side",
+        "dynamic_tau_enabled": True,
+        "cbf_metric": "seesm",
+        "side_preference_enabled": "false",
+    },
+    "SideWeight_005": {
+        "planner": "secbf_planner.launch", "controller_index": 6,
+        "guard_enabled": "true", "experiment_label": "SideWeight_005",
+        "dynamic_tau_enabled": True, "cbf_metric": "seesm", "side_weight": 0.05,
+    },
+    "SideWeight_010": {
+        "planner": "secbf_planner.launch", "controller_index": 6,
+        "guard_enabled": "true", "experiment_label": "SideWeight_010",
+        "dynamic_tau_enabled": True, "cbf_metric": "seesm", "side_weight": 0.10,
+    },
+    "SideWeight_020": {
+        "planner": "secbf_planner.launch", "controller_index": 6,
+        "guard_enabled": "true", "experiment_label": "SideWeight_020",
+        "dynamic_tau_enabled": True, "cbf_metric": "seesm", "side_weight": 0.20,
+    },
+    "SideWeight_050": {
+        "planner": "secbf_planner.launch", "controller_index": 6,
+        "guard_enabled": "true", "experiment_label": "SideWeight_050",
+        "dynamic_tau_enabled": True, "cbf_metric": "seesm", "side_weight": 0.50,
+    },
 }
 
 PAPER_BASELINE_ALIASES = {
@@ -202,14 +254,14 @@ SEED_MANIFEST_HEADER = [
     "start_x_offset_m", "start_y_offset_m", "speed_scale", "start_delay_offset_s",
 ]
 DEFAULT_BETA_BAR = {
-    "box": 0.1,
-    "adult": 0.4,
-    "pedestrian": 0.4,
-    "child": 0.7,
-    "child_like": 0.7,
-    "cyclist": 0.6,
-    "vehicle": 0.5,
-    "unknown": 0.4,
+    "box": 0.20,
+    "adult": 0.75,
+    "pedestrian": 0.75,
+    "child": 1.05,
+    "child_like": 1.05,
+    "cyclist": 0.90,
+    "vehicle": 0.80,
+    "unknown": 0.75,
 }
 
 DEFAULT_MU_WEIGHTS = {"bias": 0.6, "heading": 0.2, "ttc": 0.15, "density": 0.1}
@@ -233,6 +285,13 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "dynamic_tau_min_speed": 1e-6,
     "dynamic_tau_min_distance": 1e-6,
     "dynamic_tau_max_tau": 2.0,
+    "side_preference_enabled": "true",
+    "side_weight": 0.05,
+    "side_epsilon_n": 1e-3,
+    "side_horizon": 20,
+    "side_sign": 1.0,
+    "side_min_obstacle_speed": 1e-3,
+    "side_activation_distance": 3.0,
 }
 
 DYNAMIC_TAU_SWITCHES = (
@@ -261,6 +320,11 @@ def baseline_beta_source(baseline_id: str) -> str:
         "No_semantic": "zero",
         "Unguarded_SEESM": "candidate",
         "SEESM_Ours": "beta_applied_final",
+        "No_J_side": "beta_applied_final",
+        "SideWeight_005": "beta_applied_final",
+        "SideWeight_010": "beta_applied_final",
+        "SideWeight_020": "beta_applied_final",
+        "SideWeight_050": "beta_applied_final",
     }.get(baseline_id, "candidate")
 
 
@@ -445,7 +509,15 @@ def baseline_switches(baseline_id: str) -> dict:
     for key in values:
         if key in baseline:
             values[key] = baseline[key]
-    if baseline_id in {"No_semantic", "Unguarded_SEESM", "SEESM_Ours"}:
+    if baseline_id in {
+        "No_semantic", "Fixed_margin", "Category_only",
+        "Unguarded_SEESM", "SEESM_Ours",
+    }:
+        values["dynamic_tau_enabled"] = True
+    elif baseline_id in {
+        "No_J_side", "SideWeight_005", "SideWeight_010",
+        "SideWeight_020", "SideWeight_050",
+    }:
         values["dynamic_tau_enabled"] = True
     else:
         values["dynamic_tau_enabled"] = False
@@ -453,7 +525,10 @@ def baseline_switches(baseline_id: str) -> dict:
         values["cbf_metric"] = "distance"
     else:
         values["cbf_metric"] = "seesm"
-    if baseline_id in {"Unguarded_SEESM", "SEESM_Ours"}:
+    if baseline_id in {
+        "Category_only", "Unguarded_SEESM", "SEESM_Ours", "No_J_side",
+        "SideWeight_005", "SideWeight_010", "SideWeight_020", "SideWeight_050",
+    }:
         values["global_seesm_enable"] = "true"
     else:
         values["global_seesm_enable"] = "false"
@@ -582,6 +657,13 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "cbf_metric": switches["cbf_metric"],
         "front_adsm": switches["front_adsm"],
         "global_seesm_enable": switches["global_seesm_enable"],
+        "side_preference_enabled": switches["side_preference_enabled"],
+        "side_weight": switches["side_weight"],
+        "side_epsilon_n": switches["side_epsilon_n"],
+        "side_horizon": switches["side_horizon"],
+        "side_sign": switches["side_sign"],
+        "side_min_obstacle_speed": switches["side_min_obstacle_speed"],
+        "side_activation_distance": switches["side_activation_distance"],
         "dynamic_tau": {
             "enabled": bool_switch(switches["dynamic_tau_enabled"]),
             "Ke": float(switches["dynamic_tau_ke"]),
@@ -695,6 +777,13 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"cbf_metric:={switches['cbf_metric']}",
             f"front_adsm:={switches['front_adsm']}",
             f"global_seesm_enable:={switches['global_seesm_enable']}",
+            f"side_preference_enabled:={switches['side_preference_enabled']}",
+            f"side_weight:={switches['side_weight']}",
+            f"side_epsilon_n:={switches['side_epsilon_n']}",
+            f"side_horizon:={switches['side_horizon']}",
+            f"side_sign:={switches['side_sign']}",
+            f"side_min_obstacle_speed:={switches['side_min_obstacle_speed']}",
+            f"side_activation_distance:={switches['side_activation_distance']}",
             f"dynamic_tau_enabled:={ros_bool(switches['dynamic_tau_enabled'])}",
             f"dynamic_tau_ke:={switches['dynamic_tau_ke']}",
             f"dynamic_tau_tmax:={switches['dynamic_tau_tmax']}",
@@ -867,6 +956,12 @@ def summarize_planner_log(planner_log: Path) -> dict:
         "slack_mean": "",
         "solve_time_mean_ms": "",
         "solve_time_max_ms": "",
+        "side_preference_enabled": "",
+        "side_weight": "",
+        "side_cost_mean": "",
+        "side_cost_max": "",
+        "tracking_rmse_m": "",
+        "tracking_error_max_m": "",
     }
     if not planner_log.exists():
         return metrics
@@ -892,6 +987,15 @@ def summarize_planner_log(planner_log: Path) -> dict:
     slack_max = floats("slack_max") or floats("slack")
     slack_mean = floats("slack_mean")
     solve_time = floats("solve_time_ms")
+    side_enabled = floats("side_preference_enabled")
+    side_weight = floats("side_weight")
+    side_cost = floats("side_cost")
+    tracking_error = floats("tracking_error")
+    side_dynamic_obstacle_count = floats("side_dynamic_obstacle_count")
+    side_candidate_count = floats("side_candidate_count")
+    side_dominant_index = floats("side_dominant_obs_index")
+    side_dominant_tau = floats("side_dominant_tau")
+    side_dominant_h = floats("side_dominant_h")
 
     metrics["planner_records"] = total
     if constrained_obs_count:
@@ -910,6 +1014,31 @@ def summarize_planner_log(planner_log: Path) -> dict:
     if solve_time:
         metrics["solve_time_mean_ms"] = f"{sum(solve_time) / len(solve_time):.6f}"
         metrics["solve_time_max_ms"] = f"{max(solve_time):.6f}"
+    if side_enabled:
+        metrics["side_preference_enabled"] = int(max(side_enabled) > 0.5)
+    if side_weight:
+        metrics["side_weight"] = f"{max(side_weight):.6f}"
+    if side_cost:
+        metrics["side_cost_mean"] = f"{sum(side_cost) / len(side_cost):.6f}"
+        metrics["side_cost_max"] = f"{max(side_cost):.6f}"
+    if tracking_error:
+        metrics["tracking_rmse_m"] = f"{math.sqrt(sum(value * value for value in tracking_error) / len(tracking_error)):.6f}"
+        metrics["tracking_error_max_m"] = f"{max(tracking_error):.6f}"
+    if side_candidate_count:
+        metrics["side_candidate_count_mean"] = f"{sum(side_candidate_count) / len(side_candidate_count):.6f}"
+        metrics["side_multi_candidate_rate"] = f"{sum(value > 1.0 for value in side_candidate_count) / len(side_candidate_count):.6f}"
+    if side_dynamic_obstacle_count:
+        metrics["side_dynamic_obstacle_count_mean"] = f"{sum(side_dynamic_obstacle_count) / len(side_dynamic_obstacle_count):.6f}"
+        metrics["side_crowd_suppression_rate"] = f"{sum(value > 1.0 for value in side_dynamic_obstacle_count) / len(side_dynamic_obstacle_count):.6f}"
+    active_dominant = [value for value in side_dominant_index if value >= 0.0]
+    if side_dominant_index:
+        metrics["side_dominant_active_count"] = len(active_dominant)
+        metrics["side_dominant_active_rate"] = f"{len(active_dominant) / len(side_dominant_index):.6f}"
+    if side_dominant_tau:
+        metrics["side_dominant_tau_max"] = f"{max(side_dominant_tau):.6f}"
+    finite_h = [value for value in side_dominant_h if value == value]
+    if finite_h:
+        metrics["side_dominant_h_min"] = f"{min(finite_h):.6f}"
     return metrics
 
 
@@ -1082,6 +1211,7 @@ def summarize_data_processor(data_summary: Path, duration_sec: int) -> dict:
 def summarize_phase5_logs(run_dir: Path) -> dict:
     metrics = {
         "success": "",
+        "goal_reached": "",
         "robot_records": 0,
         "robot_path_length_m": "",
         "robot_travel_time_s": "",
@@ -1092,6 +1222,7 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
         "robot_control_effort": "",
         "log_min_distance_m": "",
         "log_min_h_ee": "",
+        "log_invalid_obstacle_rows": 0,
     }
 
     meta_path = run_dir / "meta.yaml"
@@ -1148,7 +1279,8 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
             if goal is not None:
                 final_dist = math.hypot(positions[-1][0] - goal[0], positions[-1][1] - goal[1])
                 metrics["robot_final_goal_distance_m"] = f"{final_dist:.6f}"
-                metrics["success"] = int(final_dist <= 0.55)
+                metrics["goal_reached"] = int(final_dist <= GOAL_TOLERANCE_M)
+                metrics["success"] = metrics["goal_reached"]
             if len(step_lengths) >= 2:
                 diffs = [step_lengths[i] - step_lengths[i - 1] for i in range(1, len(step_lengths))]
                 smoothness = math.sqrt(sum(diff * diff for diff in diffs) / len(diffs))
@@ -1167,6 +1299,24 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
         with obstacle_log.open("r", newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 try:
+                    d_i_raw = float(row["d_i"])
+                    rel_v_raw = float(row["rel_v"])
+                    ttc_raw = float(row["TTC"])
+                    h_ee_raw = float(row["h_EE"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                # The simulator can publish an all-zero prediction row while
+                # obstacle ids are being initialized. It is not a clearance
+                # measurement and must not become a false collision.
+                if (
+                    abs(d_i_raw) <= 1.0e-12
+                    and abs(rel_v_raw) <= 1.0e-12
+                    and abs(ttc_raw) <= 1.0e-12
+                    and abs(h_ee_raw) <= 1.0e-12
+                ):
+                    metrics["log_invalid_obstacle_rows"] += 1
+                    continue
+                try:
                     d_i = float(row["d_i"])
                     radius = float(row["radius"])
                     distance = d_i - radius - robot_radius
@@ -1184,6 +1334,55 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
             metrics["log_min_h_ee"] = f"{min_h_ee:.6f}"
 
     return metrics
+
+
+def classify_termination_reason(run_dir: Path, nav_metrics: dict,
+                                phase5_metrics: dict, planner_metrics: dict) -> str:
+    """Classify one trial using only auditable logs and final metrics.
+
+    Collision takes priority over goal arrival, because a trial that reaches the
+    goal after crossing an obstacle is not a successful safety trial. A transient
+    infeasible MPC solve is classified only when the trial does not eventually
+    reach the goal; this preserves the distinction between recovery and failure.
+    """
+    missing = [
+        name for name in REQUIRED_TRIAL_LOGS
+        if not (run_dir / name).exists() or (run_dir / name).stat().st_size <= 1
+    ]
+    if missing or phase5_metrics.get("robot_records", 0) <= 0 or planner_metrics.get("planner_records", 0) <= 0:
+        return "invalid"
+
+    def as_float(metrics, key):
+        try:
+            value = float(metrics.get(key, ""))
+            return value if math.isfinite(value) else None
+        except (TypeError, ValueError):
+            return None
+
+    collision_count = as_float(nav_metrics, "nav_collision_count")
+    log_min_distance = as_float(phase5_metrics, "log_min_distance_m")
+    if (collision_count is not None and collision_count > 0) or (
+        log_min_distance is not None and log_min_distance <= 0.0
+    ):
+        return "collision"
+
+    if str(phase5_metrics.get("goal_reached", "")).strip() in {"1", "true", "True"}:
+        return "success"
+
+    first_infeasible = as_float(planner_metrics, "first_infeasible_count")
+    if first_infeasible is not None and first_infeasible > 0:
+        return "infeasible"
+
+    mean_abs_v = as_float(phase5_metrics, "robot_mean_abs_v")
+    final_goal_distance = as_float(phase5_metrics, "robot_final_goal_distance_m")
+    if (
+        mean_abs_v is not None
+        and final_goal_distance is not None
+        and final_goal_distance > GOAL_TOLERANCE_M
+        and mean_abs_v < DEADLOCK_MEAN_ABS_V_MPS
+    ):
+        return "deadlock"
+    return "timeout"
 
 
 def guard_log_path(run_dir: Path) -> Path:
@@ -1207,6 +1406,13 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     tau_audit = dynamic_tau_audit(run_dir)
     nav_metrics = summarize_data_processor(data_summary, duration_sec)
     phase5_metrics = summarize_phase5_logs(run_dir)
+    termination_reason = classify_termination_reason(
+        run_dir, nav_metrics, phase5_metrics, planner_metrics
+    )
+    phase5_metrics["success"] = (
+        int(termination_reason == "success") if termination_reason != "invalid" else ""
+    )
+    phase5_metrics["termination_reason"] = termination_reason
 
     lines = [
         f"# {scenario_id} / {baseline_id}",
@@ -1220,10 +1426,13 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- nav_travel_time_s: {nav_metrics['nav_travel_time_s']}",
         f"- nav_collision_count: {nav_metrics['nav_collision_count']}",
         f"- nav_min_distance_m: {nav_metrics['nav_min_distance_m']}",
+        f"- termination_reason: {termination_reason}",
+        f"- goal_reached: {phase5_metrics['goal_reached']}",
         f"- success: {phase5_metrics['success']}",
         f"- robot_path_length_m: {phase5_metrics['robot_path_length_m']}",
         f"- robot_final_goal_distance_m: {phase5_metrics['robot_final_goal_distance_m']}",
         f"- log_min_distance_m: {phase5_metrics['log_min_distance_m']}",
+        f"- log_invalid_obstacle_rows: {phase5_metrics['log_invalid_obstacle_rows']}",
         f"- safety_bound_passed: {verify_passed}",
         f"- verification_note: {verify_note}",
         f"- guard_records: {guard_metrics['guard_records']}",
@@ -1279,11 +1488,11 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "nav_path_length_m", "nav_travel_time_s", "nav_mean_vel_ms",
                 "nav_mean_ang_rads", "nav_var_vel", "nav_var_ang",
                 "nav_collision_count", "nav_min_distance_m",
-                "success", "robot_records", "robot_path_length_m",
+                "termination_reason", "goal_reached", "success", "robot_records", "robot_path_length_m",
                 "robot_travel_time_s", "robot_final_goal_distance_m",
                 "robot_mean_abs_v", "robot_mean_abs_w",
                 "robot_velocity_smoothness", "robot_control_effort",
-                "log_min_distance_m", "log_min_h_ee",
+                "log_min_distance_m", "log_min_h_ee", "log_invalid_obstacle_rows",
                 "safety_bound_passed", "guard_records", "semantic_classes",
                 "beta_applied_mean", "beta_applied_max", "h_ee_min", "h_see_min",
                 "delta_beta_max", "guard_rollback_count", "guard_rollback_rate",
@@ -1292,6 +1501,12 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "mpc_guard_used_count", "mpc_guard_used_rate", "no_cbf_fallback_count",
                 "no_cbf_fallback_rate", "slack_max", "slack_mean",
                 "solve_time_mean_ms", "solve_time_max_ms",
+                "side_preference_enabled", "side_weight", "side_cost_mean", "side_cost_max",
+                "tracking_rmse_m", "tracking_error_max_m",
+                "side_candidate_count_mean", "side_multi_candidate_rate",
+                "side_dynamic_obstacle_count_mean", "side_crowd_suppression_rate",
+                "side_dominant_active_count", "side_dominant_active_rate",
+                "side_dominant_tau_max", "side_dominant_h_min",
                 "tau_mean", "tau_max", "tau_active_fraction", "tau_invalid_count",
                 "tau_reason_counts", "tau_source",
                 "dynamic_tau_enabled", "dynamic_tau_ke", "dynamic_tau_tmax",

@@ -1,0 +1,13 @@
+trial_id,seed,scenario_id,obstacle_id,start_x_offset_m,start_y_offset_m,speed_scale,start_delay_offset_s
+pilot_001,20260720,head_on_context_int,obs_001,-0.106686,0.143155,0.980481,-0.081744
+pilot_002,20260721,head_on_context_int,obs_001,0.033709,0.141053,1.020494,0.110564
+pilot_001,20260720,crossing_context_int,obs_001,-0.106686,0.143155,0.980481,-0.081744
+pilot_002,20260721,crossing_context_int,obs_001,0.033709,0.141053,1.020494,0.110564
+pilot_001,20260720,local_crowding_context_int,obs_001,-0.106686,0.143155,0.980481,-0.081744
+pilot_001,20260720,local_crowding_context_int,obs_002,0.066436,0.028020,0.958433,-0.010453
+pilot_001,20260720,local_crowding_context_int,obs_003,-0.086936,-0.121643,0.965210,-0.067062
+pilot_001,20260720,local_crowding_context_int,obs_004,-0.148697,0.051010,0.975467,-0.090980
+pilot_002,20260721,local_crowding_context_int,obs_001,0.033709,0.141053,1.020494,0.110564
+pilot_002,20260721,local_crowding_context_int,obs_002,-0.028929,0.103464,0.950705,0.125318
+pilot_002,20260721,local_crowding_context_int,obs_003,0.111504,-0.016486,1.007860,0.053945
+pilot_002,20260721,local_crowding_context_int,obs_004,-0.098370,-0.078414,1.010277,0.039273

@@ -1,0 +1,9 @@
+trial_id,seed,scenario_id,obstacle_id,start_x_offset_m,start_y_offset_m,speed_scale,start_delay_offset_s
+component_001,20260714,Exp2_category_box,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp2_category_pedestrian,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp2_category_vehicle,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp2_category_cyclist,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp3_context_static,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp3_context_same_direction,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp3_context_crossing,obs_001,0.000000,0.000000,1.000000,0.000000
+component_001,20260714,Exp3_context_frontal_approaching,obs_001,0.000000,0.000000,1.000000,0.000000

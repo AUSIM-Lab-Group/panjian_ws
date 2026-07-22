@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
                                    std::vector<double> Q, std::vector<double> R,
@@ -10,7 +11,11 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    double epsilon_max, double slack_weight,
                                    int max_cbf_obstacles, const std::string& cbf_metric,
                                    bool dynamic_tau_enabled,
-                                   const semantic_guard::DynamicTauParams& dynamic_tau_params) {
+                                   const semantic_guard::DynamicTauParams& dynamic_tau_params,
+                                   bool side_preference_enabled, double side_weight,
+                                   double side_epsilon_n, int side_horizon,
+                                   double side_sign, double side_min_obstacle_speed,
+                                   double side_activation_distance) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -27,11 +32,19 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     cbf_metric_ = cbf_metric;
     dynamic_tau_enabled_ = dynamic_tau_enabled;
     dynamic_tau_params_ = dynamic_tau_params;
+    side_preference_enabled_ = side_preference_enabled;
+    side_weight_ = std::max(0.0, side_weight);
+    side_epsilon_n_ = std::max(1e-12, side_epsilon_n);
+    side_horizon_ = std::max(0, std::min(N_, side_horizon));
+    side_sign_ = side_sign >= 0.0 ? 1.0 : -1.0;
+    side_min_obstacle_speed_ = std::max(0.0, side_min_obstacle_speed);
+    side_activation_distance_ = std::max(0.0, side_activation_distance);
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s",
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s, side_preference=%s, side_weight=%.3f, side_horizon=%d",
              N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_,
-             max_cbf_obstacles_, dynamic_tau_enabled_ ? "true" : "false");
+             max_cbf_obstacles_, dynamic_tau_enabled_ ? "true" : "false",
+             side_preference_enabled_ ? "true" : "false", side_weight_, side_horizon_);
 }
 
 bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
@@ -70,6 +83,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
 
     // Cost function (progressive Q)
     casadi::MX cost = 0;
+    casadi::MX side_cost = 0;
     casadi::DM R_mat = casadi::DM::zeros(2, 2);
     R_mat(0, 0) = R_[0];
     R_mat(1, 1) = R_[1];
@@ -97,6 +111,104 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     casadi::MX X_err_e = X_k_(casadi::Slice(0, 3), N_) - X_ref(casadi::Slice(), N_ - 1);
     cost += casadi::MX::mtimes({X_err_e.T(), 1.1 * Q_mat, X_err_e});
     cost += slack_weight_ * casadi::MX::sumsqr(epsilon);
+
+    // Soft side-passing preference from Eqs. (35)--(42):
+    // l_i = p_obs - p_robot, n~=l/sqrt(||l||^2+eps_n^2),
+    // t~=s0*J*n~, z_EE=l+tau*v_rel, phi(-g)=max(0,-t^T z_EE)^2.
+    // The term changes only the objective and therefore does not alter the
+    // SECBF feasible set. Static obstacles are excluded by the velocity gate.
+    if (side_preference_enabled_ && side_weight_ > 0.0 && side_horizon_ > 0) {
+        int dominant_idx = -1;
+        int dominant_stage = -1;
+        double dominant_tau = 0.0;
+        double dominant_h = std::numeric_limits<double>::infinity();
+        std::vector<int> local_dynamic_indices;
+        int dynamic_obstacle_count = 0;
+        for (int obs_idx = 0; obs_idx < obs_num; ++obs_idx) {
+            const Eigen::VectorXd obs_first = obs_matrix->col(obs_idx * N_);
+            if (obs_first.size() < 7 || !obs_first.allFinite()) continue;
+            const double obstacle_speed = std::hypot(obs_first(5), obs_first(6));
+            if (obstacle_speed <= side_min_obstacle_speed_) continue;
+            dynamic_obstacle_count++;
+            const double current_distance = std::hypot(
+                obs_first(0) - (*cur_state)(0), obs_first(1) - (*cur_state)(1));
+            if (current_distance <= side_activation_distance_) {
+                local_dynamic_indices.push_back(obs_idx);
+            }
+        }
+        last_side_dynamic_obstacle_count = dynamic_obstacle_count;
+        const int candidate_count = static_cast<int>(local_dynamic_indices.size());
+        // In crowd interactions, a fixed side preference is not well-defined.
+        // Only a globally one-to-one dynamic scene may activate J_side.
+        if (dynamic_obstacle_count == 1) for (const int obs_idx : local_dynamic_indices) {
+            const Eigen::VectorXd obs_first = obs_matrix->col(obs_idx * N_);
+            const double beta_i = obs_idx < static_cast<int>(beta_list.size())
+                                      ? beta_list[obs_idx] : beta_bar_unknown_;
+            const int stage_count = std::min({side_horizon_, N_, static_cast<int>(goal_state->cols())});
+            int closest_stage = -1;
+            double closest_h = std::numeric_limits<double>::infinity();
+            double initial_distance = std::numeric_limits<double>::infinity();
+            for (int k = 0; k < stage_count; ++k) {
+                const Eigen::VectorXd obs_k = obs_matrix->col(obs_idx * N_ + k);
+                if (obs_k.size() < 7 || !obs_k.allFinite()) continue;
+                const double distance =
+                    std::hypot(obs_k(0) - (*goal_state)(0, k),
+                               obs_k(1) - (*goal_state)(1, k));
+                if (k == 0) initial_distance = distance;
+                const double h_i = distance - obs_k(2) - robot_radius_ - beta_i;
+                if (h_i < closest_h) {
+                    closest_h = h_i;
+                    closest_stage = k;
+                }
+            }
+            // Applicable interaction: the predicted closest approach is in the
+            // future and is meaningfully closer than the first prediction.
+            if (closest_stage <= 0 || !std::isfinite(initial_distance)) continue;
+            const Eigen::VectorXd obs_closest = obs_matrix->col(obs_idx * N_ + closest_stage);
+            const double closest_distance = closest_h + obs_closest(2) + robot_radius_ + beta_i;
+            if (closest_distance >= initial_distance - 0.05) continue;
+            if (closest_h < dominant_h) {
+                dominant_idx = obs_idx;
+                dominant_stage = closest_stage;
+                dominant_tau = dynamic_tau_params_.ke * std::min(
+                    dynamic_tau_params_.t_max,
+                    std::max(Ts_, (closest_stage + 1) * Ts_));
+                dominant_tau = std::min(dominant_tau, dynamic_tau_params_.max_tau);
+                dominant_h = closest_h;
+            }
+        }
+        last_side_candidate_count = candidate_count;
+        // A soft passing preference is well-defined only for one effective
+        // dynamic interaction. Multiple simultaneous candidates are left to
+        // the SECBF constraints and feasibility Guard.
+        if (candidate_count == 1 && dominant_idx >= 0) {
+            last_side_dominant_obs_index = dominant_idx;
+            last_side_dominant_stage = dominant_stage;
+            last_side_dominant_tau = dominant_tau;
+            last_side_dominant_h = dominant_h;
+            const int obs_idx = dominant_idx;
+            for (int k = 0; k < side_horizon_; ++k) {
+                const Eigen::VectorXd obs_k = obs_matrix->col(obs_idx * N_ + k);
+                if (obs_k.size() < 7 || !obs_k.allFinite()) continue;
+                casadi::MX lx = obs_k(0) - X_k_(0, k);
+                casadi::MX ly = obs_k(1) - X_k_(1, k);
+                casadi::MX rvx = obs_k(5) - X_k_(3, k);
+                casadi::MX rvy = obs_k(6) - X_k_(4, k);
+                casadi::MX denom = casadi::MX::sqrt(
+                    lx * lx + ly * ly + side_epsilon_n_ * side_epsilon_n_);
+                casadi::MX nx = lx / denom;
+                casadi::MX ny = ly / denom;
+                casadi::MX tx = -side_sign_ * ny;
+                casadi::MX ty = side_sign_ * nx;
+                casadi::MX z_x = lx + dominant_tau * rvx;
+                casadi::MX z_y = ly + dominant_tau * rvy;
+                casadi::MX g_side = tx * z_x + ty * z_y;
+                casadi::MX violation = casadi::MX::fmax(0.0, -g_side);
+                side_cost += side_weight_ * violation * violation;
+            }
+        }
+        cost += side_cost;
+    }
 
     // Control bounds
     // 允许小幅倒车 (-0.2 m/s) 用于紧急避障, 但不鼓励长距离倒车
@@ -211,6 +323,9 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         casadi::DM state_sol = solution_->value(X_k_);
         casadi::DM ctrl_sol = solution_->value(U_k_);
         casadi::DM epsilon_sol = solution_->value(epsilon);
+        last_side_cost = side_preference_enabled_
+                             ? static_cast<double>(solution_->value(side_cost))
+                             : 0.0;
 
         for (int i = 0; i < N_ + 1; i++) {
             for (int j = 0; j < 5; j++)
@@ -388,6 +503,13 @@ void MPC_SECBF_SOLVE::resetAuditMetrics() {
     last_slack_max = 0.0;
     last_constrained_obs_count = 0;
     last_constrained_obs_index = -1;
+    last_side_cost = 0.0;
+    last_side_dominant_obs_index = -1;
+    last_side_dominant_stage = -1;
+    last_side_candidate_count = 0;
+    last_side_dynamic_obstacle_count = 0;
+    last_side_dominant_tau = 0.0;
+    last_side_dominant_h = 0.0;
 }
 
 void MPC_SECBF_SOLVE::rotateSolution() {

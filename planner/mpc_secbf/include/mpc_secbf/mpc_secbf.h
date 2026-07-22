@@ -27,7 +27,14 @@ public:
                      const std::string& cbf_metric = "seesm",
                      bool dynamic_tau_enabled = false,
                      const semantic_guard::DynamicTauParams& dynamic_tau_params =
-                         semantic_guard::DynamicTauParams());
+                         semantic_guard::DynamicTauParams(),
+                     bool side_preference_enabled = false,
+                     double side_weight = 0.05,
+                     double side_epsilon_n = 1e-3,
+                     int side_horizon = 20,
+                     double side_sign = 1.0,
+                     double side_min_obstacle_speed = 1e-3,
+                     double side_activation_distance = 3.0);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -50,6 +57,13 @@ public:
     double last_slack_max = 0.0;
     int last_constrained_obs_count = 0;
     int last_constrained_obs_index = -1;
+    double last_side_cost = 0.0;
+    int last_side_dominant_obs_index = -1;
+    int last_side_dominant_stage = -1;
+    int last_side_candidate_count = 0;
+    int last_side_dynamic_obstacle_count = 0;
+    double last_side_dominant_tau = 0.0;
+    double last_side_dominant_h = 0.0;
 
 private:
     // The caller supplies the numeric tau frozen for this obstacle prediction stage.
@@ -88,6 +102,13 @@ private:
     std::string cbf_metric_ = "seesm";
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
+    bool side_preference_enabled_ = false;
+    double side_weight_ = 0.05;
+    double side_epsilon_n_ = 1e-3;
+    int side_horizon_ = 20;
+    double side_sign_ = 1.0;
+    double side_min_obstacle_speed_ = 1e-3;
+    double side_activation_distance_ = 3.0;
     std::vector<double> Q_, R_;
 
     // CasADi objects

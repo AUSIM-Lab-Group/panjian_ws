@@ -18,19 +18,25 @@ FILE_FIELDS = {
     "obstacle_log.csv": {"t", "id", "class", "x", "y", "radius", "vx", "vy", "d_i", "rel_v", "TTC", "h_EE"},
     "margin_guard_log.csv": {
         "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
-        "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "beta_requested", "beta_pre_guard", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
     },
     "planner_log.csv": {
         "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
-        "solve_time_ms", "mpc_feasibility_guard_used",
+        "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
+        "mpc_feasibility_guard_used",
     },
     "timing_log.csv": {"t", "mpc_secbf_ms", "total_loop_time_ms"},
     "event_log.csv": {"t", "event", "detail"},
 }
 
 OPTIONAL_FILE_FIELDS = {
+    "mpc_margin_log.csv": {
+        "t", "obs_id", "beta_pre_guard", "beta_applied", "accepted_beta_source",
+        "first_attempt_status", "final_status", "mpc_feasibility_guard_enabled",
+        "candidate_feasibility_checked", "mpc_feasibility_guard_used",
+    },
     "global_seesm_log.csv": {
         "t", "replan_id", "global_seesm_enable", "obs_id", "beta_applied",
         "accepted_source", "margin_age_ms", "h_ee", "h_see",
@@ -58,13 +64,16 @@ PAPER_FIELDS = {
     "r_i/mu": [("margin_guard_log.csv", "mu")],
     "beta_bar": [("margin_guard_log.csv", "beta_bar")],
     "beta_hat": [("margin_guard_log.csv", "beta_requested")],
-    "beta": [("margin_guard_log.csv", "beta_applied")],
+    "beta_pre_guard": [("mpc_margin_log.csv", "beta_pre_guard"), ("margin_guard_log.csv", "beta_pre_guard")],
+    "beta": [("mpc_margin_log.csv", "beta_applied"), ("margin_guard_log.csv", "beta_applied")],
     "delta_beta": [("margin_guard_log.csv", "delta_beta")],
     "guard_upper_bound": [("margin_guard_log.csv", "guard_upper_bound")],
     "h_EE": [("obstacle_log.csv", "h_EE"), ("margin_guard_log.csv", "h_ee")],
     "h_SEE": [("margin_guard_log.csv", "h_see")],
     "slack": [("planner_log.csv", "slack"), ("planner_log.csv", "slack_max")],
     "mpc_status": [("planner_log.csv", "mpc_status")],
+    "mpc_feasibility_guard_enabled": [("planner_log.csv", "mpc_feasibility_guard_enabled")],
+    "candidate_feasibility_checked": [("planner_log.csv", "candidate_feasibility_checked")],
     "mpc_feasibility_guard_used": [("planner_log.csv", "mpc_feasibility_guard_used")],
 }
 
@@ -156,6 +165,59 @@ def validate_tau_file(file_name, path, errors, required=False):
     return header
 
 
+def validate_mpc_margin_rows(path, errors):
+    rows = read_rows(path)
+    for row_index, row in enumerate(rows, start=2):
+        try:
+            beta_pre = float(row["beta_pre_guard"])
+            beta_applied = float(row["beta_applied"])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"mpc_margin_log.csv:{row_index}: invalid beta value")
+            continue
+        if not math.isfinite(beta_pre) or not math.isfinite(beta_applied):
+            errors.append(f"mpc_margin_log.csv:{row_index}: non-finite beta value")
+            continue
+
+        enabled = str(row.get("mpc_feasibility_guard_enabled", "")).strip().lower()
+        checked = str(row.get("candidate_feasibility_checked", "")).strip().lower()
+        used = str(row.get("mpc_feasibility_guard_used", "")).strip().lower()
+        for field, value in (
+            ("mpc_feasibility_guard_enabled", enabled),
+            ("candidate_feasibility_checked", checked),
+            ("mpc_feasibility_guard_used", used),
+        ):
+            if value not in BOOL_VALUES:
+                errors.append(f"mpc_margin_log.csv:{row_index}: invalid {field} {value!r}")
+
+        first_status = row.get("first_attempt_status", "")
+        final_status = row.get("final_status", "")
+        source = row.get("accepted_beta_source", "")
+        checked_true = checked in {"1", "true", "yes"}
+        enabled_true = enabled in {"1", "true", "yes"}
+        used_true = used in {"1", "true", "yes"}
+        if checked_true != (first_status in {"success", "infeasible"}):
+            errors.append(
+                f"mpc_margin_log.csv:{row_index}: candidate check/status mismatch"
+            )
+        if used_true and (not enabled_true or first_status != "infeasible"):
+            errors.append(
+                f"mpc_margin_log.csv:{row_index}: Guard retry lacks enabled infeasible candidate"
+            )
+        if source == "candidate":
+            if first_status != "success" or final_status != "success":
+                errors.append(
+                    f"mpc_margin_log.csv:{row_index}: candidate source lacks successful MPC status"
+                )
+            if abs(beta_pre - beta_applied) > 1e-8:
+                errors.append(
+                    f"mpc_margin_log.csv:{row_index}: candidate source changed accepted beta"
+                )
+        if source in {"zero", "no_cbf"} and abs(beta_applied) > 1e-8:
+            errors.append(
+                f"mpc_margin_log.csv:{row_index}: zero/no_cbf source has nonzero beta"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check Phase 5 CSV field contract")
     parser.add_argument("run_dir", type=Path)
@@ -186,7 +248,9 @@ def main():
         missing = sorted(required - header)
         if missing:
             errors.append(f"{file_name}: missing fields {missing}")
-        else:
+        elif file_name == "mpc_margin_log.csv":
+            validate_mpc_margin_rows(path, errors)
+        elif file_name == "global_seesm_log.csv":
             validate_tau_file(file_name, path, errors, required=dynamic_enabled)
 
     for field, choices in PAPER_FIELDS.items():

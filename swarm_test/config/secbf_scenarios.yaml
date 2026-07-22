@@ -5,14 +5,14 @@
 scenarios:
   # Main simulation: Head-on
   head_on_context_bl:
-    description: "Head-on / Context-BL: one adult pedestrian, moderate closing speed"
+    description: "Head-on / Context-BL: one pedestrian, moderate closing speed"
     scenario_family: "Head-on"
     context_level: "Context-BL"
     map: {x: 14.0, y: 8.0, z: 3.0}
     obstacles:
       - {x: 6.0, y: 0.0, z: 0.75, offset: 0.0, slower: 8.0,
          scale_x: 18.0, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
     expected_role: "low-risk frontal interaction baseline"
 
@@ -55,14 +55,14 @@ scenarios:
 
   # Main simulation: Crossing
   crossing_context_bl:
-    description: "Crossing / Context-BL: one adult pedestrian crossing with moderate TTC"
+    description: "Crossing / Context-BL: one pedestrian crossing with moderate TTC"
     scenario_family: "Crossing"
     context_level: "Context-BL"
     map: {x: 14.0, y: 8.0, z: 3.0}
     obstacles:
       - {x: 5.4, y: 0.0, z: 0.75, offset: 0.0, slower: 7.0,
          scale_x: 0.0, scale_y: 12.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
     expected_role: "single crossing pedestrian baseline"
 
@@ -127,7 +127,7 @@ scenarios:
     expected_role: "low-density crowding baseline"
 
   local_crowding_context_int:
-    description: "Local Crowding / Context-Int: pedestrian, cyclist, adult, and static box create local density"
+    description: "Local Crowding / Context-Int: two pedestrians, cyclist, and static box create local density"
     scenario_family: "Local Crowding"
     context_level: "Context-Int"
     map: {x: 14.0, y: 8.0, z: 3.0}
@@ -143,7 +143,7 @@ scenarios:
          semantic_class: "box"}
       - {x: 6.7, y: -1.2, z: 0.75, offset: 0.0, slower: 7.0,
          scale_x: 7.5, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
     expected_role: "medium-density mixed semantic pressure"
 
@@ -184,6 +184,56 @@ scenarios:
     theory:
       delta_bar_beta: 0.3
     expected_role: "high-density feasibility and semantic-bound stress"
+
+  # Nested runtime/stability scaling scenes. Larger cases retain all earlier obstacles.
+  runtime_scaling_n1:
+    description: "Runtime/stability scaling N_obs=1"
+    scenario_family: "Runtime Scaling"
+    context_level: "N1"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.8, y: -1.0, z: 0.75, offset: 0.0, slower: 6.0, scale_x: 10.0, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+    goal: {x: 12.0, y: 0.0}
+
+  runtime_scaling_n2:
+    description: "Runtime/stability scaling N_obs=2"
+    scenario_family: "Runtime Scaling"
+    context_level: "N2"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.8, y: -1.0, z: 0.75, offset: 0.0, slower: 6.0, scale_x: 10.0, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 5.6, y: 0.0, z: 0.75, offset: 0.0, slower: 5.0, scale_x: 0.0, scale_y: 10.0, scale_z: 0.0, semantic_class: "cyclist"}
+    goal: {x: 12.0, y: 0.0}
+
+  runtime_scaling_n4:
+    description: "Runtime/stability scaling N_obs=4"
+    scenario_family: "Runtime Scaling"
+    context_level: "N4"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.8, y: -1.0, z: 0.75, offset: 0.0, slower: 6.0, scale_x: 10.0, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 5.6, y: 0.0, z: 0.75, offset: 0.0, slower: 5.0, scale_x: 0.0, scale_y: 10.0, scale_z: 0.0, semantic_class: "cyclist"}
+      - {x: 6.7, y: -1.2, z: 0.75, offset: 0.0, slower: 7.0, scale_x: 7.5, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 7.8, y: 1.1, z: 0.75, offset: 3.14159, slower: 7.5, scale_x: 0.0, scale_y: 8.0, scale_z: 0.0, semantic_class: "child_like"}
+    goal: {x: 12.0, y: 0.0}
+
+  runtime_scaling_n6:
+    description: "Runtime/stability scaling N_obs=6"
+    scenario_family: "Runtime Scaling"
+    context_level: "N6"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.8, y: -1.0, z: 0.75, offset: 0.0, slower: 6.0, scale_x: 10.0, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 5.6, y: 0.0, z: 0.75, offset: 0.0, slower: 5.0, scale_x: 0.0, scale_y: 10.0, scale_z: 0.0, semantic_class: "cyclist"}
+      - {x: 6.7, y: -1.2, z: 0.75, offset: 0.0, slower: 7.0, scale_x: 7.5, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 7.8, y: 1.1, z: 0.75, offset: 3.14159, slower: 7.5, scale_x: 0.0, scale_y: 8.0, scale_z: 0.0, semantic_class: "child_like"}
+      - {x: 8.8, y: -1.0, z: 0.75, offset: 3.14159, slower: 8.0, scale_x: 6.0, scale_y: 0.0, scale_z: 0.0, semantic_class: "pedestrian"}
+      - {x: 9.6, y: 1.0, z: 0.75, offset: 0.0, slower: 8.5, scale_x: 0.0, scale_y: 7.0, scale_z: 0.0, semantic_class: "cyclist"}
+    goal: {x: 12.0, y: 0.0}
 
   # Supplementary paper-style scenes: AVOCADO/DR-MPC inspired layouts.
   # 这些场景只借用二维几何视觉表达，不作为对原论文算法的复现。
@@ -622,50 +672,175 @@ scenarios:
          semantic_class: "cyclist"}
     goal: {x: 12.0, y: 0.0}
 
-  # Exp3: 上下文调制 sweep，固定 adult 类别和单障碍物，只改变运动上下文
+  # Teacher-canonical E1 categories. The adult/child_like cases above remain
+  # available for historical-log compatibility and supplementary analysis.
+  Exp2_category_pedestrian:
+    description: "Exp2 category-aware E1: single static pedestrian on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "pedestrian"}
+    goal: {x: 12.0, y: 0.0}
+
+  Exp2_category_vehicle:
+    description: "Exp2 category-aware E1: single static vehicle on path"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 6.0, y: 0.0, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "vehicle"}
+    goal: {x: 12.0, y: 0.0}
+
+  # Exp3: 上下文调制 sweep，固定 pedestrian 类别和单障碍物，只改变运动上下文
   Exp3_context_static:
-    description: "Exp3 context modulation: adult static off the path"
+    description: "Exp3 context modulation: pedestrian static off the path"
     context: "static"
     map: {x: 12.0, y: 6.0, z: 3.0}
     start: {x: 0.0, y: 0.0}
     obstacles:
       - {x: 6.0, y: 2.8, z: 0.5, offset: 0.0, slower: 999.0,
          scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
 
   Exp3_context_same_direction:
-    description: "Exp3 context modulation: adult moving with the robot direction"
+    description: "Exp3 context modulation: pedestrian moving with the robot direction"
     context: "same_direction"
     map: {x: 12.0, y: 6.0, z: 3.0}
     start: {x: 0.0, y: 0.0}
     obstacles:
       - {x: 5.0, y: 2.8, z: 0.5, offset: 0.0, slower: 10.0,
          scale_x: 12.0, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
 
   Exp3_context_crossing:
-    description: "Exp3 context modulation: adult crossing the robot path"
+    description: "Exp3 context modulation: pedestrian crossing the robot path"
     context: "crossing"
     map: {x: 12.0, y: 6.0, z: 3.0}
     start: {x: 0.0, y: 0.0}
     obstacles:
       - {x: 4.0, y: -2.8, z: 0.5, offset: 1.5708, slower: 1.5,
          scale_x: 0.0, scale_y: 7.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
 
   Exp3_context_frontal_approaching:
-    description: "Exp3 context modulation: adult approaching frontally"
+    description: "Exp3 context modulation: pedestrian approaching frontally"
     context: "frontal_approaching"
     map: {x: 12.0, y: 6.0, z: 3.0}
     start: {x: 0.0, y: 0.0}
     obstacles:
       - {x: 7.5, y: 0.0, z: 0.5, offset: 0.0, slower: 5.0,
          scale_x: -6.0, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "adult"}
+         semantic_class: "pedestrian"}
     goal: {x: 12.0, y: 0.0}
+
+  # Formal feasibility-stress matrix; excluded from the main 3x3 context matrix.
+  stress_high_candidate_margin:
+    description: "Feasibility stress: child-like head-on encounter with candidate margin driven to its category cap"
+    scenario_family: "High Candidate Margin"
+    context_level: "Stress"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 5.2, y: 0.0, z: 0.75, offset: 0.0, slower: 5.5,
+         scale_x: 16.5, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+    goal: {x: 12.0, y: 0.0}
+    beta_bar:
+      child: 1.05
+      child_like: 1.05
+    mu_weights: {bias: 1.0, heading: 0.2, ttc: 0.15, density: 0.1}
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    theory:
+      delta_bar_beta: 0.3
+    expected_role: "isolate feasibility pressure from a category-capped high candidate semantic margin"
+
+  stress_short_ttc:
+    description: "Feasibility stress: late and fast child-like crossing with short TTC"
+    scenario_family: "Short TTC"
+    context_level: "Stress"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 4.6, y: 0.0, z: 0.75, offset: 0.0, slower: 2.8,
+         scale_x: 0.0, scale_y: 12.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+    goal: {x: 11.0, y: 0.0}
+    beta_bar:
+      child: 1.05
+      child_like: 1.05
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    theory:
+      delta_bar_beta: 0.3
+    expected_role: "isolate feasibility pressure from late detection and short crossing TTC"
+
+  stress_local_crowding:
+    description: "Feasibility stress: five mixed obstacles enter the local interaction region"
+    scenario_family: "Local Crowding"
+    context_level: "Stress"
+    map: {x: 14.0, y: 8.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 3.8, y: 0.0, z: 0.75, offset: 0.0, slower: 3.8,
+         scale_x: 11.4, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+      - {x: 5.1, y: 0.0, z: 0.75, offset: 0.0, slower: 3.8,
+         scale_x: 0.0, scale_y: 11.0, scale_z: 0.0,
+         semantic_class: "cyclist"}
+      - {x: 6.4, y: -0.9, z: 0.75, offset: 0.0, slower: 5.0,
+         scale_x: 8.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "pedestrian"}
+      - {x: 7.4, y: 0.8, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box"}
+      - {x: 8.2, y: -1.2, z: 0.5, offset: 0.0, slower: 999.0,
+         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "box"}
+    goal: {x: 10.5, y: 0.0}
+    beta_bar:
+      box: 0.20
+      child: 1.05
+      child_like: 1.05
+      cyclist: 0.90
+      pedestrian: 0.75
+      adult: 0.75
+      vehicle: 0.80
+      unknown: 0.75
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    theory:
+      delta_bar_beta: 0.3
+    expected_role: "isolate feasibility pressure from simultaneous multi-obstacle local crowding"
+
+  # Guard branch audit only; excluded from the teacher-canonical main matrix.
+  guard_audit_pressure:
+    description: "Guard audit: short-TTC child-like head-on obstacle without available-clearance projection"
+    scenario_family: "Guard-Audit"
+    context_level: "Pressure"
+    map: {x: 12.0, y: 6.0, z: 3.0}
+    start: {x: 0.0, y: 0.0}
+    obstacles:
+      - {x: 0.0, y: 0.0, z: 0.75, offset: 0.0, slower: 2.75,
+         scale_x: 13.2, scale_y: 0.0, scale_z: 0.0,
+         semantic_class: "child_like"}
+    goal: {x: 10.0, y: 0.0}
+    beta_bar:
+      child: 1.05
+      child_like: 1.05
+    experiment_switches:
+      epsilon_max: 0.01
+      slack_weight: 5000.0
+    expected_role: "exercise previous/zero MPC feasibility Guard retry branches"
 
 # 对比基线
 baselines:

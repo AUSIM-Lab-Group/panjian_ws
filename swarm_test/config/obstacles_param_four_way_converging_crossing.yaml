@@ -1,0 +1,14 @@
+# Temporary RViz-only scene: four diagonal obstacles move in alternating
+# directions around the robot's straight route from (0, 0) to (10, 0).
+obstacle_params:
+  # Left-upper: (1.5, 2.6) -> (3.2, 0.15)
+  - {x: 2.35, y: 1.375, z: 0.75, offset: 0.0, slower: 8.0, start_delay: 1.0, scale_x: -5.1, scale_y: 6.125, scale_z: 0.0}
+
+  # Left-lower: (3.2, -0.15) -> (1.5, -2.6)
+  - {x: 2.35, y: -1.375, z: 0.75, offset: 0.0, slower: 8.0, start_delay: 1.0, scale_x: 5.1, scale_y: 6.125, scale_z: 0.0}
+
+  # Right-upper: (6.8, 0.15) -> (8.5, 2.6)
+  - {x: 7.65, y: 1.375, z: 0.75, offset: 0.0, slower: 8.0, start_delay: 1.0, scale_x: -5.1, scale_y: -6.125, scale_z: 0.0}
+
+  # Right-lower: (8.5, -2.6) -> (6.8, -0.15)
+  - {x: 7.65, y: -1.375, z: 0.75, offset: 0.0, slower: 8.0, start_delay: 1.0, scale_x: 5.1, scale_y: -6.125, scale_z: 0.0}

@@ -61,7 +61,7 @@ public:
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
                 csv_file_ << std::fixed << std::setprecision(9);
-                csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_applied,"
+                csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_pre_guard,beta_applied,"
                           << "guard_upper_bound,guard_passed,guard_status,"
                           << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
@@ -215,7 +215,7 @@ private:
                 csv_file_ << ros::Time::now().toSec() << ","
                           << obs.id << "," << cls << ","
                           << beta_bar_val << "," << mu << ","
-                          << beta_hat << "," << beta_final << ","
+                          << beta_hat << "," << beta_before_projection << "," << beta_final << ","
                           << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
                           << guard_status << ","
                           << semantic_mode_ << "," << delta_beta << ","

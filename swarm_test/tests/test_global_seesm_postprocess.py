@@ -1,5 +1,6 @@
 import csv
 import importlib.util
+import math
 from pathlib import Path
 
 
@@ -41,9 +42,93 @@ def test_global_log_metrics_count_semantic_and_stale_rows(tmp_path):
 
 
 def test_paper_success_requires_goal_and_zero_collisions():
+    assert postprocess.paper_outcome({
+        "goal_reached": "1", "success": "1", "nav_collision_count": "0",
+        "log_min_distance_m": "0.01",
+    }) == (1, 1, 0)
+    assert postprocess.paper_outcome({"goal_reached": "1", "success": "0", "nav_collision_count": "22"}) == (0, 1, 22)
+    assert postprocess.paper_outcome({"goal_reached": "0", "success": "0", "nav_collision_count": "0"}) == (0, 0, 0)
+
+
+def test_paper_success_rejects_collision_seen_only_in_geometric_log():
+    assert postprocess.paper_outcome({
+        "goal_reached": "1", "success": "1", "nav_collision_count": "0",
+        "log_min_distance_m": "-0.001",
+    }) == (0, 1, 1)
+
+
+def test_paper_outcome_falls_back_to_legacy_success_field():
     assert postprocess.paper_outcome({"success": "1", "nav_collision_count": "0"}) == (1, 1, 0)
-    assert postprocess.paper_outcome({"success": "1", "nav_collision_count": "22"}) == (0, 1, 22)
-    assert postprocess.paper_outcome({"success": "0", "nav_collision_count": "0"}) == (0, 0, 0)
+
+
+def test_paper_travel_time_prefers_navigation_completion_time():
+    summary = {"nav_travel_time_s": "10.5", "robot_travel_time_s": "27.3"}
+
+    assert postprocess.paper_travel_time(summary) == 10.5
+
+
+def test_common_eval_reconstructs_dynamic_eesm_independently_of_controller_margin(tmp_path):
+    rows = [
+        {
+            "time": "0.1",
+            "h_see": "0.84",
+            "h_ee": "0.84",
+            "d_i": "2.0",
+            "rel_v_norm": "1.0",
+            "cos_delta": "-1.0",
+            "R_base": "0.8",
+            "beta_bar": "0.75",
+            "mu": "0.8",
+        }
+    ]
+    path = tmp_path / "margin_guard_log.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metrics = postprocess.semantic_violation_metrics(tmp_path)
+
+    # T_i=(2.0-0.8)/1.0=1.2 s, tau=0.3*T_i=0.36 s,
+    # h_EESM=|2.0-0.36|-0.8=0.84 m and beta_eval=0.75*0.8=0.60 m.
+    assert math.isclose(metrics["min_h_eval"], 0.24, abs_tol=1.0e-12)
+    assert metrics["semantic_violation_eval_ratio"] == 0.0
+    assert metrics["eval_records"] == 1
+
+
+def test_mpc_feasibility_excludes_no_cbf_emergency_fallback(tmp_path):
+    rows = [
+        {
+            "mpc_status": "success", "first_attempt_status": "success",
+            "final_status": "success", "accepted_beta_source": "candidate",
+            "solve_time_ms": "10.0",
+        },
+        {
+            "mpc_status": "no_cbf_fallback", "first_attempt_status": "infeasible",
+            "final_status": "success", "accepted_beta_source": "no_cbf",
+            "solve_time_ms": "11.0",
+        },
+        {
+            "mpc_status": "guard_previous", "first_attempt_status": "infeasible",
+            "final_status": "success", "accepted_beta_source": "previous",
+            "solve_time_ms": "12.0",
+        },
+        {
+            "mpc_status": "guard_zero", "first_attempt_status": "infeasible",
+            "final_status": "success", "accepted_beta_source": "zero",
+            "solve_time_ms": "13.0",
+        },
+    ]
+    path = tmp_path / "planner_log.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metrics = postprocess.planner_metrics(tmp_path, {})
+
+    assert metrics["mpc_feasibility_rate"] == 0.75
+    assert metrics["mpc_first_attempt_feasibility_rate"] == 0.25
 
 
 def test_standard_mpc_cbf_uses_paper_standard_label():
@@ -89,6 +174,26 @@ def test_collision_episode_metrics_ignores_duplicate_prediction_bursts(tmp_path)
         writer.writerows(rows)
 
     assert postprocess.collision_episode_metrics(tmp_path)["collision_episode_count"] == 1
+
+
+def test_collision_episode_metrics_ignores_zero_initialization_placeholder(tmp_path):
+    rows = [
+        {
+            "t": "0.00", "id": "a", "radius": "0.4", "d_i": "0.0",
+            "rel_v": "0.0", "TTC": "0.0", "h_EE": "0.0",
+        },
+        {
+            "t": "0.10", "id": "a", "radius": "0.4", "d_i": "0.90",
+            "rel_v": "0.1", "TTC": "1.0", "h_EE": "0.1",
+        },
+    ]
+    path = tmp_path / "obstacle_log.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    assert postprocess.collision_episode_metrics(tmp_path)["collision_episode_count"] == 0
 
 
 def test_aggregate_rows_reports_mean_collision_episode_count():

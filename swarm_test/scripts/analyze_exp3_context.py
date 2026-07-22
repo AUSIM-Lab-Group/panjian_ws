@@ -10,6 +10,7 @@ import yaml
 
 
 CONTEXT_ORDER = ["static", "same_direction", "crossing", "frontal_approaching"]
+METHOD_ORDER = ["No_semantic", "Fixed_margin", "Category_only", "SEESM_Ours"]
 
 
 def read_csv(path):
@@ -61,6 +62,8 @@ def summarize_run(run_dir):
 
     return {
         "run_id": run_dir.name,
+        "method": meta.get("method", meta.get("baseline_id", "")),
+        "baseline_id": meta.get("baseline_id", ""),
         "context": infer_context(meta),
         "n": len(rows),
         "mu_mean": mean(mu) if mu else "",
@@ -86,17 +89,31 @@ def aggregate(rows):
         "rho_norm_mean", "h_EE_min", "h_SEE_min",
     ]
     stats = []
-    for context in CONTEXT_ORDER:
-        group = [row for row in rows if row["context"] == context]
-        if not group:
-            continue
-        item = {"context": context, "runs": len(group), "records": sum(int(row["n"]) for row in group)}
-        for metric in metrics:
-            vals = [row[metric] for row in group if isinstance(row[metric], float) or isinstance(row[metric], int)]
-            if vals:
-                item[f"{metric}_mean"] = mean(vals)
-                item[f"{metric}_std"] = stdev(vals) if len(vals) > 1 else 0.0
-        stats.append(item)
+    methods = [method for method in METHOD_ORDER if any(row["method"] == method for row in rows)]
+    methods.extend(sorted({row["method"] for row in rows} - set(methods)))
+    for method in methods:
+        for context in CONTEXT_ORDER:
+            group = [
+                row for row in rows
+                if row["method"] == method and row["context"] == context
+            ]
+            if not group:
+                continue
+            item = {
+                "method": method,
+                "context": context,
+                "runs": len(group),
+                "records": sum(int(row["n"]) for row in group),
+            }
+            for metric in metrics:
+                vals = [
+                    row[metric] for row in group
+                    if isinstance(row[metric], float) or isinstance(row[metric], int)
+                ]
+                if vals:
+                    item[f"{metric}_mean"] = mean(vals)
+                    item[f"{metric}_std"] = stdev(vals) if len(vals) > 1 else 0.0
+            stats.append(item)
     return stats
 
 
@@ -122,6 +139,14 @@ def rel_time(rows):
     return [t - t0 for t in times]
 
 
+def proposed_exemplars(rows):
+    exemplar = {}
+    for row in rows:
+        if row["method"] == "SEESM_Ours":
+            exemplar.setdefault(row["context"], Path(row["run_dir"]))
+    return exemplar
+
+
 def plot_curves(rows, output_dir):
     try:
         import matplotlib
@@ -132,9 +157,7 @@ def plot_curves(rows, output_dir):
         return []
 
     generated = []
-    exemplar = {}
-    for row in rows:
-        exemplar.setdefault(row["context"], Path(row["run_dir"]))
+    exemplar = proposed_exemplars(rows)
 
     fig, axes = plt.subplots(3, 1, figsize=(8.5, 8), sharex=True)
     for context in CONTEXT_ORDER:
@@ -162,17 +185,23 @@ def plot_curves(rows, output_dir):
     generated.append(path)
 
     stats = aggregate(rows)
-    by_context = {row["context"]: row for row in stats}
+    by_key = {(row["method"], row["context"]): row for row in stats}
     x = range(len(CONTEXT_ORDER))
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
-    ax.bar(
-        list(x),
-        [by_context.get(context, {}).get("beta_mean_mean", 0.0) for context in CONTEXT_ORDER],
-        color=["#6b7280", "#3b82f6", "#f59e0b", "#ef4444"],
-    )
+    width = 0.2
+    for method_index, method in enumerate(METHOD_ORDER):
+        offset = (method_index - 1.5) * width
+        ax.bar(
+            [i + offset for i in x],
+            [by_key.get((method, context), {}).get("beta_mean_mean", 0.0)
+             for context in CONTEXT_ORDER],
+            width=width,
+            label=method,
+        )
     ax.set_xticks(list(x))
     ax.set_xticklabels(CONTEXT_ORDER, rotation=15, ha="right")
     ax.set_ylabel("beta mean (m)")
+    ax.legend()
     ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
     path = output_dir / "context_beta_bar.png"
@@ -199,12 +228,12 @@ def main():
         raise SystemExit(f"No Exp3 runs found under {args.run_root}")
 
     run_fields = [
-        "run_id", "context", "n", "mu_mean", "mu_max", "beta_hat_mean",
+        "run_id", "method", "baseline_id", "context", "n", "mu_mean", "mu_max", "beta_hat_mean",
         "beta_hat_max", "beta_mean", "beta_max", "cos_delta_mean",
         "ttc_mean", "ttc_norm_mean", "rho_norm_mean", "h_EE_min",
         "h_SEE_min", "run_dir",
     ]
-    stat_fields = ["context", "runs", "records"]
+    stat_fields = ["method", "context", "runs", "records"]
     for metric in [
         "mu_mean", "mu_max", "beta_hat_mean", "beta_hat_max", "beta_mean",
         "beta_max", "cos_delta_mean", "ttc_mean", "ttc_norm_mean",

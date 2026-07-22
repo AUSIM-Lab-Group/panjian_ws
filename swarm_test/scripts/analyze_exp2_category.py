@@ -10,8 +10,8 @@ from statistics import mean, stdev
 import yaml
 
 
-CLASS_ORDER = ["box", "adult", "child_like", "cyclist"]
-METHOD_ORDER = ["Fixed_margin", "Category_only", "SEESM_Ours"]
+CLASS_ORDER = ["box", "pedestrian", "vehicle", "cyclist"]
+METHOD_ORDER = ["No_semantic", "Fixed_margin", "Category_only", "SEESM_Ours"]
 
 
 def read_csv(path):
@@ -153,11 +153,11 @@ def plot_outputs(rows, output_dir):
         ("beta_mean_mean", "beta mean (m)", "beta_by_class.png"),
     ]:
         x = range(len(CLASS_ORDER))
-        width = 0.25
+        width = 0.20
         fig, ax = plt.subplots(figsize=(8, 4.5))
         for offset, method in enumerate(METHOD_ORDER):
             values = [by_key.get((method, cls), {}).get(metric, 0.0) for cls in CLASS_ORDER]
-            ax.bar([i + (offset - 1) * width for i in x], values, width=width, label=method)
+            ax.bar([i + (offset - 1.5) * width for i in x], values, width=width, label=method)
         ax.set_xticks(list(x))
         ax.set_xticklabels(CLASS_ORDER)
         ax.set_ylabel(ylabel)

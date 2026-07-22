@@ -19,7 +19,9 @@ METHOD_LABELS = {
     "Fixed_margin": "Standard MPC-CBF",
     "Standard_MPC_CBF": "Standard MPC-CBF",
     "No_semantic": "EESM-MPC-ECBF",
+    "Category_only": "Category-only SEESM",
     "Unguarded_SEESM": "SEESM w/o FPU",
+    "No_J_side": r"SEESM w/o J_side",
     "SEESM_Ours": "Proposed MPC-SECBF",
 }
 
@@ -43,6 +45,10 @@ RUN_FIELDS = [
     "min_h_seesm",
     "semantic_violation_ratio",
     "semantic_violation_pair_ratio",
+    "min_h_eval",
+    "semantic_violation_eval_ratio",
+    "eval_records",
+    "h_eesm_eval_log_error_max",
     "mpc_feasibility_rate",
     "mpc_first_attempt_feasibility_rate",
     "path_length_m",
@@ -91,6 +97,9 @@ TABLE_FIELDS = [
     "min_h_seesm_mean",
     "min_h_seesm_min",
     "semantic_violation_ratio_mean",
+    "min_h_eval_mean",
+    "min_h_eval_min",
+    "semantic_violation_eval_ratio_mean",
     "mpc_feasibility_rate_mean",
     "path_length_mean_m",
     "travel_time_mean_s",
@@ -197,20 +206,113 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             "min_h_seesm_from_log": None,
             "semantic_violation_ratio": None,
             "semantic_violation_pair_ratio": None,
+            "min_h_eval": None,
+            "semantic_violation_eval_ratio": None,
+            "eval_records": 0,
+            "h_eesm_eval_log_error_max": None,
         }
+
+    dynamic_tau = {
+        "ke": 0.3,
+        "t_max": 2.0,
+        "min_speed": 1.0e-6,
+        "min_distance": 1.0e-6,
+        "max_tau": 2.0,
+    }
+    dynamic_tau_enabled = False
+    meta_path = run_dir / "meta.yaml"
+    if yaml is not None and meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as handle:
+                meta = yaml.safe_load(handle) or {}
+            configured = meta.get("dynamic_tau") or {}
+            dynamic_tau_enabled = str(configured.get("enabled", "false")).lower() in {
+                "1", "true", "yes", "on",
+            }
+            for output_name, input_name in (
+                ("ke", "Ke"),
+                ("t_max", "Tmax"),
+                ("min_speed", "min_speed"),
+                ("min_distance", "min_distance"),
+                ("max_tau", "max_tau"),
+            ):
+                value = parse_float(configured.get(input_name))
+                if value is not None:
+                    dynamic_tau[output_name] = value
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            pass
 
     time_groups: dict[str, bool] = {}
     h_values: list[float] = []
+    h_eval_values: list[float] = []
+    h_eesm_eval_log_errors: list[float] = []
     pair_violations = 0
     for row in rows:
         h_see = parse_float(row.get("h_see"))
-        if h_see is None:
+        if h_see is not None:
+            h_values.append(h_see)
+            violated = h_see < 0.0
+            pair_violations += int(violated)
+            time_key = row.get("time", "")
+            time_groups[time_key] = time_groups.get(time_key, False) or violated
+
+        distance = parse_float(row.get("d_i"))
+        speed = parse_float(row.get("rel_v_norm"))
+        cos_delta = parse_float(row.get("cos_delta"))
+        inflated_radius = parse_float(row.get("R_base"))
+        beta_bar = parse_float(row.get("beta_bar"))
+        mu = parse_float(row.get("mu"))
+        values = (distance, speed, cos_delta, inflated_radius, beta_bar, mu)
+        if any(value is None or not math.isfinite(value) for value in values):
             continue
-        h_values.append(h_see)
-        violated = h_see < 0.0
-        pair_violations += int(violated)
-        time_key = row.get("time", "")
-        time_groups[time_key] = time_groups.get(time_key, False) or violated
+
+        distance = max(0.0, float(distance))
+        speed = max(0.0, float(speed))
+        cos_delta = max(-1.0, min(1.0, float(cos_delta)))
+        inflated_radius = max(0.0, float(inflated_radius))
+        beta_bar = max(0.0, float(beta_bar))
+        mu = max(0.0, min(1.0, float(mu)))
+
+        tau = 0.0
+        if (
+            distance > dynamic_tau["min_distance"]
+            and speed > dynamic_tau["min_speed"]
+            and dynamic_tau["max_tau"] > 0.0
+        ):
+            dot = distance * speed * cos_delta
+            cone_value = (
+                dot * dot
+                + (inflated_radius * inflated_radius - distance * distance)
+                * speed * speed
+            )
+            approach_cos = max(0.0, -cos_delta)
+            interaction_time = (
+                max(0.0, distance - inflated_radius) * approach_cos / speed
+            )
+            if (
+                cos_delta < 0.0
+                and cone_value > 0.0
+                and interaction_time > 0.0
+                and dynamic_tau["t_max"] - interaction_time > 0.0
+            ):
+                tau = min(
+                    dynamic_tau["ke"] * interaction_time,
+                    dynamic_tau["max_tau"],
+                )
+
+        norm_squared = (
+            distance * distance
+            + 2.0 * tau * distance * speed * cos_delta
+            + tau * tau * speed * speed
+        )
+        h_eesm_eval = math.sqrt(max(0.0, norm_squared)) - inflated_radius
+        beta_candidate = beta_bar * mu
+        beta_eval = min(beta_candidate, beta_bar)
+        h_eval_values.append(h_eesm_eval - beta_eval)
+
+        logged_h_eesm = parse_float(row.get("h_ee"))
+        if dynamic_tau_enabled and logged_h_eesm is not None:
+            h_eesm_eval_log_errors.append(abs(h_eesm_eval - logged_h_eesm))
 
     if not h_values:
         return {
@@ -218,6 +320,15 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             "min_h_seesm_from_log": None,
             "semantic_violation_ratio": None,
             "semantic_violation_pair_ratio": None,
+            "min_h_eval": min(h_eval_values) if h_eval_values else None,
+            "semantic_violation_eval_ratio": (
+                sum(value < 0.0 for value in h_eval_values) / len(h_eval_values)
+                if h_eval_values else None
+            ),
+            "eval_records": len(h_eval_values),
+            "h_eesm_eval_log_error_max": (
+                max(h_eesm_eval_log_errors) if h_eesm_eval_log_errors else None
+            ),
         }
     return {
         "guard_records": len(rows),
@@ -227,6 +338,15 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             if time_groups else None
         ),
         "semantic_violation_pair_ratio": pair_violations / len(h_values),
+        "min_h_eval": min(h_eval_values) if h_eval_values else None,
+        "semantic_violation_eval_ratio": (
+            sum(value < 0.0 for value in h_eval_values) / len(h_eval_values)
+            if h_eval_values else None
+        ),
+        "eval_records": len(h_eval_values),
+        "h_eesm_eval_log_error_max": (
+            max(h_eesm_eval_log_errors) if h_eesm_eval_log_errors else None
+        ),
     }
 
 
@@ -249,9 +369,15 @@ def planner_metrics(run_dir: Path, summary_row: dict[str, str]) -> dict[str, obj
     first_success = 0
     solve_times = []
     for row in rows:
+        mpc_status = row.get("mpc_status")
         final_status = row.get("final_status") or row.get("mpc_status")
         first_status = row.get("first_attempt_status")
-        final_success += int(final_status == "success")
+        accepted_source = row.get("accepted_beta_source")
+        final_success += int(
+            final_status == "success"
+            and mpc_status != "no_cbf_fallback"
+            and accepted_source != "no_cbf"
+        )
         first_success += int(first_status == "success")
         solve_time = parse_float(row.get("solve_time_ms"))
         if solve_time is not None:
@@ -315,9 +441,32 @@ def metric_from_summary(summary_row: dict[str, str], primary: str, fallback: str
     return parse_float(summary_row.get(fallback))
 
 
+def paper_travel_time(summary_row: dict[str, str]) -> float | None:
+    """Return navigation completion time, with legacy-log compatibility.
+
+    ``robot_travel_time_s`` spans the recorder window and is therefore not a
+    time-to-goal metric.  ``nav_travel_time_s`` stops at navigation completion
+    and is the quantity defined as T_travel in the paper.
+    """
+    return metric_from_summary(summary_row, "nav_travel_time_s", "robot_travel_time_s")
+
+
 def paper_outcome(summary_row: dict[str, str]) -> tuple[int, int, int]:
-    goal_reached = int((parse_float(summary_row.get("success")) or 0.0) > 0.0)
+    goal_value = parse_float(summary_row.get("goal_reached"))
+    if goal_value is None:
+        # Compatibility with historical summaries written before the explicit
+        # goal_reached field was added.
+        goal_value = parse_float(summary_row.get("success"))
+    goal_reached = int((goal_value or 0.0) > 0.0)
     collision_count = int(parse_float(summary_row.get("nav_collision_count")) or 0.0)
+    # ``nav_collision_count`` is sampled by the navigation logger and can miss
+    # a brief footprint overlap that is present in the higher-rate obstacle
+    # log.  The paper defines collision geometrically, so either source is
+    # sufficient evidence.  Keep the historical count when it is available and
+    # use one as a conservative event marker when only D_min detects contact.
+    log_min_distance = parse_float(summary_row.get("log_min_distance_m"))
+    if log_min_distance is not None and log_min_distance <= 0.0:
+        collision_count = max(collision_count, 1)
     return int(goal_reached == 1 and collision_count == 0), goal_reached, collision_count
 
 
@@ -338,6 +487,18 @@ def collision_episode_metrics(run_dir: Path) -> dict[str, int]:
         radius = parse_float(row.get("radius"))
         distance = parse_float(row.get("d_i"))
         if timestamp is None or radius is None or distance is None:
+            continue
+        # The recorder can emit an all-zero placeholder while obstacle IDs are
+        # being initialized.  The trial summary already excludes this row; the
+        # collision-episode path must use the same contract or it creates a
+        # false negative-clearance episode of -(radius + robot_radius).
+        initialization_values = (
+            distance,
+            parse_float(row.get("rel_v")),
+            parse_float(row.get("TTC")),
+            parse_float(row.get("h_EE")),
+        )
+        if all(value is not None and abs(value) <= 1.0e-12 for value in initialization_values):
             continue
         obstacle_id = str(row.get("id") or "unknown")
         samples_by_obstacle.setdefault(obstacle_id, []).append(
@@ -441,10 +602,14 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "min_h_seesm": fmt(min_h),
                 "semantic_violation_ratio": fmt(sem["semantic_violation_ratio"]),
                 "semantic_violation_pair_ratio": fmt(sem["semantic_violation_pair_ratio"]),
+                "min_h_eval": fmt(sem["min_h_eval"]),
+                "semantic_violation_eval_ratio": fmt(sem["semantic_violation_eval_ratio"]),
+                "eval_records": sem["eval_records"],
+                "h_eesm_eval_log_error_max": fmt(sem["h_eesm_eval_log_error_max"]),
                 "mpc_feasibility_rate": fmt(plan["mpc_feasibility_rate"]),
                 "mpc_first_attempt_feasibility_rate": fmt(plan["mpc_first_attempt_feasibility_rate"]),
                 "path_length_m": fmt(metric_from_summary(summary, "robot_path_length_m", "nav_path_length_m")),
-                "travel_time_s": fmt(metric_from_summary(summary, "robot_travel_time_s", "nav_travel_time_s")),
+                "travel_time_s": fmt(paper_travel_time(summary)),
                 "solve_time_mean_ms": fmt(plan["solve_time_mean_ms"]),
                 "solve_time_p95_ms": fmt(plan["solve_time_p95_ms"]),
                 "solve_time_max_ms": fmt(plan["solve_time_max_ms"]),
@@ -504,6 +669,13 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
                 "min_h_seesm_mean": fmt(mean(min_h)),
                 "min_h_seesm_min": fmt(min(min_h) if min_h else None),
                 "semantic_violation_ratio_mean": fmt(mean(values("semantic_violation_ratio"))),
+                "min_h_eval_mean": fmt(mean(values("min_h_eval"))),
+                "min_h_eval_min": fmt(
+                    min(values("min_h_eval")) if values("min_h_eval") else None
+                ),
+                "semantic_violation_eval_ratio_mean": fmt(
+                    mean(values("semantic_violation_eval_ratio"))
+                ),
                 "mpc_feasibility_rate_mean": fmt(mean(values("mpc_feasibility_rate"))),
                 "path_length_mean_m": fmt(mean(values("path_length_m"))),
                 "travel_time_mean_s": fmt(mean(values("travel_time_s"))),

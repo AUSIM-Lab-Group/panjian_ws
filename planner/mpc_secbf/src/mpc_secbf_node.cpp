@@ -29,6 +29,9 @@ public:
         int N;
         int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
+        bool side_preference_enabled;
+        double side_weight, side_epsilon_n, side_sign, side_min_obstacle_speed, side_activation_distance;
+        int side_horizon;
         double v_max, v_min, o_max;
         std::string cbf_metric;
         nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
@@ -49,6 +52,13 @@ public:
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
+        nh_.param("mpc/side_preference_enabled", side_preference_enabled, false);
+        nh_.param("mpc/side_weight", side_weight, 0.05);
+        nh_.param("mpc/side_epsilon_n", side_epsilon_n, 1e-3);
+        nh_.param("mpc/side_horizon", side_horizon, N);
+        nh_.param("mpc/side_sign", side_sign, 1.0);
+        nh_.param("mpc/side_min_obstacle_speed", side_min_obstacle_speed, 1e-3);
+        nh_.param("mpc/side_activation_distance", side_activation_distance, 3.0);
         nh_.param<std::string>("mpc/cbf_metric", cbf_metric, "seesm");
         if (cbf_metric != "seesm" && cbf_metric != "distance") {
             ROS_FATAL_STREAM("Unsupported mpc/cbf_metric: " << cbf_metric);
@@ -60,8 +70,10 @@ public:
         robot_radius_ = robot_radius;
         std::string planner_log_path;
         std::string timing_log_path;
+        std::string mpc_margin_log_path;
         nh_.param<std::string>("planner_log_path", planner_log_path, "");
         nh_.param<std::string>("timing_log_path", timing_log_path, "");
+        nh_.param<std::string>("mpc_margin_log_path", mpc_margin_log_path, "");
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -73,15 +85,26 @@ public:
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
                             epsilon_max, slack_weight, max_cbf_obstacles, cbf_metric,
-                            dynamic_tau_enabled_, dynamic_tau_params_);
+                            dynamic_tau_enabled_, dynamic_tau_params_,
+                            side_preference_enabled, side_weight, side_epsilon_n,
+                            side_horizon, side_sign, side_min_obstacle_speed,
+                            side_activation_distance);
+        side_preference_enabled_ = side_preference_enabled;
+        side_weight_ = side_weight;
 
         openCsv(planner_csv_, planner_log_path,
                 "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
-                "cmd_v,cmd_w,obs_count,constrained_obs_count,beta_count,used_fallback,mpc_feasibility_guard_used,"
-                "slack,slack_sum,slack_mean,slack_max,solve_time_ms,"
+                "cmd_v,cmd_w,ref_x,ref_y,tracking_error,obs_count,constrained_obs_count,beta_count,used_fallback,"
+                "mpc_feasibility_guard_enabled,candidate_feasibility_checked,mpc_feasibility_guard_used,"
+                "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
+                "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,solve_time_ms,"
                 "dynamic_tau_enabled,tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
+        openCsv(mpc_margin_csv_, mpc_margin_log_path,
+                "t,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
+                "first_attempt_status,final_status,mpc_feasibility_guard_enabled,"
+                "candidate_feasibility_checked,mpc_feasibility_guard_used\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -112,6 +135,7 @@ public:
     ~MpcSecbfNode() {
         if (planner_csv_.is_open()) planner_csv_.close();
         if (timing_csv_.is_open()) timing_csv_.close();
+        if (mpc_margin_csv_.is_open()) mpc_margin_csv_.close();
     }
 
 private:
@@ -324,6 +348,8 @@ private:
             final_beta_values = beta_list_;
         }
 
+        writeMpcMarginCsv(final_beta_values, accepted_beta_source,
+                          first_attempt_status, final_status, mpc_guard_used);
         publishAcceptedMargins(final_beta_values, accepted_beta_source);
 
         // Extract first control
@@ -354,6 +380,9 @@ private:
                          bool mpc_guard_used,
                          double solve_time_ms) {
         const double t = ros::Time::now().toSec();
+        const double ref_x = goal_state_.cols() > 0 ? goal_state_(0, 0) : cur_state_(0);
+        const double ref_y = goal_state_.cols() > 0 ? goal_state_(1, 0) : cur_state_(1);
+        const double tracking_error = std::hypot(cur_state_(0) - ref_x, cur_state_(1) - ref_y);
         const int obs_count = (N_ > 0) ? static_cast<int>(obs_matrix_.cols() / N_) : 0;
         const bool obstacle_contract_valid = validateObstacleContractLocked();
         const int constrained_obs_count = obstacle_contract_valid
@@ -383,15 +412,29 @@ private:
                          << accepted_beta_source << ","
                          << cmd_vel_.linear.x << ","
                          << cmd_vel_.angular.z << ","
+                         << ref_x << ","
+                         << ref_y << ","
+                         << tracking_error << ","
                          << obs_count << ","
                          << constrained_obs_count << ","
                          << beta_list_.size() << ","
                          << (used_fallback ? 1 : 0) << ","
+                         << (mpc_feasibility_guard_enabled_ ? 1 : 0) << ","
+                         << ((first_attempt_status == "success" || first_attempt_status == "infeasible") ? 1 : 0) << ","
                          << (mpc_guard_used ? 1 : 0) << ","
                          << solver_.last_slack_max << ","
                          << solver_.last_slack_sum << ","
                          << solver_.last_slack_mean << ","
                          << solver_.last_slack_max << ","
+                         << (side_preference_enabled_ ? 1 : 0) << ","
+                         << side_weight_ << ","
+                         << solver_.last_side_cost << ","
+                         << solver_.last_side_dynamic_obstacle_count << ","
+                         << solver_.last_side_candidate_count << ","
+                         << solver_.last_side_dominant_obs_index << ","
+                         << solver_.last_side_dominant_stage << ","
+                         << solver_.last_side_dominant_tau << ","
+                         << solver_.last_side_dominant_h << ","
                          << solve_time_ms << ","
                          << dynamic_tau_enabled << ","
                          << tau_result.tau << ","
@@ -409,6 +452,36 @@ private:
                         << solve_time_ms << "\n";
             timing_csv_.flush();
         }
+    }
+
+    void writeMpcMarginCsv(const std::vector<double>& final_beta_values,
+                           const std::string& accepted_beta_source,
+                           const std::string& first_attempt_status,
+                           const std::string& final_status,
+                           bool mpc_guard_used) {
+        if (!mpc_margin_csv_.is_open()) return;
+        if (beta_list_.size() != obstacle_ids_.size() ||
+            final_beta_values.size() != obstacle_ids_.size()) {
+            ROS_ERROR_THROTTLE(1.0,
+                "[MPC-SECBF] Skip MPC margin audit row because beta/id counts do not match");
+            return;
+        }
+        const double t = ros::Time::now().toSec();
+        const bool candidate_checked =
+            first_attempt_status == "success" || first_attempt_status == "infeasible";
+        for (size_t i = 0; i < obstacle_ids_.size(); ++i) {
+            mpc_margin_csv_ << t << ","
+                            << obstacle_ids_[i] << ","
+                            << beta_list_[i] << ","
+                            << final_beta_values[i] << ","
+                            << accepted_beta_source << ","
+                            << first_attempt_status << ","
+                            << final_status << ","
+                            << (mpc_feasibility_guard_enabled_ ? 1 : 0) << ","
+                            << (candidate_checked ? 1 : 0) << ","
+                            << (mpc_guard_used ? 1 : 0) << "\n";
+        }
+        mpc_margin_csv_.flush();
     }
 
     bool validateObstacleContractLocked() const {
@@ -521,11 +594,13 @@ private:
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
     bool mpc_feasibility_guard_enabled_;
+    bool side_preference_enabled_ = false;
+    double side_weight_ = 0.2;
     bool obs_payload_valid_ = true;
     bool beta_payload_valid_ = true;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
-    std::ofstream planner_csv_, timing_csv_;
+    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_;
 };
 
 int main(int argc, char** argv) {

@@ -218,13 +218,14 @@ CHECKER_HEADERS = {
     ],
     "margin_guard_log.csv": [
         "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
-        "beta_requested", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "beta_requested", "beta_pre_guard", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
     ],
     "planner_log.csv": [
         "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
-        "solve_time_ms", "mpc_feasibility_guard_used",
+        "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
+        "mpc_feasibility_guard_used",
     ],
     "timing_log.csv": ["t", "mpc_secbf_ms", "total_loop_time_ms"],
     "event_log.csv": ["t", "event", "detail"],
@@ -295,7 +296,7 @@ def write_meta(runner, tmp_path, baseline_id):
         "head_on_context_bl",
         baseline_id,
         minimal_scenario(),
-        "[adult]",
+        "[pedestrian]",
         1,
         1,
     )
@@ -974,7 +975,8 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
         planner_headers = [
             "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
             "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
-            "solve_time_ms", "mpc_feasibility_guard_used", *TAU_HEADERS,
+            "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
+            "mpc_feasibility_guard_used", *TAU_HEADERS,
         ]
         with (run_dir / "planner_log.csv").open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=planner_headers)
@@ -1042,6 +1044,73 @@ def test_runner_tau_summary_ignores_invalid_rows_and_falls_back(tmp_path):
         assert metrics["tau_reason_counts"] == "active:1;tau_invalid:1"
 
 
+def test_runner_classifies_auditable_termination_reasons(tmp_path):
+    with runner_module() as runner:
+        run_dir = tmp_path / "termination"
+        run_dir.mkdir()
+        for file_name in runner.REQUIRED_TRIAL_LOGS:
+            (run_dir / file_name).write_text("header\nrow\n", encoding="utf-8")
+
+        nav = {"nav_collision_count": "0"}
+        planner = {"planner_records": 1, "first_infeasible_count": 0}
+        phase5 = {
+            "robot_records": 1,
+            "goal_reached": 1,
+            "robot_final_goal_distance_m": "0.10",
+            "robot_mean_abs_v": "0.30",
+            "log_min_distance_m": "0.40",
+        }
+        assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "success"
+
+        phase5["log_min_distance_m"] = "-0.01"
+        assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "collision"
+
+        phase5.update({
+            "goal_reached": 0,
+            "robot_final_goal_distance_m": "4.0",
+            "log_min_distance_m": "0.40",
+        })
+        planner["first_infeasible_count"] = 1
+        assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "infeasible"
+
+        planner["first_infeasible_count"] = 0
+        phase5["robot_mean_abs_v"] = "0.01"
+        assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "deadlock"
+
+        phase5["robot_mean_abs_v"] = "0.20"
+        assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "timeout"
+
+
+def test_runner_ignores_all_zero_obstacle_startup_rows(tmp_path):
+    with runner_module() as runner:
+        run_dir = tmp_path / "zero_obstacle_row"
+        run_dir.mkdir()
+        (run_dir / "meta.yaml").write_text(
+            "goal: [1.0, 0.0, 0.0]\nrobot_radius: 0.4\n", encoding="utf-8"
+        )
+        (run_dir / "robot_log.csv").write_text(
+            "t,x,y,yaw,v,w,cmd_v,cmd_w\n0,0,0,0,0,0,0,0\n1,1,0,0,0,0,0,0\n",
+            encoding="utf-8",
+        )
+        (run_dir / "obstacle_log.csv").write_text(
+            "t,id,class,x,y,radius,vx,vy,d_i,rel_v,TTC,h_EE\n"
+            "0,0,box,0,0,0.4,0,0,0,0,0,0\n"
+            "1,0,box,0,0,0.4,0,0,1.0,0.2,1.0,0.2\n",
+            encoding="utf-8",
+        )
+        for file_name, header in (
+            ("margin_guard_log.csv", "time\n"),
+            ("planner_log.csv", "t\nrow\n"),
+            ("timing_log.csv", "t\nrow\n"),
+            ("event_log.csv", "t\nrow\n"),
+        ):
+            (run_dir / file_name).write_text(header, encoding="utf-8")
+
+        metrics = runner.summarize_phase5_logs(run_dir)
+        assert metrics["log_invalid_obstacle_rows"] == 1
+        assert metrics["log_min_distance_m"] == "0.200000"
+
+
 def test_runner_aggregate_summary_unions_legacy_and_new_columns(tmp_path):
     with runner_module() as runner:
         old_dir = tmp_path / "old"
@@ -1087,8 +1156,14 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
 
     switches_fn = top_level_function(tree, "baseline_switches")
     baseline_sets = membership_sets(switches_fn)
-    assert {"No_semantic", "Unguarded_SEESM", "SEESM_Ours"} in baseline_sets
-    assert {"Unguarded_SEESM", "SEESM_Ours"} in baseline_sets
+    assert {
+        "No_semantic", "Fixed_margin", "Category_only",
+        "Unguarded_SEESM", "SEESM_Ours",
+    } in baseline_sets
+    assert {
+        "Category_only", "Unguarded_SEESM", "SEESM_Ours", "No_J_side",
+        "SideWeight_005", "SideWeight_010", "SideWeight_020", "SideWeight_050",
+    } in baseline_sets
     assignments = subscript_assignments(switches_fn)
     assert "dynamic_tau_enabled" in assignments
     assert True in literal_values(assignments["dynamic_tau_enabled"])
@@ -1112,6 +1187,28 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
         "enabled", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
         "formula", "h_ee", "h_see", "beta_source",
     }
+
+
+@pytest.mark.parametrize("baseline_id", ("Fixed_margin", "Category_only"))
+def test_component_baselines_keep_dynamic_tau_enabled(baseline_id):
+    with runner_module() as runner:
+        switches = runner.baseline_switches(baseline_id)
+
+    assert switches["dynamic_tau_enabled"] is True
+
+
+def test_runner_uses_frozen_category_prior_table():
+    with runner_module() as runner:
+        assert runner.DEFAULT_BETA_BAR == {
+            "box": 0.20,
+            "adult": 0.75,
+            "pedestrian": 0.75,
+            "child": 1.05,
+            "child_like": 1.05,
+            "cyclist": 0.90,
+            "vehicle": 0.80,
+            "unknown": 0.75,
+        }
 
 
 @pytest.mark.parametrize(
@@ -1193,16 +1290,30 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("accepted_beta_source", "accepted_beta_source"),
         ("cmd_v", "cmd_vel_.linear.x"),
         ("cmd_w", "cmd_vel_.angular.z"),
+        ("ref_x", "ref_x"),
+        ("ref_y", "ref_y"),
+        ("tracking_error", "tracking_error"),
         ("obs_count", "obs_count"),
         ("constrained_obs_count", "constrained_obs_count"),
         ("beta_count", "beta_list_.size()"),
         ("used_fallback", "(used_fallback ? 1 : 0)"),
+        ("mpc_feasibility_guard_enabled", "(mpc_feasibility_guard_enabled_ ? 1 : 0)"),
+        ("candidate_feasibility_checked", "((first_attempt_status == \"success\" || first_attempt_status == \"infeasible\") ? 1 : 0)"),
         ("mpc_feasibility_guard_used", "(mpc_guard_used ? 1 : 0)"),
         ("slack", "solver_.last_slack_max"),
-        ("slack_sum", "solver_.last_slack_sum"),
-        ("slack_mean", "solver_.last_slack_mean"),
-        ("slack_max", "solver_.last_slack_max"),
-        ("solve_time_ms", "solve_time_ms"),
+            ("slack_sum", "solver_.last_slack_sum"),
+            ("slack_mean", "solver_.last_slack_mean"),
+            ("slack_max", "solver_.last_slack_max"),
+            ("side_preference_enabled", "(side_preference_enabled_ ? 1 : 0)"),
+            ("side_weight", "side_weight_"),
+            ("side_cost", "solver_.last_side_cost"),
+            ("side_dynamic_obstacle_count", "solver_.last_side_dynamic_obstacle_count"),
+            ("side_candidate_count", "solver_.last_side_candidate_count"),
+            ("side_dominant_obs_index", "solver_.last_side_dominant_obs_index"),
+            ("side_dominant_stage", "solver_.last_side_dominant_stage"),
+            ("side_dominant_tau", "solver_.last_side_dominant_tau"),
+            ("side_dominant_h", "solver_.last_side_dominant_h"),
+            ("solve_time_ms", "solve_time_ms"),
         ("dynamic_tau_enabled", "dynamic_tau_enabled"),
         ("tau", "tau_result.tau"),
         ("T_i", "tau_result.T_i"),
@@ -1224,6 +1335,12 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     assert "out.beta_applied.assign(beta.begin(), beta.end())" in publish_region
     assert "pub_beta_applied_final_.publish(out)" in publish_region
     assert_csv_writer_contract(planner_header_fields, planner_row_if, mpc_columns)
+
+    margin_writer = cpp_function_body(mpc, "void writeMpcMarginCsv")
+    assert "beta_list_[i]" in margin_writer
+    assert "final_beta_values[i]" in margin_writer
+    assert "accepted_beta_source" in margin_writer
+    assert "candidate_checked" in margin_writer
 
     obs_manager = read("planner/vomp_planner/traj_planner/include/obs_manager/obs_manager.hpp")
     obs_init_raw = cpp_function_body_raw(obs_manager, "void init(ros::NodeHandle &nh)")
@@ -1282,6 +1399,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("beta_bar", "beta_bar_val"),
         ("mu", "mu"),
         ("beta_requested", "beta_hat"),
+        ("beta_pre_guard", "beta_before_projection"),
         ("beta_applied", "beta_final"),
         ("guard_upper_bound", "guard_upper_bound"),
         ("guard_passed", "(guard_pass ? 1 : 0)"),

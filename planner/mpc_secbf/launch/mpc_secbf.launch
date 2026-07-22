@@ -11,6 +11,13 @@
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="side_preference_enabled" default="false"/>
+  <arg name="side_weight" default="0.05"/>
+  <arg name="side_epsilon_n" default="0.001"/>
+  <arg name="side_horizon" default="20"/>
+  <arg name="side_sign" default="1.0"/>
+  <arg name="side_min_obstacle_speed" default="0.001"/>
+  <arg name="side_activation_distance" default="3.0"/>
   <arg name="dynamic_tau_enabled" default="false"/>
   <arg name="dynamic_tau_ke" default="0.30"/>
   <arg name="dynamic_tau_tmax" default="2.0"/>
@@ -28,6 +35,7 @@
   <arg name="beta_applied_final_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="planner_log_path" default=""/>
   <arg name="timing_log_path" default=""/>
+  <arg name="mpc_margin_log_path" default=""/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
@@ -44,6 +52,13 @@
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <param name="mpc/side_preference_enabled" value="$(arg side_preference_enabled)"/>
+    <param name="mpc/side_weight" value="$(arg side_weight)"/>
+    <param name="mpc/side_epsilon_n" value="$(arg side_epsilon_n)"/>
+    <param name="mpc/side_horizon" value="$(arg side_horizon)"/>
+    <param name="mpc/side_sign" value="$(arg side_sign)"/>
+    <param name="mpc/side_min_obstacle_speed" value="$(arg side_min_obstacle_speed)"/>
+    <param name="mpc/side_activation_distance" value="$(arg side_activation_distance)"/>
     <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
     <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
     <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
@@ -52,6 +67,7 @@
     <param name="dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
     <param name="planner_log_path" value="$(arg planner_log_path)"/>
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
+    <param name="mpc_margin_log_path" value="$(arg mpc_margin_log_path)"/>
 
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <remap from="/global_path" to="$(arg global_path_topic)"/>

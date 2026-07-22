@@ -24,6 +24,13 @@
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="side_preference_enabled" default="false"/>
+  <arg name="side_weight" default="0.05"/>
+  <arg name="side_epsilon_n" default="0.001"/>
+  <arg name="side_horizon" default="20"/>
+  <arg name="side_sign" default="1.0"/>
+  <arg name="side_min_obstacle_speed" default="0.001"/>
+  <arg name="side_activation_distance" default="3.0"/>
   <arg name="semantic_mode" default="full"/>
   <arg name="enable_rate_limit" default="true"/>
   <arg name="enable_available_projection" default="true"/>
@@ -157,6 +164,13 @@
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <arg name="side_preference_enabled" value="$(arg side_preference_enabled)"/>
+    <arg name="side_weight" value="$(arg side_weight)"/>
+    <arg name="side_epsilon_n" value="$(arg side_epsilon_n)"/>
+    <arg name="side_horizon" value="$(arg side_horizon)"/>
+    <arg name="side_sign" value="$(arg side_sign)"/>
+    <arg name="side_min_obstacle_speed" value="$(arg side_min_obstacle_speed)"/>
+    <arg name="side_activation_distance" value="$(arg side_activation_distance)"/>
     <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
     <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
     <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
@@ -168,6 +182,7 @@
     <arg name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub"/>
     <arg name="planner_log_path" value="$(arg output_dir)/planner_log.csv"/>
     <arg name="timing_log_path" value="$(arg output_dir)/timing_log.csv"/>
+    <arg name="mpc_margin_log_path" value="$(arg output_dir)/mpc_margin_log.csv"/>
   </include>
 
   <!-- 轨迹可视化 -->
