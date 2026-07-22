@@ -8,7 +8,9 @@
   <arg name="enable_available_projection" default="true"/>
   <arg name="enable_guard_fallback" default="true"/>
   <arg name="fixed_beta" default="0.4"/>
-  <arg name="dynamic_tau_enabled" default="false"/>
+  <arg name="dynamic_tau_enabled" default="true"/>
+  <arg name="dynamic_tau_mode" default="teacher_tca"/>
+  <arg name="dynamic_tau_delta_tau" default="1e-6"/>
   <arg name="dynamic_tau_ke" default="0.30"/>
   <arg name="dynamic_tau_tmax" default="2.0"/>
   <arg name="dynamic_tau_min_speed" default="1e-6"/>
@@ -42,6 +44,8 @@
     <param name="guard/enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
     <param name="fixed_beta" value="$(arg fixed_beta)"/>
     <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <param name="dynamic_tau/mode" value="$(arg dynamic_tau_mode)"/>
+    <param name="dynamic_tau/delta_tau" value="$(arg dynamic_tau_delta_tau)" type="double"/>
     <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
     <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
     <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>

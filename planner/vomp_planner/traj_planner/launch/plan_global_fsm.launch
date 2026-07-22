@@ -23,7 +23,9 @@
     <arg name="global_seesm_enable" default="false"/>
     <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
     <arg name="global_seesm_log_path" default=""/>
-    <arg name="dynamic_tau_enabled" default="false"/>
+    <arg name="dynamic_tau_enabled" default="true"/>
+    <arg name="dynamic_tau_mode" default="teacher_tca"/>
+    <arg name="dynamic_tau_delta_tau" default="1e-6"/>
     <arg name="dynamic_tau_ke" default="0.30"/>
     <arg name="dynamic_tau_tmax" default="2.0"/>
     <arg name="dynamic_tau_min_speed" default="1e-6"/>
@@ -88,6 +90,8 @@
         <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
         <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
         <param name="search/dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+        <param name="search/dynamic_tau/mode" value="$(arg dynamic_tau_mode)"/>
+        <param name="search/dynamic_tau/delta_tau" value="$(arg dynamic_tau_delta_tau)" type="double"/>
         <param name="search/dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
         <param name="search/dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
         <param name="search/dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
@@ -189,6 +193,8 @@
         <param name="search/global_seesm_margin_timeout" value="0.50" type="double"/>
         <param name="search/global_seesm_log_path" value="$(arg global_seesm_log_path)"/>
         <param name="search/dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+        <param name="search/dynamic_tau/mode" value="$(arg dynamic_tau_mode)"/>
+        <param name="search/dynamic_tau/delta_tau" value="$(arg dynamic_tau_delta_tau)" type="double"/>
         <param name="search/dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
         <param name="search/dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
         <param name="search/dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>

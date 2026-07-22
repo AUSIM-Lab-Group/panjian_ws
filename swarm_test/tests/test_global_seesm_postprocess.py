@@ -68,6 +68,17 @@ def test_paper_travel_time_prefers_navigation_completion_time():
 
 
 def test_common_eval_reconstructs_dynamic_eesm_independently_of_controller_margin(tmp_path):
+    (tmp_path / "meta.yaml").write_text(
+        "dynamic_tau:\n"
+        "  enabled: true\n"
+        "  mode: legacy_gate\n"
+        "  Ke: 0.3\n"
+        "  Tmax: 2.0\n"
+        "  min_speed: 1.0e-6\n"
+        "  min_distance: 1.0e-6\n"
+        "  max_tau: 2.0\n",
+        encoding="utf-8",
+    )
     rows = [
         {
             "time": "0.1",
@@ -94,6 +105,59 @@ def test_common_eval_reconstructs_dynamic_eesm_independently_of_controller_margi
     assert math.isclose(metrics["min_h_eval"], 0.24, abs_tol=1.0e-12)
     assert metrics["semantic_violation_eval_ratio"] == 0.0
     assert metrics["eval_records"] == 1
+
+
+def test_common_eval_recomputes_teacher_tca_from_explicit_meta_mode(tmp_path):
+    (tmp_path / "meta.yaml").write_text(
+        "dynamic_tau:\n"
+        "  enabled: true\n"
+        "  mode: teacher_tca\n"
+        "  delta_tau: 0.01\n"
+        "  max_tau: 2.0\n",
+        encoding="utf-8",
+    )
+    rows = [{
+        "time": "0.1", "h_see": "-1.38", "h_ee": "-0.78",
+        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
+        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
+    }]
+    with (tmp_path / "margin_guard_log.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metrics = postprocess.semantic_violation_metrics(tmp_path)
+
+    tau = 2.0 / 1.01
+    expected = abs(2.0 - tau) - 0.8 - 0.75 * 0.8
+    assert math.isclose(metrics["min_h_eval"], expected, abs_tol=1.0e-12)
+
+
+def test_common_eval_prefers_valid_logged_tau_over_reconstruction(tmp_path):
+    (tmp_path / "meta.yaml").write_text(
+        "dynamic_tau:\n"
+        "  enabled: true\n"
+        "  mode: teacher_tca\n"
+        "  delta_tau: 1.0e-6\n"
+        "  max_tau: 2.0\n",
+        encoding="utf-8",
+    )
+    rows = [{
+        "time": "0.1", "h_see": "0.1", "h_ee": "0.7",
+        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
+        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
+        "tau": "0.5", "tau_valid": "1",
+    }]
+    with (tmp_path / "margin_guard_log.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metrics = postprocess.semantic_violation_metrics(tmp_path)
+
+    # Logged tau=0.5 gives |2-0.5|-0.8-0.6=0.1. Reconstructing pure TCA
+    # would give a negative value, so this assertion fixes source priority.
+    assert math.isclose(metrics["min_h_eval"], 0.1, abs_tol=1.0e-12)
 
 
 def test_mpc_feasibility_excludes_no_cbf_emergency_fallback(tmp_path):

@@ -38,7 +38,9 @@
   <arg name="global_seesm_enable" default="false"/>
   <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="fixed_beta" default="0.4"/>
-  <arg name="dynamic_tau_enabled" default="false"/>
+  <arg name="dynamic_tau_enabled" default="true"/>
+  <arg name="dynamic_tau_mode" default="teacher_tca"/>
+  <arg name="dynamic_tau_delta_tau" default="1e-6"/>
   <arg name="dynamic_tau_ke" default="0.30"/>
   <arg name="dynamic_tau_tmax" default="2.0"/>
   <arg name="dynamic_tau_min_speed" default="1e-6"/>
@@ -109,6 +111,8 @@
     <arg name="global_seesm_margin_topic" value="$(arg global_seesm_margin_topic)"/>
     <arg name="global_seesm_log_path" value="$(arg output_dir)/global_seesm_log.csv"/>
     <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_mode" value="$(arg dynamic_tau_mode)"/>
+    <arg name="dynamic_tau_delta_tau" value="$(arg dynamic_tau_delta_tau)"/>
     <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
     <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
     <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
@@ -127,6 +131,8 @@
     <arg name="enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
     <arg name="fixed_beta" value="$(arg fixed_beta)"/>
     <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_mode" value="$(arg dynamic_tau_mode)"/>
+    <arg name="dynamic_tau_delta_tau" value="$(arg dynamic_tau_delta_tau)"/>
     <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
     <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
     <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
@@ -172,6 +178,8 @@
     <arg name="side_min_obstacle_speed" value="$(arg side_min_obstacle_speed)"/>
     <arg name="side_activation_distance" value="$(arg side_activation_distance)"/>
     <arg name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
+    <arg name="dynamic_tau_mode" value="$(arg dynamic_tau_mode)"/>
+    <arg name="dynamic_tau_delta_tau" value="$(arg dynamic_tau_delta_tau)"/>
     <arg name="dynamic_tau_ke" value="$(arg dynamic_tau_ke)"/>
     <arg name="dynamic_tau_tmax" value="$(arg dynamic_tau_tmax)"/>
     <arg name="dynamic_tau_min_speed" value="$(arg dynamic_tau_min_speed)"/>
@@ -183,6 +191,7 @@
     <arg name="planner_log_path" value="$(arg output_dir)/planner_log.csv"/>
     <arg name="timing_log_path" value="$(arg output_dir)/timing_log.csv"/>
     <arg name="mpc_margin_log_path" value="$(arg output_dir)/mpc_margin_log.csv"/>
+    <arg name="tau_stage_log_path" value="$(arg output_dir)/tau_stage_log.csv"/>
   </include>
 
   <!-- 轨迹可视化 -->

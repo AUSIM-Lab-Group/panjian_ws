@@ -32,6 +32,7 @@ REQUIRED_TRIAL_LOGS = (
     "planner_log.csv",
     "timing_log.csv",
     "event_log.csv",
+    "tau_stage_log.csv",
 )
 GOAL_TOLERANCE_M = 0.55
 DEADLOCK_MEAN_ABS_V_MPS = 0.05
@@ -280,6 +281,8 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "front_adsm": "true",
     "global_seesm_enable": "false",
     "dynamic_tau_enabled": False,
+    "dynamic_tau_mode": "teacher_tca",
+    "dynamic_tau_delta_tau": 1e-6,
     "dynamic_tau_ke": 0.30,
     "dynamic_tau_tmax": 2.0,
     "dynamic_tau_min_speed": 1e-6,
@@ -296,12 +299,28 @@ DEFAULT_EXPERIMENT_SWITCHES = {
 
 DYNAMIC_TAU_SWITCHES = (
     "dynamic_tau_enabled",
+    "dynamic_tau_mode",
+    "dynamic_tau_delta_tau",
     "dynamic_tau_ke",
     "dynamic_tau_tmax",
     "dynamic_tau_min_speed",
     "dynamic_tau_min_distance",
     "dynamic_tau_max_tau",
 )
+
+TEACHER_TAU_MODE = "teacher_tca"
+TEACHER_KE_TAU_MODE = "teacher_ke_tca"
+LEGACY_TAU_MODE = "legacy_gate"
+TEACHER_TAU_FORMULA = (
+    "tau=clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau)"
+)
+TEACHER_KE_TAU_FORMULA = (
+    "tau=clip(Ke*clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau),0,max_tau)"
+)
+LEGACY_TAU_FORMULA = "tau=f_r*f_v*f_T*Ke*T_i"
+RELATIVE_POSITION_CONVENTION = "l=p_robot-p_obstacle"
+RELATIVE_VELOCITY_CONVENTION = "v_rel=v_robot-v_obstacle"
+PREDICTION_SIGN_CONVENTION = "l(t+tau)=l+tau*v_rel"
 
 
 def bool_switch(value) -> bool:
@@ -509,18 +528,14 @@ def baseline_switches(baseline_id: str) -> dict:
     for key in values:
         if key in baseline:
             values[key] = baseline[key]
-    if baseline_id in {
-        "No_semantic", "Fixed_margin", "Category_only",
-        "Unguarded_SEESM", "SEESM_Ours",
-    }:
-        values["dynamic_tau_enabled"] = True
-    elif baseline_id in {
-        "No_J_side", "SideWeight_005", "SideWeight_010",
-        "SideWeight_020", "SideWeight_050",
-    }:
-        values["dynamic_tau_enabled"] = True
-    else:
-        values["dynamic_tau_enabled"] = False
+    # Teacher-v1 has exactly one production dynamic-time policy.  The legacy
+    # gated/frozen policy remains readable by audit tools but is never emitted
+    # by this runner.  The distance-only Standard baseline is deliberately
+    # instantaneous and must never inherit dynamic tau from a scenario override.
+    values["dynamic_tau_enabled"] = baseline_id not in {
+        "B1_ACBF_fixed", "Standard_MPC_CBF",
+    }
+    values["dynamic_tau_mode"] = TEACHER_TAU_MODE
     if baseline_id == "Standard_MPC_CBF":
         values["cbf_metric"] = "distance"
     else:
@@ -538,7 +553,69 @@ def baseline_switches(baseline_id: str) -> dict:
 def scenario_switches(baseline_id: str, scenario: dict) -> dict:
     values = baseline_switches(baseline_id)
     values.update(scenario.get("experiment_switches", {}))
+    if baseline_id in {"B1_ACBF_fixed", "Standard_MPC_CBF"}:
+        values["dynamic_tau_enabled"] = False
+        values["dynamic_tau_mode"] = TEACHER_TAU_MODE
+    else:
+        values["dynamic_tau_enabled"] = True
+        if values["dynamic_tau_mode"] not in {TEACHER_TAU_MODE, TEACHER_KE_TAU_MODE}:
+            raise ValueError(
+                "Teacher-v1 runner only permits teacher_tca or explicit "
+                "teacher_ke_tca diagnostic mode"
+            )
+    if baseline_id == "Standard_MPC_CBF":
+        # Scenario YAML is allowed to tune experiment methods, but it must not
+        # mutate the definition of the distance-only Standard control.  Re-lock
+        # every semantic/Guard/global/side path after applying scenario values.
+        values["cbf_metric"] = "distance"
+        values["dynamic_tau_enabled"] = False
+        values["dynamic_tau_mode"] = TEACHER_TAU_MODE
+        values["semantic_mode"] = "fixed"
+        values["fixed_beta"] = 0.4
+        values["guard_enabled"] = "false"
+        values["enable_rate_limit"] = "false"
+        values["enable_available_projection"] = "false"
+        values["enable_guard_fallback"] = "false"
+        values["mpc_feasibility_guard_enabled"] = "false"
+        values["front_adsm"] = "false"
+        values["global_seesm_enable"] = "false"
+        values["side_preference_enabled"] = "false"
     return values
+
+
+def dynamic_tau_contract(switches: dict, beta_source: str) -> dict:
+    enabled = bool_switch(switches["dynamic_tau_enabled"])
+    mode = str(switches["dynamic_tau_mode"])
+    if mode == TEACHER_TAU_MODE:
+        formula = TEACHER_TAU_FORMULA
+        mpc_stage_policy = "symbolic_stagewise" if enabled else "disabled"
+    elif mode == TEACHER_KE_TAU_MODE:
+        formula = TEACHER_KE_TAU_FORMULA
+        mpc_stage_policy = "symbolic_stagewise" if enabled else "disabled"
+    elif mode == LEGACY_TAU_MODE:
+        formula = LEGACY_TAU_FORMULA
+        mpc_stage_policy = "numeric_frozen_per_stage" if enabled else "disabled"
+    else:
+        raise ValueError(f"Unknown dynamic tau mode: {mode}")
+    return {
+        "enabled": enabled,
+        "mode": mode,
+        "delta_tau": float(switches["dynamic_tau_delta_tau"]),
+        # Retained only so archived Legacy-v1 runs remain reconstructable.
+        "Ke": float(switches["dynamic_tau_ke"]),
+        "Tmax": float(switches["dynamic_tau_tmax"]),
+        "min_speed": float(switches["dynamic_tau_min_speed"]),
+        "min_distance": float(switches["dynamic_tau_min_distance"]),
+        "max_tau": float(switches["dynamic_tau_max_tau"]),
+        "formula": formula,
+        "relative_position_convention": RELATIVE_POSITION_CONVENTION,
+        "relative_velocity_convention": RELATIVE_VELOCITY_CONVENTION,
+        "prediction_sign": PREDICTION_SIGN_CONVENTION,
+        "mpc_stage_policy": mpc_stage_policy,
+        "h_ee": "||l+tau*v_rel||-R_obs-R_robot",
+        "h_see": "h_ee-beta",
+        "beta_source": beta_source,
+    }
 
 
 def point_xy(point: dict, default_x=0.0, default_y=0.0):
@@ -664,18 +741,9 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "side_sign": switches["side_sign"],
         "side_min_obstacle_speed": switches["side_min_obstacle_speed"],
         "side_activation_distance": switches["side_activation_distance"],
-        "dynamic_tau": {
-            "enabled": bool_switch(switches["dynamic_tau_enabled"]),
-            "Ke": float(switches["dynamic_tau_ke"]),
-            "Tmax": float(switches["dynamic_tau_tmax"]),
-            "min_speed": float(switches["dynamic_tau_min_speed"]),
-            "min_distance": float(switches["dynamic_tau_min_distance"]),
-            "max_tau": float(switches["dynamic_tau_max_tau"]),
-            "formula": "tau=f_r*f_v*f_T*Ke*T_i",
-            "h_ee": "||l+tau*v||-R_obs-R_robot",
-            "h_see": "h_ee-beta",
-            "beta_source": baseline_beta_source(baseline_id),
-        },
+        "dynamic_tau": dynamic_tau_contract(
+            switches, baseline_beta_source(baseline_id)
+        ),
         "guard_tau": 0.20,
         "mpc_horizon": 20,
         "dt": 0.10,
@@ -694,6 +762,7 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
             "planner_log.csv",
             "timing_log.csv",
             "event_log.csv",
+            "tau_stage_log.csv",
         ],
     }
     if is_reference_path_scene(scenario):
@@ -744,6 +813,14 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
         f"goal_x:={goal_x}",
         f"goal_y:={goal_y}",
         "record_data:=true",
+        f"dynamic_tau_enabled:={ros_bool(switches['dynamic_tau_enabled'])}",
+        f"dynamic_tau_mode:={switches['dynamic_tau_mode']}",
+        f"dynamic_tau_delta_tau:={switches['dynamic_tau_delta_tau']}",
+        f"dynamic_tau_ke:={switches['dynamic_tau_ke']}",
+        f"dynamic_tau_tmax:={switches['dynamic_tau_tmax']}",
+        f"dynamic_tau_min_speed:={switches['dynamic_tau_min_speed']}",
+        f"dynamic_tau_min_distance:={switches['dynamic_tau_min_distance']}",
+        f"dynamic_tau_max_tau:={switches['dynamic_tau_max_tau']}",
     ]
     if use_reference_waypoints:
         common_start.extend([
@@ -785,6 +862,8 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"side_min_obstacle_speed:={switches['side_min_obstacle_speed']}",
             f"side_activation_distance:={switches['side_activation_distance']}",
             f"dynamic_tau_enabled:={ros_bool(switches['dynamic_tau_enabled'])}",
+            f"dynamic_tau_mode:={switches['dynamic_tau_mode']}",
+            f"dynamic_tau_delta_tau:={switches['dynamic_tau_delta_tau']}",
             f"dynamic_tau_ke:={switches['dynamic_tau_ke']}",
             f"dynamic_tau_tmax:={switches['dynamic_tau_tmax']}",
             f"dynamic_tau_min_speed:={switches['dynamic_tau_min_speed']}",
@@ -1042,71 +1121,157 @@ def summarize_planner_log(planner_log: Path) -> dict:
     return metrics
 
 
-def summarize_tau_log(run_dir: Path) -> dict:
-    metrics = {
-        "tau_mean": "",
-        "tau_max": "",
-        "tau_active_fraction": "",
-        "tau_invalid_count": 0,
-        "tau_reason_counts": "",
-        "tau_source": "",
+TAU_COMPUTED_INACTIVE_REASONS = frozenset({
+    "teacher_receding", "teacher_tangent",
+})
+
+
+def _tau_bool(value):
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    return None
+
+
+def _summarize_tau_source(path: Path, required_fields: set, source_label: str) -> dict:
+    summary = {
+        "record_count": 0,
+        "computational_valid_count": 0,
+        "active_count": 0,
+        "inactive_valid_count": 0,
+        "invalid_count": 0,
+        "mean": "",
+        "max": "",
+        "active_fraction": "",
+        "reason_counts": "",
+        "source": "",
     }
-    tau_fields = {"tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"}
-    candidates = (
-        run_dir / "margin_guard_log.csv",
-        run_dir / "planner_log.csv",
-        run_dir / "global_seesm_log.csv",
-    )
-    for source in candidates:
-        if not source.exists():
-            continue
-        with source.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            header = set(reader.fieldnames or ())
-            if not tau_fields.issubset(header):
-                continue
-            rows = list(reader)
+    if not path.exists():
+        return summary
+    with path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if not required_fields.issubset(set(reader.fieldnames or ())):
+            return summary
+        rows = list(reader)
+        header = set(reader.fieldnames or ())
 
-        tau_values = []
-        active_count = 0
-        invalid_count = 0
-        reason_counts = {}
-        for row in rows:
-            try:
-                values = [float(row[field]) for field in ("tau", "T_i", "f_r", "f_v", "f_T")]
-            except (KeyError, TypeError, ValueError):
-                continue
-            if not all(math.isfinite(value) for value in values):
-                continue
-            valid = str(row.get("tau_valid", "")).strip().lower()
-            reason = str(row.get("tau_reason", "")).strip()
-            if valid not in {"0", "1", "true", "false", "yes", "no"} or not reason:
-                continue
-            tau = values[0]
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
-            if valid in {"0", "false", "no"}:
-                invalid_count += 1
-                continue
-            tau_values.append(tau)
-            active_count += int(tau > 0.0)
-
-        if not tau_values:
+    tau_values = []
+    reason_counts = {}
+    parsed_records = 0
+    for row in rows:
+        try:
+            tau = float(row["tau"])
+        except (KeyError, TypeError, ValueError):
             continue
-        metrics["tau_mean"] = f"{sum(tau_values) / len(tau_values):.6f}"
-        metrics["tau_max"] = f"{max(tau_values):.6f}"
-        metrics["tau_active_fraction"] = f"{active_count / len(tau_values):.6f}"
-        metrics["tau_invalid_count"] = invalid_count
-        metrics["tau_reason_counts"] = ";".join(
-            f"{reason}:{reason_counts[reason]}" for reason in sorted(reason_counts)
+        if not math.isfinite(tau) or tau < 0.0:
+            continue
+        computed_field = "tau_computed" if "tau_computed" in header else "tau_valid"
+        computed = _tau_bool(row.get(computed_field, ""))
+        reason = str(row.get("tau_reason", "")).strip()
+        if computed is None or not reason:
+            continue
+        parsed_records += 1
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+        # Legacy/current-state logs used tau_valid as an active flag.  The two
+        # finite Teacher zero-horizon outcomes are nevertheless successful
+        # computations and are recognized explicitly when reading such logs.
+        if reason in TAU_COMPUTED_INACTIVE_REASONS:
+            computed = True
+        active = (
+            _tau_bool(row.get("tau_active", ""))
+            if "tau_active" in header
+            else None
         )
-        metrics["tau_source"] = source.name
-        break
+        if active is None:
+            active = computed and tau > 0.0
+
+        if not computed:
+            summary["invalid_count"] += 1
+            continue
+        tau_values.append(tau)
+        summary["computational_valid_count"] += 1
+        if active:
+            summary["active_count"] += 1
+        else:
+            summary["inactive_valid_count"] += 1
+
+    summary["record_count"] = parsed_records
+    summary["reason_counts"] = ";".join(
+        f"{reason}:{reason_counts[reason]}" for reason in sorted(reason_counts)
+    )
+    if parsed_records:
+        summary["source"] = source_label
+    if tau_values:
+        summary["mean"] = f"{sum(tau_values) / len(tau_values):.6f}"
+        summary["max"] = f"{max(tau_values):.6f}"
+        summary["active_fraction"] = (
+            f"{summary['active_count'] / len(tau_values):.6f}"
+        )
+    return summary
+
+
+def summarize_tau_log(run_dir: Path) -> dict:
+    # Stagewise MPC values and current-state Guard values are different audit
+    # populations.  Keep both, and use the full MPC stage log as the canonical
+    # top-level tau summary whenever it is present.
+    stage = _summarize_tau_source(
+        run_dir / "tau_stage_log.csv",
+        {"tau", "tau_active", "tau_valid", "tau_reason"},
+        "tau_stage_log.csv:mpc_stage",
+    )
+    guard = _summarize_tau_source(
+        run_dir / "margin_guard_log.csv",
+        {"tau", "tau_valid", "tau_reason"},
+        "margin_guard_log.csv:guard_current_state",
+    )
+    planner = _summarize_tau_source(
+        run_dir / "planner_log.csv",
+        {"tau", "tau_valid", "tau_reason"},
+        "planner_log.csv:mpc_stage_representative",
+    )
+    global_current = _summarize_tau_source(
+        run_dir / "global_seesm_log.csv",
+        {"tau", "tau_valid", "tau_reason"},
+        "global_seesm_log.csv:global_current_state",
+    )
+
+    selected = next(
+        (
+            candidate for candidate in (stage, guard, planner, global_current)
+            if candidate["computational_valid_count"] > 0
+        ),
+        next(
+            (candidate for candidate in (stage, guard, planner, global_current)
+             if candidate["record_count"] > 0),
+            stage,
+        ),
+    )
+    metrics = {
+        "tau_record_count": selected["record_count"],
+        "tau_computational_valid_count": selected["computational_valid_count"],
+        "tau_active_count": selected["active_count"],
+        "tau_inactive_valid_count": selected["inactive_valid_count"],
+        "tau_mean": selected["mean"],
+        "tau_max": selected["max"],
+        "tau_active_fraction": selected["active_fraction"],
+        "tau_invalid_count": selected["invalid_count"],
+        "tau_reason_counts": selected["reason_counts"],
+        "tau_source": selected["source"],
+    }
+    for prefix, source_summary in (("tau_mpc_stage", stage), ("tau_guard", guard)):
+        for key, value in source_summary.items():
+            metrics[f"{prefix}_{key}"] = value
     return metrics
 
 
 def dynamic_tau_audit(run_dir: Path) -> dict:
     metrics = {
         "dynamic_tau_enabled": False,
+        "dynamic_tau_mode": "",
+        "dynamic_tau_delta_tau": "",
         "dynamic_tau_ke": "",
         "dynamic_tau_tmax": "",
         "dynamic_tau_min_speed": "",
@@ -1116,6 +1281,10 @@ def dynamic_tau_audit(run_dir: Path) -> dict:
         "dynamic_tau_h_ee": "",
         "dynamic_tau_h_see": "",
         "dynamic_tau_beta_source": "",
+        "dynamic_tau_relative_position_convention": "",
+        "dynamic_tau_relative_velocity_convention": "",
+        "dynamic_tau_prediction_sign": "",
+        "dynamic_tau_mpc_stage_policy": "",
     }
     meta_path = run_dir / "meta.yaml"
     if yaml is None or not meta_path.exists():
@@ -1128,6 +1297,7 @@ def dynamic_tau_audit(run_dir: Path) -> dict:
             return metrics
         metrics["dynamic_tau_enabled"] = bool_switch(dynamic.get("enabled", False))
         for source_key, output_key in (
+            ("delta_tau", "dynamic_tau_delta_tau"),
             ("Ke", "dynamic_tau_ke"),
             ("Tmax", "dynamic_tau_tmax"),
             ("min_speed", "dynamic_tau_min_speed"),
@@ -1137,10 +1307,15 @@ def dynamic_tau_audit(run_dir: Path) -> dict:
             if source_key in dynamic:
                 metrics[output_key] = float(dynamic[source_key])
         for source_key, output_key in (
+            ("mode", "dynamic_tau_mode"),
             ("formula", "dynamic_tau_formula"),
             ("h_ee", "dynamic_tau_h_ee"),
             ("h_see", "dynamic_tau_h_see"),
             ("beta_source", "dynamic_tau_beta_source"),
+            ("relative_position_convention", "dynamic_tau_relative_position_convention"),
+            ("relative_velocity_convention", "dynamic_tau_relative_velocity_convention"),
+            ("prediction_sign", "dynamic_tau_prediction_sign"),
+            ("mpc_stage_policy", "dynamic_tau_mpc_stage_policy"),
         ):
             metrics[output_key] = str(dynamic.get(source_key, ""))
     except (OSError, TypeError, ValueError):
@@ -1455,12 +1630,27 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- tau_mean: {tau_metrics['tau_mean']}",
         f"- tau_max: {tau_metrics['tau_max']}",
         f"- tau_active_fraction: {tau_metrics['tau_active_fraction']}",
+        f"- tau_computational_valid_count: {tau_metrics['tau_computational_valid_count']}",
+        f"- tau_active_count: {tau_metrics['tau_active_count']}",
+        f"- tau_inactive_valid_count: {tau_metrics['tau_inactive_valid_count']}",
         f"- tau_invalid_count: {tau_metrics['tau_invalid_count']}",
         f"- tau_reason_counts: {tau_metrics['tau_reason_counts']}",
         f"- tau_source: {tau_metrics['tau_source']}",
+        f"- tau_mpc_stage_source: {tau_metrics['tau_mpc_stage_source']}",
+        f"- tau_mpc_stage_record_count: {tau_metrics['tau_mpc_stage_record_count']}",
+        f"- tau_mpc_stage_computational_valid_count: {tau_metrics['tau_mpc_stage_computational_valid_count']}",
+        f"- tau_mpc_stage_active_count: {tau_metrics['tau_mpc_stage_active_count']}",
+        f"- tau_mpc_stage_inactive_valid_count: {tau_metrics['tau_mpc_stage_inactive_valid_count']}",
+        f"- tau_guard_source: {tau_metrics['tau_guard_source']}",
+        f"- tau_guard_record_count: {tau_metrics['tau_guard_record_count']}",
+        f"- tau_guard_computational_valid_count: {tau_metrics['tau_guard_computational_valid_count']}",
+        f"- tau_guard_active_count: {tau_metrics['tau_guard_active_count']}",
+        f"- tau_guard_inactive_valid_count: {tau_metrics['tau_guard_inactive_valid_count']}",
         "",
         "## Dynamic tau audit",
         f"- enabled: {tau_audit['dynamic_tau_enabled']}",
+        f"- mode: {tau_audit['dynamic_tau_mode']}",
+        f"- delta_tau: {tau_audit['dynamic_tau_delta_tau']}",
         f"- Ke: {tau_audit['dynamic_tau_ke']}",
         f"- Tmax: {tau_audit['dynamic_tau_tmax']}",
         f"- min_speed: {tau_audit['dynamic_tau_min_speed']}",
@@ -1470,6 +1660,10 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- h_ee: {tau_audit['dynamic_tau_h_ee']}",
         f"- h_see: {tau_audit['dynamic_tau_h_see']}",
         f"- beta_source: {tau_audit['dynamic_tau_beta_source']}",
+        f"- relative_position_convention: {tau_audit['dynamic_tau_relative_position_convention']}",
+        f"- relative_velocity_convention: {tau_audit['dynamic_tau_relative_velocity_convention']}",
+        f"- prediction_sign: {tau_audit['dynamic_tau_prediction_sign']}",
+        f"- mpc_stage_policy: {tau_audit['dynamic_tau_mpc_stage_policy']}",
         "",
         "## Commands",
         "",
@@ -1507,12 +1701,26 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "side_dynamic_obstacle_count_mean", "side_crowd_suppression_rate",
                 "side_dominant_active_count", "side_dominant_active_rate",
                 "side_dominant_tau_max", "side_dominant_h_min",
-                "tau_mean", "tau_max", "tau_active_fraction", "tau_invalid_count",
-                "tau_reason_counts", "tau_source",
-                "dynamic_tau_enabled", "dynamic_tau_ke", "dynamic_tau_tmax",
+                "tau_record_count", "tau_computational_valid_count", "tau_active_count",
+                "tau_inactive_valid_count", "tau_mean", "tau_max",
+                "tau_active_fraction", "tau_invalid_count", "tau_reason_counts",
+                "tau_source", "tau_mpc_stage_record_count",
+                "tau_mpc_stage_computational_valid_count", "tau_mpc_stage_active_count",
+                "tau_mpc_stage_inactive_valid_count", "tau_mpc_stage_invalid_count",
+                "tau_mpc_stage_mean", "tau_mpc_stage_max",
+                "tau_mpc_stage_active_fraction", "tau_mpc_stage_reason_counts",
+                "tau_mpc_stage_source", "tau_guard_record_count",
+                "tau_guard_computational_valid_count", "tau_guard_active_count",
+                "tau_guard_inactive_valid_count", "tau_guard_invalid_count",
+                "tau_guard_mean", "tau_guard_max", "tau_guard_active_fraction",
+                "tau_guard_reason_counts", "tau_guard_source",
+                "dynamic_tau_enabled", "dynamic_tau_mode", "dynamic_tau_delta_tau",
+                "dynamic_tau_ke", "dynamic_tau_tmax",
                 "dynamic_tau_min_speed", "dynamic_tau_min_distance", "dynamic_tau_max_tau",
                 "dynamic_tau_formula", "dynamic_tau_h_ee", "dynamic_tau_h_see",
-                "dynamic_tau_beta_source", "output_dir",
+                "dynamic_tau_beta_source", "dynamic_tau_relative_position_convention",
+                "dynamic_tau_relative_velocity_convention", "dynamic_tau_prediction_sign",
+                "dynamic_tau_mpc_stage_policy", "output_dir",
             ],
         )
         writer.writeheader()

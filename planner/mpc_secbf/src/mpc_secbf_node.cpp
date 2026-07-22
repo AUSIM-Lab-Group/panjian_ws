@@ -18,6 +18,7 @@
 #include "mpc_secbf/mpc_secbf.h"
 #include "semantic_guard/AppliedMarginArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
+#include "semantic_guard/planar_velocity.hpp"
 #include "semantic_fusion/SemanticObstacleArray.h"
 
 class MpcSecbfNode {
@@ -35,11 +36,41 @@ public:
         double v_max, v_min, o_max;
         std::string cbf_metric;
         nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
+        std::string dynamic_tau_mode;
+        nh_.param<std::string>("dynamic_tau/mode", dynamic_tau_mode, "teacher_tca");
+        if (!semantic_guard::parseDynamicTauMode(
+                dynamic_tau_mode, &dynamic_tau_params_.mode)) {
+            ROS_FATAL_STREAM("Unsupported dynamic_tau/mode: " << dynamic_tau_mode);
+            throw std::runtime_error("unsupported dynamic_tau/mode");
+        }
+        nh_.param("dynamic_tau/delta_tau", dynamic_tau_params_.delta_tau, 1e-6);
         nh_.param("dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
         nh_.param("dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
         nh_.param("dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
         nh_.param("dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
         nh_.param("dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
+        const bool legacy_tau_config_valid =
+            std::isfinite(dynamic_tau_params_.ke) && dynamic_tau_params_.ke >= 0.0 &&
+            std::isfinite(dynamic_tau_params_.t_max) && dynamic_tau_params_.t_max >= 0.0 &&
+            std::isfinite(dynamic_tau_params_.min_speed) && dynamic_tau_params_.min_speed >= 0.0 &&
+            std::isfinite(dynamic_tau_params_.min_distance) && dynamic_tau_params_.min_distance >= 0.0 &&
+            std::isfinite(dynamic_tau_params_.max_tau) && dynamic_tau_params_.max_tau > 0.0;
+        const bool teacher_tau_config_valid =
+            std::isfinite(dynamic_tau_params_.delta_tau) && dynamic_tau_params_.delta_tau > 0.0 &&
+            std::isfinite(dynamic_tau_params_.max_tau) && dynamic_tau_params_.max_tau > 0.0 &&
+            (dynamic_tau_params_.mode != semantic_guard::DynamicTauMode::kTeacherKeTca ||
+             (std::isfinite(dynamic_tau_params_.ke) && dynamic_tau_params_.ke > 0.0));
+        const bool dynamic_tau_config_valid =
+            dynamic_tau_params_.mode == semantic_guard::DynamicTauMode::kLegacyGate
+                ? legacy_tau_config_valid
+                : teacher_tau_config_valid;
+        if (dynamic_tau_enabled_ && !dynamic_tau_config_valid) {
+            ROS_FATAL_STREAM("Invalid Teacher-v1 dynamic tau configuration: delta_tau="
+                             << dynamic_tau_params_.delta_tau
+                             << " max_tau=" << dynamic_tau_params_.max_tau
+                             << " Ke=" << dynamic_tau_params_.ke);
+            throw std::runtime_error("invalid dynamic tau configuration");
+        }
         nh_.param("mpc/mpc_frequency", mpc_freq, 10.0);
         nh_.param("mpc/step_time", Ts, 0.2);
         nh_.param("mpc/pre_step", N, 20);
@@ -71,9 +102,11 @@ public:
         std::string planner_log_path;
         std::string timing_log_path;
         std::string mpc_margin_log_path;
+        std::string tau_stage_log_path;
         nh_.param<std::string>("planner_log_path", planner_log_path, "");
         nh_.param<std::string>("timing_log_path", timing_log_path, "");
         nh_.param<std::string>("mpc_margin_log_path", mpc_margin_log_path, "");
+        nh_.param<std::string>("tau_stage_log_path", tau_stage_log_path, "");
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -98,13 +131,18 @@ public:
                 "mpc_feasibility_guard_enabled,candidate_feasibility_checked,mpc_feasibility_guard_used,"
                 "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
                 "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,solve_time_ms,"
-                "dynamic_tau_enabled,tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
+                "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_active,tau_clipped_low,tau_clipped_high,"
+                "T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
         openCsv(mpc_margin_csv_, mpc_margin_log_path,
                 "t,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
                 "first_attempt_status,final_status,mpc_feasibility_guard_enabled,"
                 "candidate_feasibility_checked,mpc_feasibility_guard_used\n");
+        openCsv(tau_stage_csv_, tau_stage_log_path,
+                "t,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
+                "tca_raw,tca_clipped,tau,tau_scale,tau_active,tau_clipped_low,tau_clipped_high,"
+                "beta,h_eesm,h_seesm,tau_valid,tau_reason\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -136,6 +174,7 @@ public:
         if (planner_csv_.is_open()) planner_csv_.close();
         if (timing_csv_.is_open()) timing_csv_.close();
         if (mpc_margin_csv_.is_open()) mpc_margin_csv_.close();
+        if (tau_stage_csv_.is_open()) tau_stage_csv_.close();
     }
 
 private:
@@ -156,12 +195,22 @@ private:
                              msg->pose.pose.orientation.x,
                              msg->pose.pose.orientation.y,
                              msg->pose.pose.orientation.z);
-        Eigen::Matrix3d R(q);
+        Eigen::Matrix3d R(q.normalized());
         double yaw = atan2(R.col(0)[1], R.col(0)[0]);
-        double v = msg->twist.twist.linear.x;
+        double world_vx = 0.0;
+        double world_vy = 0.0;
+        if (!semantic_guard::bodyPlanarVelocityToWorld(
+                msg->twist.twist.linear.x, msg->twist.twist.linear.y,
+                msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
+                msg->pose.pose.orientation.z, msg->pose.pose.orientation.w,
+                &world_vx, &world_vy)) {
+            has_odom_ = false;
+            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] invalid odometry quaternion/twist");
+            return;
+        }
         cur_state_ << msg->pose.pose.position.x,
                       msg->pose.pose.position.y,
-                      yaw, v * cos(yaw), v * sin(yaw);
+                      yaw, world_vx, world_vy;
         has_odom_ = true;
     }
 
@@ -351,6 +400,7 @@ private:
         writeMpcMarginCsv(final_beta_values, accepted_beta_source,
                           first_attempt_status, final_status, mpc_guard_used);
         publishAcceptedMargins(final_beta_values, accepted_beta_source);
+        writeTauStageCsv(accepted_beta_source);
 
         // Extract first control
         if (solver_.predict_u.size() >= 2) {
@@ -390,19 +440,19 @@ private:
                                              : 0;
         const bool dynamic_tau_enabled = dynamic_tau_enabled_;
         semantic_guard::DynamicTauResult tau_result;
+        tau_result.mode = dynamic_tau_params_.mode;
         if (!obstacle_contract_valid || solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
             solver_.last_constrained_obs_index * N_ >= obs_matrix_.cols()) {
             tau_result.reason = "no_constrained_obstacle";
         } else if (!dynamic_tau_enabled) {
             tau_result.reason = "disabled";
+        } else if (!solver_.last_tau_stage_audit.empty()) {
+            // This value was evaluated from the optimized first-stage state in
+            // MPC_SECBF_SOLVE::solve(). Do not reconstruct Teacher TCA from the
+            // current measurement here.
+            tau_result = solver_.last_tau_stage_audit.front().tau_result;
         } else {
-            const Eigen::VectorXd obs = obs_matrix_.col(solver_.last_constrained_obs_index * N_);
-            const double lx = obs(0) - cur_state_(0);
-            const double ly = obs(1) - cur_state_(1);
-            const double vx = obs(5) - cur_state_(3);
-            const double vy = obs(6) - cur_state_(4);
-            tau_result = semantic_guard::computeDynamicTau(
-                lx, ly, vx, vy, obs(2) + robot_radius_, dynamic_tau_params_);
+            tau_result.reason = "stage_audit_unavailable";
         }
         if (planner_csv_.is_open()) {
             planner_csv_ << t << ","
@@ -437,12 +487,19 @@ private:
                          << solver_.last_side_dominant_h << ","
                          << solve_time_ms << ","
                          << dynamic_tau_enabled << ","
+                         << semantic_guard::dynamicTauModeName(tau_result.mode) << ","
                          << tau_result.tau << ","
+                         << tau_result.t_ca_raw << ","
+                         << tau_result.t_ca_clipped << ","
+                         << (tau_result.ke_scaled ? dynamic_tau_params_.ke : 1.0) << ","
+                         << tau_result.valid << ","
+                         << tau_result.lower_clipped << ","
+                         << tau_result.upper_clipped << ","
                          << tau_result.T_i << ","
                          << tau_result.f_r << ","
                          << tau_result.f_v << ","
                          << tau_result.f_T << ","
-                         << tau_result.valid << ","
+                         << tau_result.computed << ","
                          << tau_result.reason << "\n";
             planner_csv_.flush();
         }
@@ -452,6 +509,44 @@ private:
                         << solve_time_ms << "\n";
             timing_csv_.flush();
         }
+    }
+
+    void writeTauStageCsv(const std::string& accepted_beta_source) {
+        if (!tau_stage_csv_.is_open()) return;
+        const double t = ros::Time::now().toSec();
+        for (const MpcTauStageAudit& audit : solver_.last_tau_stage_audit) {
+            if (audit.obstacle_index < 0 ||
+                static_cast<size_t>(audit.obstacle_index) >= obstacle_ids_.size()) {
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "[MPC-SECBF] Skip tau stage row because obstacle index is invalid");
+                continue;
+            }
+            const semantic_guard::DynamicTauResult& tau = audit.tau_result;
+            tau_stage_csv_ << t << ","
+                           << accepted_beta_source << ","
+                           << obstacle_ids_[audit.obstacle_index] << ","
+                           << audit.obstacle_index << ","
+                           << audit.stage << ","
+                           << semantic_guard::dynamicTauModeName(tau.mode) << ","
+                           << audit.lx << ","
+                           << audit.ly << ","
+                           << audit.vrel_x << ","
+                           << audit.vrel_y << ","
+                           << tau.t_ca_raw << ","
+                           << tau.t_ca_clipped << ","
+                           << tau.tau << ","
+                           << (tau.ke_scaled ? dynamic_tau_params_.ke : 1.0) << ","
+                           << tau.valid << ","
+                           << tau.lower_clipped << ","
+                           << tau.upper_clipped << ","
+                           << audit.beta << ","
+                           << audit.h_eesm << ","
+                           << audit.h_seesm << ","
+                           << tau.computed << ","
+                           << tau.reason << "\n";
+        }
+        tau_stage_csv_.flush();
     }
 
     void writeMpcMarginCsv(const std::vector<double>& final_beta_values,
@@ -600,7 +695,7 @@ private:
     bool beta_payload_valid_ = true;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
-    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_;
+    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_;
 };
 
 int main(int argc, char** argv) {

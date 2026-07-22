@@ -7,6 +7,19 @@
 #include <string>
 #include <memory>
 
+struct MpcTauStageAudit {
+    int obstacle_index = -1;
+    int stage = -1;
+    double beta = 0.0;
+    double lx = 0.0;
+    double ly = 0.0;
+    double vrel_x = 0.0;
+    double vrel_y = 0.0;
+    double h_eesm = 0.0;
+    double h_seesm = 0.0;
+    semantic_guard::DynamicTauResult tau_result;
+};
+
 /**
  * MPC-SECBF Solver
  * Model Predictive Control with Semantic Enhanced Control Barrier Function.
@@ -64,9 +77,15 @@ public:
     int last_side_dynamic_obstacle_count = 0;
     double last_side_dominant_tau = 0.0;
     double last_side_dominant_h = 0.0;
+    // Values evaluated from the optimized stage states. They are the same
+    // stage-wise Teacher-v1 quantities used by the NLP, not a current-state
+    // reconstruction performed by the ROS node.
+    std::vector<MpcTauStageAudit> last_tau_stage_audit;
 
 private:
-    // The caller supplies the numeric tau frozen for this obstacle prediction stage.
+    // legacy_gate receives a numeric stage tau frozen from the measured state.
+    // Teacher modes ignore that value and evaluate TCA symbolically from the
+    // predicted robot state at this stage.
     casadi::MX h_cbf(casadi::MX& curpos, Eigen::VectorXd obs, double beta_i,
                      double stage_tau);
 
@@ -75,8 +94,8 @@ private:
     double computeFrozenStageTau(const Eigen::VectorXd& obs,
                                  const Eigen::VectorXd& measured_state) const;
 
-    // Reference-only algebraic expression. Production solve() intentionally does
-    // not call this symbolic tau branch because tau must not depend on X_k/U_k.
+    // Teacher-v1 production expression. For teacher_tca/ke_tca this is part of
+    // the NLP graph and depends on the predicted state X_k.
     casadi::MX dynamicTauCasadi(const casadi::MX& lx, const casadi::MX& ly,
                                 const casadi::MX& vx, const casadi::MX& vy,
                                 double inflated_radius);

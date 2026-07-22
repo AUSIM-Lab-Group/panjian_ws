@@ -25,6 +25,8 @@ METHOD_LABELS = {
     "SEESM_Ours": "Proposed MPC-SECBF",
 }
 
+DYNAMIC_TAU_MODES = {"legacy_gate", "teacher_tca", "teacher_ke_tca"}
+
 
 RUN_FIELDS = [
     "repeat_id",
@@ -140,6 +142,114 @@ def parse_float(value, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
+def parse_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def load_dynamic_tau_contract(run_dir: Path) -> dict[str, object]:
+    # Missing mode identifies archived Legacy-v1 metadata.  Teacher-v1 writes
+    # the mode explicitly, so its post-processing never silently falls back to
+    # the old collision-cone formula.
+    contract: dict[str, object] = {
+        "enabled": False,
+        "mode": "legacy_gate",
+        "ke": 0.3,
+        "t_max": 2.0,
+        "delta_tau": 1.0e-6,
+        "min_speed": 1.0e-6,
+        "min_distance": 1.0e-6,
+        "max_tau": 2.0,
+    }
+    meta_path = run_dir / "meta.yaml"
+    if yaml is None or not meta_path.exists():
+        return contract
+    try:
+        with meta_path.open("r", encoding="utf-8") as handle:
+            meta = yaml.safe_load(handle) or {}
+        configured = meta.get("dynamic_tau") or {}
+        if not isinstance(configured, dict):
+            return contract
+        contract["enabled"] = parse_bool(configured.get("enabled"), False)
+        mode = str(configured.get("mode", "legacy_gate")).strip()
+        contract["mode"] = mode if mode in DYNAMIC_TAU_MODES else "unknown"
+        for output_name, input_name in (
+            ("ke", "Ke"),
+            ("t_max", "Tmax"),
+            ("delta_tau", "delta_tau"),
+            ("min_speed", "min_speed"),
+            ("min_distance", "min_distance"),
+            ("max_tau", "max_tau"),
+        ):
+            value = parse_float(configured.get(input_name))
+            if value is not None and math.isfinite(value):
+                contract[output_name] = value
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        pass
+    return contract
+
+
+def logged_tau(row: dict[str, str]) -> Optional[float]:
+    value = parse_float(row.get("tau"))
+    if value is None or not math.isfinite(value) or value < 0.0:
+        return None
+    validity = str(row.get("tau_valid", "")).strip().lower()
+    if validity in {"0", "false", "no"}:
+        return None
+    return value
+
+
+def recompute_dynamic_tau(
+    distance: float,
+    speed: float,
+    cos_delta: float,
+    inflated_radius: float,
+    contract: dict[str, object],
+) -> Optional[float]:
+    if not bool(contract["enabled"]):
+        return 0.0
+    mode = str(contract["mode"])
+    max_tau = max(0.0, float(contract["max_tau"]))
+    if mode in {"teacher_tca", "teacher_ke_tca"}:
+        delta_tau = max(0.0, float(contract["delta_tau"]))
+        denominator = speed * speed + delta_tau
+        if denominator <= 0.0:
+            return 0.0
+        t_ca = max(0.0, min(-(distance * speed * cos_delta) / denominator, max_tau))
+        if mode == "teacher_ke_tca":
+            return max(0.0, min(float(contract["ke"]) * t_ca, max_tau))
+        return t_ca
+    if mode != "legacy_gate":
+        return None
+    if (
+        distance <= float(contract["min_distance"])
+        or speed <= float(contract["min_speed"])
+        or max_tau <= 0.0
+    ):
+        return 0.0
+    dot = distance * speed * cos_delta
+    cone_value = (
+        dot * dot
+        + (inflated_radius * inflated_radius - distance * distance) * speed * speed
+    )
+    approach_cos = max(0.0, -cos_delta)
+    interaction_time = max(0.0, distance - inflated_radius) * approach_cos / speed
+    if (
+        cos_delta < 0.0
+        and cone_value > 0.0
+        and interaction_time > 0.0
+        and float(contract["t_max"]) - interaction_time > 0.0
+    ):
+        return min(float(contract["ke"]) * interaction_time, max_tau)
+    return 0.0
+
+
 def fmt(value: Optional[float]) -> str:
     if value is None or not math.isfinite(value):
         return ""
@@ -212,35 +322,8 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             "h_eesm_eval_log_error_max": None,
         }
 
-    dynamic_tau = {
-        "ke": 0.3,
-        "t_max": 2.0,
-        "min_speed": 1.0e-6,
-        "min_distance": 1.0e-6,
-        "max_tau": 2.0,
-    }
-    dynamic_tau_enabled = False
-    meta_path = run_dir / "meta.yaml"
-    if yaml is not None and meta_path.exists():
-        try:
-            with meta_path.open("r", encoding="utf-8") as handle:
-                meta = yaml.safe_load(handle) or {}
-            configured = meta.get("dynamic_tau") or {}
-            dynamic_tau_enabled = str(configured.get("enabled", "false")).lower() in {
-                "1", "true", "yes", "on",
-            }
-            for output_name, input_name in (
-                ("ke", "Ke"),
-                ("t_max", "Tmax"),
-                ("min_speed", "min_speed"),
-                ("min_distance", "min_distance"),
-                ("max_tau", "max_tau"),
-            ):
-                value = parse_float(configured.get(input_name))
-                if value is not None:
-                    dynamic_tau[output_name] = value
-        except (OSError, TypeError, ValueError, yaml.YAMLError):
-            pass
+    dynamic_tau = load_dynamic_tau_contract(run_dir)
+    dynamic_tau_enabled = bool(dynamic_tau["enabled"])
 
     time_groups: dict[str, bool] = {}
     h_values: list[float] = []
@@ -273,32 +356,16 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
         beta_bar = max(0.0, float(beta_bar))
         mu = max(0.0, min(1.0, float(mu)))
 
-        tau = 0.0
-        if (
-            distance > dynamic_tau["min_distance"]
-            and speed > dynamic_tau["min_speed"]
-            and dynamic_tau["max_tau"] > 0.0
-        ):
-            dot = distance * speed * cos_delta
-            cone_value = (
-                dot * dot
-                + (inflated_radius * inflated_radius - distance * distance)
-                * speed * speed
+        # A valid logged tau is the value the runtime actually used and takes
+        # precedence.  Older logs without it are reconstructed using their
+        # explicit meta mode (or legacy_gate for mode-less Legacy-v1 data).
+        tau = logged_tau(row)
+        if tau is None:
+            tau = recompute_dynamic_tau(
+                distance, speed, cos_delta, inflated_radius, dynamic_tau
             )
-            approach_cos = max(0.0, -cos_delta)
-            interaction_time = (
-                max(0.0, distance - inflated_radius) * approach_cos / speed
-            )
-            if (
-                cos_delta < 0.0
-                and cone_value > 0.0
-                and interaction_time > 0.0
-                and dynamic_tau["t_max"] - interaction_time > 0.0
-            ):
-                tau = min(
-                    dynamic_tau["ke"] * interaction_time,
-                    dynamic_tau["max_tau"],
-                )
+        if tau is None:
+            continue
 
         norm_squared = (
             distance * distance

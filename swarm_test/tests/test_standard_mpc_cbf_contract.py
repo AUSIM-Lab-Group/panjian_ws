@@ -41,9 +41,10 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     # Dynamic methods use the CasADi kernel and the shared semantic_guard parameter contract.
     assert "semantic_guard/dynamic_tau.hpp" in header
     assert "dynamicTauCasadi" in header and "dynamicTauCasadi" in source
-    assert '<arg name="dynamic_tau_enabled" default="false"/>' in launch
-    assert "obs(5) - curpos(3)" in source
-    assert "obs(6) - curpos(4)" in source
+    assert '<arg name="dynamic_tau_enabled" default="true"/>' in launch
+    assert '<arg name="dynamic_tau_mode" default="teacher_tca"/>' in launch
+    assert "curpos(3) - obs(5)" in source
+    assert "curpos(4) - obs(6)" in source
     assert "lx + tau * vx" in source and "ly + tau * vy" in source
     assert "if (!config_valid)" in source
     assert "return casadi::MX(0.0);" in source
@@ -54,7 +55,7 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     )
     assert "dynamic_tau_enabled" in node
     for param in (
-        "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
+        "dynamic_tau/delta_tau", "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
         "dynamic_tau/min_distance", "dynamic_tau/max_tau",
     ):
         assert param in launch and 'type="double"' in launch
@@ -103,6 +104,8 @@ def test_standard_mpc_cbf_alias_uses_common_stack():
     assert switches["semantic_mode"] == "fixed"
     assert switches["fixed_beta"] == 0.4
     assert switches["cbf_metric"] == "distance"
+    assert switches["dynamic_tau_enabled"] is False
+    assert switches["dynamic_tau_mode"] == "teacher_tca"
     assert switches["front_adsm"] == "false"
     assert switches["global_seesm_enable"] == "false"
 
@@ -123,7 +126,9 @@ def test_top_level_launch_forwards_dynamic_tau_to_mpc():
     )[0]
 
     dynamic_args = (
-        ("dynamic_tau_enabled", "false"),
+        ("dynamic_tau_enabled", "true"),
+        ("dynamic_tau_mode", "teacher_tca"),
+        ("dynamic_tau_delta_tau", "1e-6"),
         ("dynamic_tau_ke", "0.30"),
         ("dynamic_tau_tmax", "2.0"),
         ("dynamic_tau_min_speed", "1e-6"),
@@ -138,7 +143,7 @@ def test_top_level_launch_forwards_dynamic_tau_to_mpc():
     # the existing Guard/global forwarding while passing these args through.
     mpc_launch = (REPO_ROOT / "planner/mpc_secbf/launch/mpc_secbf.launch").read_text(encoding="utf-8")
     for name in (
-        "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
+        "dynamic_tau/delta_tau", "dynamic_tau/Ke", "dynamic_tau/Tmax", "dynamic_tau/min_speed",
         "dynamic_tau/min_distance", "dynamic_tau/max_tau",
     ):
         assert f'<param name="{name}"' in mpc_launch

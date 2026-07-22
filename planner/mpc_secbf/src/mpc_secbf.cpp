@@ -41,9 +41,11 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     side_activation_distance_ = std::max(0.0, side_activation_distance);
 
     kine_equation_ = setKinematicEquation();
-    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s, side_preference=%s, side_weight=%.3f, side_horizon=%d",
+    ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e, side_preference=%s, side_weight=%.3f, side_horizon=%d",
              N_, Ts_, v_max_, gamma_, beta_bar_unknown_, robot_radius_, epsilon_max_,
              max_cbf_obstacles_, dynamic_tau_enabled_ ? "true" : "false",
+             semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode),
+             dynamic_tau_params_.delta_tau,
              side_preference_enabled_ ? "true" : "false", side_weight_, side_horizon_);
 }
 
@@ -113,7 +115,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
     cost += slack_weight_ * casadi::MX::sumsqr(epsilon);
 
     // Soft side-passing preference from Eqs. (35)--(42):
-    // l_i = p_obs - p_robot, n~=l/sqrt(||l||^2+eps_n^2),
+    // l_i = p_robot - p_obs, n~=l/sqrt(||l||^2+eps_n^2),
     // t~=s0*J*n~, z_EE=l+tau*v_rel, phi(-g)=max(0,-t^T z_EE)^2.
     // The term changes only the objective and therefore does not alter the
     // SECBF feasible set. Static obstacles are excluded by the velocity gate.
@@ -170,10 +172,18 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
             if (closest_h < dominant_h) {
                 dominant_idx = obs_idx;
                 dominant_stage = closest_stage;
-                dominant_tau = dynamic_tau_params_.ke * std::min(
-                    dynamic_tau_params_.t_max,
-                    std::max(Ts_, (closest_stage + 1) * Ts_));
-                dominant_tau = std::min(dominant_tau, dynamic_tau_params_.max_tau);
+                // This scalar is retained only for the legacy_gate audit. In
+                // Teacher modes J_side uses the same symbolic stage-wise TCA
+                // expression as the SECBF constraints below.
+                if (dynamic_tau_params_.mode ==
+                    semantic_guard::DynamicTauMode::kLegacyGate) {
+                    dominant_tau = dynamic_tau_params_.ke * std::min(
+                        dynamic_tau_params_.t_max,
+                        std::max(Ts_, (closest_stage + 1) * Ts_));
+                    dominant_tau = std::min(dominant_tau, dynamic_tau_params_.max_tau);
+                } else {
+                    dominant_tau = 0.0;
+                }
                 dominant_h = closest_h;
             }
         }
@@ -190,18 +200,27 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
             for (int k = 0; k < side_horizon_; ++k) {
                 const Eigen::VectorXd obs_k = obs_matrix->col(obs_idx * N_ + k);
                 if (obs_k.size() < 7 || !obs_k.allFinite()) continue;
-                casadi::MX lx = obs_k(0) - X_k_(0, k);
-                casadi::MX ly = obs_k(1) - X_k_(1, k);
-                casadi::MX rvx = obs_k(5) - X_k_(3, k);
-                casadi::MX rvy = obs_k(6) - X_k_(4, k);
+                // Teacher convention: l=p_robot-p_obstacle and
+                // v_rel=v_robot-v_obstacle.
+                casadi::MX lx = X_k_(0, k) - obs_k(0);
+                casadi::MX ly = X_k_(1, k) - obs_k(1);
+                casadi::MX rvx = X_k_(3, k) - obs_k(5);
+                casadi::MX rvy = X_k_(4, k) - obs_k(6);
                 casadi::MX denom = casadi::MX::sqrt(
                     lx * lx + ly * ly + side_epsilon_n_ * side_epsilon_n_);
                 casadi::MX nx = lx / denom;
                 casadi::MX ny = ly / denom;
                 casadi::MX tx = -side_sign_ * ny;
                 casadi::MX ty = side_sign_ * nx;
-                casadi::MX z_x = lx + dominant_tau * rvx;
-                casadi::MX z_y = ly + dominant_tau * rvy;
+                casadi::MX tau_side = dominant_tau;
+                if (dynamic_tau_enabled_ &&
+                    dynamic_tau_params_.mode !=
+                        semantic_guard::DynamicTauMode::kLegacyGate) {
+                    tau_side = dynamicTauCasadi(
+                        lx, ly, rvx, rvy, obs_k(2) + robot_radius_);
+                }
+                casadi::MX z_x = lx + tau_side * rvx;
+                casadi::MX z_y = ly + tau_side * rvy;
                 casadi::MX g_side = tx * z_x + ty * z_y;
                 casadi::MX violation = casadi::MX::fmax(0.0, -g_side);
                 side_cost += side_weight_ * violation * violation;
@@ -249,9 +268,11 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
               });
 
     int choose_num = 0;
+    std::vector<int> selected_obstacle_indices;
     for (const auto& candidate : candidates) {
         if (choose_num >= max_cbf_obstacles_) break;
         const int original_idx = candidate.original_idx;
+        selected_obstacle_indices.push_back(original_idx);
         // Get β for this obstacle
         double beta_i = (original_idx < (int)beta_list.size()) ? beta_list[original_idx] : beta_bar_unknown_;
 
@@ -267,10 +288,14 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
                 obs_k1 = obs_matrix->col(original_idx * N_);
             }
 
-            const double tau_k = dynamic_tau_enabled_
+            const bool freeze_legacy_tau =
+                dynamic_tau_enabled_ &&
+                dynamic_tau_params_.mode ==
+                    semantic_guard::DynamicTauMode::kLegacyGate;
+            const double tau_k = freeze_legacy_tau
                                      ? computeFrozenStageTau(obs_k, *cur_state)
                                      : 0.0;
-            const double tau_k1 = dynamic_tau_enabled_
+            const double tau_k1 = freeze_legacy_tau
                                       ? computeFrozenStageTau(obs_k1, *cur_state)
                                       : 0.0;
             casadi::MX hk = h_cbf(X_cur, obs_k, beta_i, tau_k);
@@ -335,6 +360,71 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
             predict_u.push_back(static_cast<double>(ctrl_sol(0, i)));
             predict_u.push_back(static_cast<double>(ctrl_sol(1, i)));
         }
+
+        // Evaluate the actual stage-wise tau values from the optimized robot
+        // trajectory. This is intentionally done here rather than in the ROS
+        // node, which has only the current measured state.
+        if (dynamic_tau_enabled_) {
+            for (const int original_idx : selected_obstacle_indices) {
+                const double beta_i =
+                    original_idx < static_cast<int>(beta_list.size())
+                        ? beta_list[original_idx]
+                        : beta_bar_unknown_;
+                for (int stage = 0; stage < N_; ++stage) {
+                    const Eigen::VectorXd obs =
+                        obs_matrix->col(original_idx * N_ + stage);
+                    if (obs.size() < 7 || !obs.allFinite()) continue;
+
+                    MpcTauStageAudit audit;
+                    audit.obstacle_index = original_idx;
+                    audit.stage = stage;
+                    audit.beta = beta_i;
+                    audit.lx = static_cast<double>(state_sol(0, stage)) - obs(0);
+                    audit.ly = static_cast<double>(state_sol(1, stage)) - obs(1);
+                    audit.vrel_x = static_cast<double>(state_sol(3, stage)) - obs(5);
+                    audit.vrel_y = static_cast<double>(state_sol(4, stage)) - obs(6);
+
+                    if (dynamic_tau_params_.mode ==
+                        semantic_guard::DynamicTauMode::kLegacyGate) {
+                        const double measured_lx = (*cur_state)(0) - obs(0);
+                        const double measured_ly = (*cur_state)(1) - obs(1);
+                        const double measured_vx = (*cur_state)(3) - obs(5);
+                        const double measured_vy = (*cur_state)(4) - obs(6);
+                        audit.tau_result = semantic_guard::computeDynamicTau(
+                            measured_lx, measured_ly, measured_vx, measured_vy,
+                            obs(2) + robot_radius_, dynamic_tau_params_);
+                    } else {
+                        audit.tau_result = semantic_guard::computeDynamicTau(
+                            audit.lx, audit.ly, audit.vrel_x, audit.vrel_y,
+                            obs(2) + robot_radius_, dynamic_tau_params_);
+                    }
+
+                    const double lookahead_x =
+                        audit.lx + audit.tau_result.tau * audit.vrel_x;
+                    const double lookahead_y =
+                        audit.ly + audit.tau_result.tau * audit.vrel_y;
+                    audit.h_eesm = std::hypot(lookahead_x, lookahead_y) -
+                                   obs(2) - robot_radius_;
+                    audit.h_seesm = audit.h_eesm - beta_i;
+                    last_tau_stage_audit.push_back(audit);
+                }
+            }
+        }
+
+        if (last_side_dominant_obs_index >= 0 &&
+            last_side_dominant_stage >= 0 &&
+            dynamic_tau_params_.mode !=
+                semantic_guard::DynamicTauMode::kLegacyGate) {
+            const auto match = std::find_if(
+                last_tau_stage_audit.begin(), last_tau_stage_audit.end(),
+                [this](const MpcTauStageAudit& value) {
+                    return value.obstacle_index == last_side_dominant_obs_index &&
+                           value.stage == last_side_dominant_stage;
+                });
+            if (match != last_tau_stage_audit.end()) {
+                last_side_dominant_tau = match->tau_result.tau;
+            }
+        }
         int slack_count = 0;
         for (int row = 0; row < static_cast<int>(epsilon_sol.size1()); row++) {
             for (int col = 0; col < static_cast<int>(epsilon_sol.size2()); col++) {
@@ -362,11 +452,12 @@ casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs,
         return casadi::MX(0.0);
     }
 
-    // obs layout: [x, y, radius, radius, theta, vx, vy].
-    casadi::MX lx = obs(0) - curpos(0);
-    casadi::MX ly = obs(1) - curpos(1);
-    casadi::MX vx = obs(5) - curpos(3);
-    casadi::MX vy = obs(6) - curpos(4);
+    // obs layout: [x, y, radius, radius, theta, vx, vy]. Teacher convention:
+    // l=p_robot-p_obstacle and v_rel=v_robot-v_obstacle.
+    casadi::MX lx = curpos(0) - obs(0);
+    casadi::MX ly = curpos(1) - obs(1);
+    casadi::MX vx = curpos(3) - obs(5);
+    casadi::MX vy = curpos(4) - obs(6);
     double obs_radius = obs(2);
 
     // Standard MPC-CBF keeps the instantaneous fixed-distance barrier.
@@ -374,13 +465,20 @@ casadi::MX MPC_SECBF_SOLVE::h_cbf(casadi::MX& curpos, Eigen::VectorXd obs,
         return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;
     }
 
-    // stage_tau is numeric and therefore a constant in the NLP graph. The
-    // relative l/v terms may still depend on the candidate state, but the
-    // non-smooth tau policy is evaluated outside CasADi once per MPC solve.
-    const double finite_stage_tau = std::isfinite(stage_tau)
-                                        ? std::max(0.0, stage_tau)
-                                        : 0.0;
-    const casadi::MX tau(finite_stage_tau);
+    casadi::MX tau = 0.0;
+    if (dynamic_tau_params_.mode ==
+        semantic_guard::DynamicTauMode::kLegacyGate) {
+        // Legacy-v1 reproducibility branch: freeze the old gated value at the
+        // measured state. It is never the Teacher-v1 production path.
+        const double finite_stage_tau = std::isfinite(stage_tau)
+                                            ? std::max(0.0, stage_tau)
+                                            : 0.0;
+        tau = finite_stage_tau;
+    } else {
+        // Teacher-v1: tau is computed inside the NLP from this stage's
+        // predicted l and v_rel, exactly as Eq. (interaction_time).
+        tau = dynamicTauCasadi(lx, ly, vx, vy, obs_radius + robot_radius_);
+    }
     casadi::MX lookahead_x = lx + tau * vx;
     casadi::MX lookahead_y = ly + tau * vy;
     return casadi::MX::sqrt(lookahead_x * lookahead_x + lookahead_y * lookahead_y)
@@ -394,10 +492,10 @@ double MPC_SECBF_SOLVE::computeFrozenStageTau(
         return 0.0;
     }
 
-    const double lx = obs(0) - measured_state(0);
-    const double ly = obs(1) - measured_state(1);
-    const double vx = obs(5) - measured_state(3);
-    const double vy = obs(6) - measured_state(4);
+    const double lx = measured_state(0) - obs(0);
+    const double ly = measured_state(1) - obs(1);
+    const double vx = measured_state(3) - obs(5);
+    const double vy = measured_state(4) - obs(6);
     const semantic_guard::DynamicTauResult result =
         semantic_guard::computeDynamicTau(
             lx, ly, vx, vy, obs(2) + robot_radius_, dynamic_tau_params_);
@@ -414,12 +512,40 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
                                                const casadi::MX& vx,
                                                const casadi::MX& vy,
                                                double inflated_radius) {
-    // Reference-only algebraic expression aligned with
-    // semantic_guard::computeDynamicTau. solve() uses computeFrozenStageTau()
-    // instead, so this non-smooth symbolic branch is not part of the production
-    // NLP. Keeping it here supports algebraic/reference cross-checks.
-    // The guards make every denominator finite while the validity gate preserves the
-    // numeric policy for degenerate inputs and invalid configuration.
+    if (dynamic_tau_params_.mode !=
+        semantic_guard::DynamicTauMode::kLegacyGate) {
+        const bool teacher_config_valid =
+            std::isfinite(dynamic_tau_params_.delta_tau) &&
+            dynamic_tau_params_.delta_tau > 0.0 &&
+            std::isfinite(dynamic_tau_params_.max_tau) &&
+            dynamic_tau_params_.max_tau > 0.0 &&
+            (dynamic_tau_params_.mode !=
+                 semantic_guard::DynamicTauMode::kTeacherKeTca ||
+             (std::isfinite(dynamic_tau_params_.ke) &&
+              dynamic_tau_params_.ke >= 0.0));
+        if (!teacher_config_valid) {
+            return casadi::MX(0.0);
+        }
+
+        // Teacher Eq. (interaction_time). No closing/cone/time gate and no
+        // radius term are permitted in this branch.
+        casadi::MX dot = lx * vx + ly * vy;
+        casadi::MX speed_sq = vx * vx + vy * vy;
+        casadi::MX raw_tca = -dot / (speed_sq + dynamic_tau_params_.delta_tau);
+        casadi::MX clipped_tca = casadi::MX::fmin(
+            dynamic_tau_params_.max_tau,
+            casadi::MX::fmax(0.0, raw_tca));
+        if (dynamic_tau_params_.mode ==
+            semantic_guard::DynamicTauMode::kTeacherKeTca) {
+            return casadi::MX::fmin(
+                dynamic_tau_params_.max_tau,
+                casadi::MX::fmax(0.0, dynamic_tau_params_.ke * clipped_tca));
+        }
+        return clipped_tca;
+    }
+
+    // Legacy-v1 algebraic reference. Production legacy_gate continues to use
+    // the numerically frozen computeDynamicTau() value.
     const double min_distance = std::max(dynamic_tau_params_.min_distance, 1e-12);
     const double min_speed = std::max(dynamic_tau_params_.min_speed, 1e-12);
     const bool config_valid = std::isfinite(inflated_radius) && inflated_radius >= 0.0 &&
@@ -510,6 +636,7 @@ void MPC_SECBF_SOLVE::resetAuditMetrics() {
     last_side_dynamic_obstacle_count = 0;
     last_side_dominant_tau = 0.0;
     last_side_dominant_h = 0.0;
+    last_tau_stage_audit.clear();
 }
 
 void MPC_SECBF_SOLVE::rotateSolution() {

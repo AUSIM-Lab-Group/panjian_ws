@@ -9,11 +9,13 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <stdexcept>
 
 #include "semantic_fusion/SemanticObstacle.h"
 #include "semantic_fusion/SemanticObstacleArray.h"
 #include "semantic_guard/GuardLog.h"
 #include "semantic_guard/dynamic_tau.hpp"
+#include "semantic_guard/planar_velocity.hpp"
 
 class BetaGuardNode {
 public:
@@ -38,12 +40,22 @@ public:
         nh_.param("guard/enabled",        guard_enabled_,   true);
         nh_.param("guard/eta",            eta_,            0.1);
         nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
-        nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
+        nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, true);
+        nh_.param<std::string>("dynamic_tau/mode", dynamic_tau_mode_name_, "teacher_tca");
+        if (!semantic_guard::parseDynamicTauMode(dynamic_tau_mode_name_,
+                                                 &dynamic_tau_params_.mode)) {
+            ROS_FATAL_STREAM("[beta_guard] unsupported dynamic_tau/mode='"
+                             << dynamic_tau_mode_name_
+                             << "'; expected legacy_gate, teacher_tca, or teacher_ke_tca");
+            throw std::invalid_argument("unsupported dynamic_tau/mode");
+        }
+        nh_.param("dynamic_tau/delta_tau", dynamic_tau_params_.delta_tau, 1e-6);
         nh_.param("dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
         nh_.param("dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
         nh_.param("dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
         nh_.param("dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
         nh_.param("dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
+        validateDynamicTauConfig();
         nh_.param("guard/tau",            tau_,            0.20);
         nh_.param<std::string>("semantic_mode", semantic_mode_, "full");
         nh_.param("guard/enable_rate_limit", enable_rate_limit_, true);
@@ -65,7 +77,11 @@ public:
                           << "guard_upper_bound,guard_passed,guard_status,"
                           << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
-                          << "h_ee,h_see,R_base,R_sem,tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n";
+                          << "h_ee,h_see,R_base,R_sem,tau,tau_mode,delta_tau,"
+                          << "relative_dot,speed_squared,denominator,t_ca_raw,t_ca_clipped,"
+                          << "tau_unclipped,lower_clipped,upper_clipped,ke_scaled,"
+                          << "T_i,f_r,f_v,f_T,tau_valid,tau_reason,"
+                          << "h_phys,h_eesm,h_seesm,tau_computed,tau_active\n";
                 ROS_INFO("Guard log writing to: %s", log_path.c_str());
             }
         }
@@ -81,8 +97,11 @@ public:
         total_rollbacks_ = 0;
         has_odom_ = false;
 
-        ROS_INFO("BetaGuardNode initialized. guard_enabled=%s, semantic_mode=%s, eta=%.2f, max_delta_beta=%.2f, tau=%.2f",
-                 guard_enabled_ ? "true" : "false", semantic_mode_.c_str(), eta_, max_delta_beta_, tau_);
+        ROS_INFO("BetaGuardNode initialized. guard_enabled=%s, semantic_mode=%s, eta=%.2f, max_delta_beta=%.2f, tau=%.2f, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e",
+                 guard_enabled_ ? "true" : "false", semantic_mode_.c_str(), eta_, max_delta_beta_, tau_,
+                 dynamic_tau_enabled_ ? "true" : "false",
+                 semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode),
+                 dynamic_tau_params_.delta_tau);
     }
 
     ~BetaGuardNode() {
@@ -90,12 +109,55 @@ public:
     }
 
 private:
+    void validateDynamicTauConfig() const {
+        if (!dynamic_tau_enabled_) return;
+        const auto mode = dynamic_tau_params_.mode;
+        const bool legacy_valid = std::isfinite(dynamic_tau_params_.ke) &&
+            std::isfinite(dynamic_tau_params_.t_max) &&
+            std::isfinite(dynamic_tau_params_.min_speed) &&
+            std::isfinite(dynamic_tau_params_.min_distance) &&
+            std::isfinite(dynamic_tau_params_.max_tau) &&
+            dynamic_tau_params_.ke >= 0.0 && dynamic_tau_params_.t_max >= 0.0 &&
+            dynamic_tau_params_.min_speed >= 0.0 &&
+            dynamic_tau_params_.min_distance >= 0.0 &&
+            dynamic_tau_params_.max_tau > 0.0;
+        const bool teacher_valid = std::isfinite(dynamic_tau_params_.delta_tau) &&
+            std::isfinite(dynamic_tau_params_.max_tau) &&
+            dynamic_tau_params_.delta_tau > 0.0 &&
+            dynamic_tau_params_.max_tau > 0.0 &&
+            (mode != semantic_guard::DynamicTauMode::kTeacherKeTca ||
+             (std::isfinite(dynamic_tau_params_.ke) && dynamic_tau_params_.ke > 0.0));
+        const bool valid = mode == semantic_guard::DynamicTauMode::kLegacyGate
+            ? legacy_valid : teacher_valid;
+        if (!valid) {
+            ROS_FATAL("[beta_guard] invalid dynamic tau config for mode=%s: Ke=%.9g Tmax=%.9g min_speed=%.9g min_distance=%.9g max_tau=%.9g delta_tau=%.9g",
+                      semantic_guard::dynamicTauModeName(mode), dynamic_tau_params_.ke,
+                      dynamic_tau_params_.t_max, dynamic_tau_params_.min_speed,
+                      dynamic_tau_params_.min_distance, dynamic_tau_params_.max_tau,
+                      dynamic_tau_params_.delta_tau);
+            throw std::invalid_argument("invalid dynamic tau config");
+        }
+    }
+
     void odomCb(const nav_msgs::OdometryConstPtr& msg) {
         robot_pos_ << msg->pose.pose.position.x,
                       msg->pose.pose.position.y,
                       msg->pose.pose.position.z;
-        robot_vel_ << msg->twist.twist.linear.x,
-                      msg->twist.twist.linear.y;
+        // nav_msgs/Odometry twist is expressed in child_frame_id (the robot
+        // base frame in this stack). Rotate both planar components into the
+        // world frame before combining them with world-frame obstacle states.
+        double world_vx = 0.0;
+        double world_vy = 0.0;
+        if (!semantic_guard::bodyPlanarVelocityToWorld(
+                msg->twist.twist.linear.x, msg->twist.twist.linear.y,
+                msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
+                msg->pose.pose.orientation.z, msg->pose.pose.orientation.w,
+                &world_vx, &world_vy)) {
+            has_odom_ = false;
+            ROS_ERROR_THROTTLE(1.0, "[beta_guard] invalid odometry quaternion/twist");
+            return;
+        }
+        robot_vel_ << world_vx, world_vy;
         has_odom_ = true;
     }
 
@@ -121,8 +183,10 @@ private:
             // Step 2: Compute h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
             Eigen::Vector2d obs_pos(obs.position.x, obs.position.y);
             Eigen::Vector2d obs_vel(obs.velocity.x, obs.velocity.y);
-            Eigen::Vector2d p_rel = obs_pos - robot_pos_.head<2>();
-            Eigen::Vector2d v_rel = obs_vel - robot_vel_;
+            // Teacher convention: l=p_robot-p_obstacle and
+            // v_rel=v_robot-v_obstacle.
+            Eigen::Vector2d p_rel = robot_pos_.head<2>() - obs_pos;
+            Eigen::Vector2d v_rel = robot_vel_ - obs_vel;
             double d_i = p_rel.norm();
             double rel_v_norm = v_rel.norm();
             double cos_delta = 0.0;
@@ -149,7 +213,12 @@ private:
                 tau_result.valid = true;
                 tau_result.reason = "fixed_config";
             }
+            const bool tau_computed = !dynamic_tau_enabled_ ||
+                                      tau_result.computed;
+            const bool tau_active = std::isfinite(tau_result.tau) &&
+                                    tau_result.tau > 0.0;
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_result.tau * v_rel;
+            double h_phys = p_rel.norm() - obs.radius - robot_radius_;
             double h_ee = lookahead_rel_pos.norm() - obs.radius - robot_radius_;
             double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
 
@@ -226,10 +295,24 @@ private:
                           << cos_delta << "," << obs.density_norm << "," << rho_norm << ",0,"
                           << h_ee << "," << h_see << ","
                           << r_base << "," << r_sem << ","
-                          << tau_result.tau << "," << tau_result.T_i << ","
+                          << tau_result.tau << ","
+                          << semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode) << ","
+                          << dynamic_tau_params_.delta_tau << ","
+                          << tau_result.relative_dot << ","
+                          << tau_result.speed_squared << ","
+                          << tau_result.denominator << ","
+                          << tau_result.t_ca_raw << ","
+                          << tau_result.t_ca_clipped << ","
+                          << tau_result.tau_unclipped << ","
+                          << tau_result.lower_clipped << ","
+                          << tau_result.upper_clipped << ","
+                          << tau_result.ke_scaled << ","
+                          << tau_result.T_i << ","
                           << tau_result.f_r << "," << tau_result.f_v << ","
                           << tau_result.f_T << "," << tau_result.valid << ","
-                          << sanitizeCsvField(tau_result.reason) << "\n";
+                          << sanitizeCsvField(tau_result.reason) << ","
+                          << h_phys << "," << h_ee << "," << h_see << ","
+                          << tau_computed << "," << tau_active << "\n";
             }
         }
 
@@ -279,6 +362,7 @@ private:
     bool guard_enabled_, enable_rate_limit_, enable_available_projection_, enable_guard_fallback_;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
+    std::string dynamic_tau_mode_name_ = "teacher_tca";
     std::string semantic_mode_;
 
     // State

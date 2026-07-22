@@ -18,7 +18,9 @@
   <arg name="side_sign" default="1.0"/>
   <arg name="side_min_obstacle_speed" default="0.001"/>
   <arg name="side_activation_distance" default="3.0"/>
-  <arg name="dynamic_tau_enabled" default="false"/>
+  <arg name="dynamic_tau_enabled" default="true"/>
+  <arg name="dynamic_tau_mode" default="teacher_tca"/>
+  <arg name="dynamic_tau_delta_tau" default="1e-6"/>
   <arg name="dynamic_tau_ke" default="0.30"/>
   <arg name="dynamic_tau_tmax" default="2.0"/>
   <arg name="dynamic_tau_min_speed" default="1e-6"/>
@@ -36,6 +38,7 @@
   <arg name="planner_log_path" default=""/>
   <arg name="timing_log_path" default=""/>
   <arg name="mpc_margin_log_path" default=""/>
+  <arg name="tau_stage_log_path" default=""/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
@@ -60,6 +63,8 @@
     <param name="mpc/side_min_obstacle_speed" value="$(arg side_min_obstacle_speed)"/>
     <param name="mpc/side_activation_distance" value="$(arg side_activation_distance)"/>
     <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+    <param name="dynamic_tau/mode" value="$(arg dynamic_tau_mode)"/>
+    <param name="dynamic_tau/delta_tau" value="$(arg dynamic_tau_delta_tau)" type="double"/>
     <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
     <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
     <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
@@ -68,6 +73,7 @@
     <param name="planner_log_path" value="$(arg planner_log_path)"/>
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
     <param name="mpc_margin_log_path" value="$(arg mpc_margin_log_path)"/>
+    <param name="tau_stage_log_path" value="$(arg tau_stage_log_path)"/>
 
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <remap from="/global_path" to="$(arg global_path_topic)"/>

@@ -9,6 +9,14 @@
   <arg name="obstacle_params_file" default="$(find dynamic_simulator)/config/obstacles_param.yaml"/>
   <arg name="record_data" default="false"/>
   <arg name="obstacle_classes" default="[unknown]"/>
+  <arg name="dynamic_tau_enabled" default="true"/>
+  <arg name="dynamic_tau_mode" default="teacher_tca"/>
+  <arg name="dynamic_tau_delta_tau" default="1e-6"/>
+  <arg name="dynamic_tau_ke" default="0.30"/>
+  <arg name="dynamic_tau_tmax" default="2.0"/>
+  <arg name="dynamic_tau_min_speed" default="1e-6"/>
+  <arg name="dynamic_tau_min_distance" default="1e-6"/>
+  <arg name="dynamic_tau_max_tau" default="2.0"/>
   <arg name="goal_x" default="21.0"/>
   <arg name="goal_y" default="0.0"/>
   <arg name="use_reference_path" default="false"/>
@@ -55,7 +63,14 @@
     <param name="output_dir" value="$(arg output_dir)" type="string"/>
     <param name="pre_step" value="20" type="int"/>
     <param name="robot_radius" value="0.4" type="double"/>
-    <param name="guard_tau" value="0.2" type="double"/>
+    <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)" type="bool"/>
+    <param name="dynamic_tau/mode" value="$(arg dynamic_tau_mode)" type="string"/>
+    <param name="dynamic_tau/delta_tau" value="$(arg dynamic_tau_delta_tau)" type="double"/>
+    <param name="dynamic_tau/Ke" value="$(arg dynamic_tau_ke)" type="double"/>
+    <param name="dynamic_tau/Tmax" value="$(arg dynamic_tau_tmax)" type="double"/>
+    <param name="dynamic_tau/min_speed" value="$(arg dynamic_tau_min_speed)" type="double"/>
+    <param name="dynamic_tau/min_distance" value="$(arg dynamic_tau_min_distance)" type="double"/>
+    <param name="dynamic_tau/max_tau" value="$(arg dynamic_tau_max_tau)" type="double"/>
     <param name="obstacle_classes" value="$(arg obstacle_classes)" type="string"/>
     <param name="odom_topic" value="/robot1/odom" type="string"/>
     <param name="cmd_vel_topic" value="/cmd_vel1" type="string"/>

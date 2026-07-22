@@ -14,6 +14,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 
 // #include <costmap_converter/ObstacleArrayMsg.h>   // TEB预测轨迹消息类型
@@ -68,12 +69,22 @@ public:
     nh.param("search/global_seesm_tau", tau_global_, 0.20);
     nh.param("search/global_seesm_margin_timeout", global_seesm_margin_timeout_, 0.50);
     nh.param<std::string>("search/global_seesm_log_path", global_seesm_log_path_, std::string(""));
-    nh.param("search/dynamic_tau_enabled", dynamic_tau_enabled_, false);
+    nh.param("search/dynamic_tau_enabled", dynamic_tau_enabled_, true);
+    nh.param<std::string>("search/dynamic_tau/mode", dynamic_tau_mode_name_, "teacher_tca");
+    if (!semantic_guard::parseDynamicTauMode(dynamic_tau_mode_name_,
+                                             &dynamic_tau_params_.mode)) {
+      ROS_FATAL_STREAM("[global_seesm] unsupported search/dynamic_tau/mode='"
+                       << dynamic_tau_mode_name_
+                       << "'; expected legacy_gate, teacher_tca, or teacher_ke_tca");
+      throw std::invalid_argument("unsupported search/dynamic_tau/mode");
+    }
+    nh.param("search/dynamic_tau/delta_tau", dynamic_tau_params_.delta_tau, 1e-6);
     nh.param("search/dynamic_tau/Ke", dynamic_tau_params_.ke, 0.30);
     nh.param("search/dynamic_tau/Tmax", dynamic_tau_params_.t_max, 2.0);
     nh.param("search/dynamic_tau/min_speed", dynamic_tau_params_.min_speed, 1e-6);
     nh.param("search/dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
     nh.param("search/dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
+    validateDynamicTauConfig();
 
     ROS_WARN("obs_manager pre_step is: %d", pre_step);
     ROS_WARN("obs_manager step_time is: %f", step_time);
@@ -94,8 +105,11 @@ public:
       applied_margin_sub_ = nh.subscribe("/safety_margin/beta_applied_final", 10,
                                          &Obs_Manager::appliedMarginCallback, this);
       prepareGlobalSeesmLog();
-      ROS_WARN("global SEESM check enabled, tau=%f, margin_timeout=%f", tau_global_,
-               global_seesm_margin_timeout_);
+      ROS_WARN("global SEESM check enabled, tau=%f, margin_timeout=%f, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e",
+               tau_global_, global_seesm_margin_timeout_,
+               dynamic_tau_enabled_ ? "true" : "false",
+               semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode),
+               dynamic_tau_params_.delta_tau);
     }
 
     // tebTraj_pub = nh.advertise<costmap_converter::ObstacleArrayMsg>("move_base/TebLocalPlannerROS/obstacles", 100, true);
@@ -302,24 +316,27 @@ public:
             dynamic_tau_params_);
       } else {
         tau_result.tau = tau_global_;
+        tau_result.computed = true;
         tau_result.valid = true;
         tau_result.reason = "fixed_config";
       }
 
-      double h_ee = p_rel.norm() - radius - robot_R;
-      double h_see = (p_rel + tau_result.tau * v_rel).norm() - radius - robot_R - beta_applied;
+      const double h_phys = p_rel.norm() - radius - robot_R;
+      const double h_eesm =
+          (p_rel + tau_result.tau * v_rel).norm() - radius - robot_R;
+      const double h_seesm = h_eesm - beta_applied;
 
-      const bool physical_rejected = h_ee <= 0.0;
-      const bool seesm_rejected = h_see <= 0.0;
+      const bool physical_rejected = h_phys <= 0.0;
+      const bool seesm_rejected = h_seesm <= 0.0;
       const bool obstacle_rejected = physical_rejected || seesm_rejected;
       if (physical_rejected) {
-        appendReason(reason, "h_ee");
+        appendReason(reason, "h_phys");
       } else if (seesm_rejected) {
-        appendReason(reason, "h_see");
+        appendReason(reason, "h_seesm");
       }
 
       writeGlobalSeesmLog(prediction_time.toSec(), obstacle->Id_, beta_applied, accepted_source,
-                          margin_age_ms, h_ee, h_see, tau_result,
+                          margin_age_ms, h_phys, h_eesm, h_seesm, tau_result,
                           obstacle_rejected && !shot_check,
                           obstacle_rejected && shot_check, reason);
       rejected = rejected || obstacle_rejected;
@@ -329,6 +346,37 @@ public:
   }
 
 private:
+
+  void validateDynamicTauConfig() const
+  {
+    if (!dynamic_tau_enabled_) return;
+    const auto mode = dynamic_tau_params_.mode;
+    const bool legacy_valid = std::isfinite(dynamic_tau_params_.ke) &&
+        std::isfinite(dynamic_tau_params_.t_max) &&
+        std::isfinite(dynamic_tau_params_.min_speed) &&
+        std::isfinite(dynamic_tau_params_.min_distance) &&
+        std::isfinite(dynamic_tau_params_.max_tau) &&
+        dynamic_tau_params_.ke >= 0.0 && dynamic_tau_params_.t_max >= 0.0 &&
+        dynamic_tau_params_.min_speed >= 0.0 &&
+        dynamic_tau_params_.min_distance >= 0.0 &&
+        dynamic_tau_params_.max_tau > 0.0;
+    const bool teacher_valid = std::isfinite(dynamic_tau_params_.delta_tau) &&
+        std::isfinite(dynamic_tau_params_.max_tau) &&
+        dynamic_tau_params_.delta_tau > 0.0 &&
+        dynamic_tau_params_.max_tau > 0.0 &&
+        (mode != semantic_guard::DynamicTauMode::kTeacherKeTca ||
+         (std::isfinite(dynamic_tau_params_.ke) && dynamic_tau_params_.ke > 0.0));
+    const bool valid = mode == semantic_guard::DynamicTauMode::kLegacyGate
+        ? legacy_valid : teacher_valid;
+    if (!valid) {
+      ROS_FATAL("[global_seesm] invalid dynamic tau config for mode=%s: Ke=%.9g Tmax=%.9g min_speed=%.9g min_distance=%.9g max_tau=%.9g delta_tau=%.9g",
+                semantic_guard::dynamicTauModeName(mode), dynamic_tau_params_.ke,
+                dynamic_tau_params_.t_max, dynamic_tau_params_.min_speed,
+                dynamic_tau_params_.min_distance, dynamic_tau_params_.max_tau,
+                dynamic_tau_params_.delta_tau);
+      throw std::invalid_argument("invalid search/dynamic_tau config");
+    }
+  }
 
   bool is_use_GroundTruth;
   bool is_play_bag;
@@ -345,6 +393,7 @@ private:
   double step_time;
   double tau_global_ = 0.20;
   semantic_guard::DynamicTauParams dynamic_tau_params_;
+  std::string dynamic_tau_mode_name_ = "teacher_tca";
   double global_seesm_margin_timeout_ = 0.50;
   std::string global_seesm_log_path_;
   std::ofstream global_seesm_log_stream_;
@@ -419,8 +468,10 @@ private:
 
     global_seesm_log_stream_
         << "t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"
-        << "margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms,"
-        << "tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\n";
+        << "margin_age_ms,h_phys,h_eesm,h_seesm,primitive_rejected,shot_rejected,reason,global_replan_ms,"
+        << "tau,tau_mode,delta_tau,relative_dot,speed_squared,denominator,t_ca_raw,t_ca_clipped,"
+        << "tau_unclipped,lower_clipped,upper_clipped,ke_scaled,"
+        << "T_i,f_r,f_v,f_T,tau_active,tau_valid,tau_reason\n";
     global_seesm_log_stream_.flush();
   }
 
@@ -447,8 +498,9 @@ private:
                            double beta_applied,
                            const std::string& accepted_source,
                            double margin_age_ms,
-                           double h_ee,
-                           double h_see,
+                           double h_phys,
+                           double h_eesm,
+                           double h_seesm,
                            const semantic_guard::DynamicTauResult& tau_result,
                            bool primitive_rejected,
                            bool shot_rejected,
@@ -472,18 +524,31 @@ private:
                              << beta_applied << ","
                              << sanitizeCsvField(accepted_source) << ","
                              << margin_age_ms << ","
-                             << h_ee << ","
-                             << h_see << ","
+                             << h_phys << ","
+                             << h_eesm << ","
+                             << h_seesm << ","
                              << (primitive_rejected ? 1 : 0) << ","
                              << (shot_rejected ? 1 : 0) << ","
                              << sanitizeCsvField(reason) << ","
                              << global_replan_ms << ","
                              << tau_result.tau << ","
+                             << semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode) << ","
+                             << dynamic_tau_params_.delta_tau << ","
+                             << tau_result.relative_dot << ","
+                             << tau_result.speed_squared << ","
+                             << tau_result.denominator << ","
+                             << tau_result.t_ca_raw << ","
+                             << tau_result.t_ca_clipped << ","
+                             << tau_result.tau_unclipped << ","
+                             << tau_result.lower_clipped << ","
+                             << tau_result.upper_clipped << ","
+                             << tau_result.ke_scaled << ","
                              << tau_result.T_i << ","
                              << tau_result.f_r << ","
                              << tau_result.f_v << ","
                              << tau_result.f_T << ","
                              << tau_result.valid << ","
+                             << tau_result.computed << ","
                              << sanitizeCsvField(tau_result.reason) << "\n";
     global_seesm_log_stream_.flush();
   }

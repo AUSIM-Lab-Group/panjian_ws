@@ -18,15 +18,20 @@ RUNNER_PATH = REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
 CSV_CHECKER_PATH = REPO_ROOT / "swarm_test/scripts/check_experiment_csv_fields.py"
 DYNAMIC_TAU_SWITCHES = (
     "dynamic_tau_enabled",
+    "dynamic_tau_mode",
+    "dynamic_tau_delta_tau",
     "dynamic_tau_ke",
     "dynamic_tau_tmax",
     "dynamic_tau_min_speed",
     "dynamic_tau_min_distance",
     "dynamic_tau_max_tau",
 )
-DYNAMIC_TAU_METADATA = ("Ke", "Tmax", "min_speed", "min_distance", "max_tau")
+DYNAMIC_TAU_METADATA = (
+    "delta_tau", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
+)
 DYNAMIC_TAU_NUMERIC_PARAMS = tuple(f"dynamic_tau/{field}" for field in DYNAMIC_TAU_METADATA)
 METADATA_TO_SWITCH = {
+    "delta_tau": "dynamic_tau_delta_tau",
     "Ke": "dynamic_tau_ke",
     "Tmax": "dynamic_tau_tmax",
     "min_speed": "dynamic_tau_min_speed",
@@ -34,8 +39,12 @@ METADATA_TO_SWITCH = {
     "max_tau": "dynamic_tau_max_tau",
 }
 EXPECTED_DYNAMIC_TAU_METADATA = {
-    "formula": "tau=f_r*f_v*f_T*Ke*T_i",
-    "h_ee": "||l+tau*v||-R_obs-R_robot",
+    "mode": "teacher_tca",
+    "formula": "tau=clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau)",
+    "relative_position_convention": "l=p_robot-p_obstacle",
+    "relative_velocity_convention": "v_rel=v_robot-v_obstacle",
+    "prediction_sign": "l(t+tau)=l+tau*v_rel",
+    "h_ee": "||l+tau*v_rel||-R_obs-R_robot",
     "h_see": "h_ee-beta",
 }
 BASELINE_CONTRACT = (
@@ -231,6 +240,92 @@ CHECKER_HEADERS = {
     "event_log.csv": ["t", "event", "detail"],
 }
 TAU_HEADERS = ["tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"]
+TAU_STAGE_HEADERS = [
+    "t", "obs_id", "stage", "tau_mode", "lx", "ly", "vrel_x", "vrel_y",
+    "tca_raw", "tca_clipped", "tau", "tau_active", "beta", "h_eesm",
+    "h_seesm", "tau_valid", "tau_reason",
+]
+
+
+def teacher_tau_metadata(enabled=True, mode="teacher_tca", policy=None):
+    if policy is None:
+        policy = "symbolic_stagewise" if enabled else "disabled"
+    formula = (
+        "tau=clip(Ke*clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau),"
+        "0,max_tau)"
+        if mode == "teacher_ke_tca"
+        else "tau=clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau)"
+    )
+    return {
+        "dynamic_tau": {
+            "enabled": enabled,
+            "mode": mode,
+            "delta_tau": 1.0e-6,
+            "Ke": 0.3,
+            "Tmax": 2.0,
+            "min_speed": 1.0e-6,
+            "min_distance": 1.0e-6,
+            "max_tau": 2.0,
+            "formula": formula,
+            "relative_position_convention": "l=p_robot-p_obstacle",
+            "relative_velocity_convention": "v_rel=v_robot-v_obstacle",
+            "prediction_sign": "l(t+tau)=l+tau*v_rel",
+            "mpc_stage_policy": policy,
+        }
+    }
+
+
+def teacher_tau_stage_row(
+    mode="teacher_tca", *, lx=2.0, ly=0.0, vrel_x=-1.0, vrel_y=0.0,
+    delta_tau=1.0e-6, max_tau=2.0, ke=0.3, overrides=None,
+):
+    relative_dot = lx * vrel_x + ly * vrel_y
+    speed_squared = vrel_x * vrel_x + vrel_y * vrel_y
+    tca_raw = -relative_dot / (speed_squared + delta_tau)
+    tca_clipped = min(max(tca_raw, 0.0), max_tau)
+    tau_unclipped = ke * tca_clipped if mode == "teacher_ke_tca" else tca_clipped
+    tau = min(tau_unclipped, max_tau)
+    active = tau > 0.0
+    if tca_clipped <= 0.0:
+        reason = "teacher_receding" if relative_dot > 0.0 else "teacher_tangent"
+    elif mode == "teacher_ke_tca":
+        reason = (
+            "teacher_ke_tca_clipped"
+            if tau_unclipped > max_tau
+            else "teacher_ke_tca_active"
+        )
+    else:
+        reason = "teacher_tca_clipped" if tca_raw > max_tau else "teacher_tca_active"
+    row = {
+        "t": "0.1",
+        "obs_id": "7",
+        "stage": "0",
+        "tau_mode": mode,
+        "lx": f"{lx:.12g}",
+        "ly": f"{ly:.12g}",
+        "vrel_x": f"{vrel_x:.12g}",
+        "vrel_y": f"{vrel_y:.12g}",
+        "tca_raw": f"{tca_raw:.12g}",
+        "tca_clipped": f"{tca_clipped:.12g}",
+        "tau": f"{tau:.12g}",
+        "tau_active": "1" if active else "0",
+        "beta": "0.4",
+        "h_eesm": "0.9",
+        "h_seesm": "0.5",
+        "tau_valid": "1",
+        "tau_reason": reason,
+    }
+    row.update(overrides or {})
+    return row
+
+
+def write_tau_stage_fixture(run_dir, mode="teacher_tca", missing=(), rows=None):
+    headers = [field for field in TAU_STAGE_HEADERS if field not in set(missing)]
+    with (run_dir / "tau_stage_log.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        for row in rows if rows is not None else [teacher_tau_stage_row(mode)]:
+            writer.writerow({field: row[field] for field in headers})
 
 
 def write_checker_fixture(run_dir, tau_files=(), metadata_enabled=None, partial_tau=False):
@@ -794,56 +889,62 @@ def test_shared_policy_is_the_numeric_source_of_truth():
     assert "max_tau" in header
 
 
-def test_mpc_dynamic_tau_is_frozen_per_obstacle_stage():
+def test_mpc_teacher_tau_is_symbolic_stagewise_and_only_legacy_is_frozen():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
     header = read("planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h")
     solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solve(")
     h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
 
+    assert "const bool freeze_legacy_tau" in solve
+    assert "DynamicTauMode::kLegacyGate" in solve
     assert "computeFrozenStageTau(obs_k, *cur_state)" in solve
     assert "computeFrozenStageTau(obs_k1, *cur_state)" in solve
     assert "h_cbf(X_cur, obs_k, beta_i, tau_k)" in solve
     assert "h_cbf(X_nxt, obs_k1, beta_i, tau_k1)" in solve
-    assert "computeDynamicTau" in source
-    assert "obs(0) - measured_state(0)" in source
-    assert "obs(5) - measured_state(3)" in source
-    assert "std::isfinite(result.tau)" in source
-    assert "using zero lookahead" in source
 
     assert "double stage_tau" in header
-    assert "dynamicTauCasadi(lx, ly, vx, vy" not in h_cbf
+    assert "if (dynamic_tau_params_.mode ==" in h_cbf
+    assert "DynamicTauMode::kLegacyGate" in h_cbf
     assert "const double finite_stage_tau" in h_cbf
-    assert "const casadi::MX tau(finite_stage_tau)" in h_cbf
+    assert "tau = finite_stage_tau" in h_cbf
+    assert "tau = dynamicTauCasadi(lx, ly, vx, vy" in h_cbf
     assert "lx + tau * vx" in h_cbf
     assert "ly + tau * vy" in h_cbf
+    assert "last_tau_stage_audit" in header
+    assert "state_sol(0, stage)" in solve
+    assert "state_sol(3, stage)" in solve
 
 
-def test_mpc_reference_symbolic_tau_is_not_the_production_solve_path():
+def test_mpc_teacher_symbolic_tau_is_the_production_constraint_path():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
-    solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solve(")
+    h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
     helper = cpp_function_body_raw(
         source, "casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi("
     )
 
-    assert "dynamicTauCasadi" not in solve
-    assert "Reference-only algebraic expression" in helper
-    assert "semantic_guard::computeDynamicTau" in source
+    assert "dynamicTauCasadi" in h_cbf
+    assert "Teacher-v1" in h_cbf
+    assert "raw_tca = -dot / (speed_sq + dynamic_tau_params_.delta_tau)" in helper
+    teacher_branch = helper.split("// Legacy-v1 algebraic reference", 1)[0]
+    assert "inflated_radius" not in strip_cpp_comments_only(teacher_branch)
 
 
-def test_mpc_reference_symbolic_tau_returns_clamped_tau():
+def test_mpc_teacher_symbolic_tau_clips_tca_then_applies_explicit_ke_mode():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
     helper = cpp_function_body_raw(
         source, "casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi("
     )
 
-    assert "casadi::MX raw_tau =" in helper
-    assert "casadi::MX tau = casadi::MX::if_else(raw_tau < max_tau, raw_tau, max_tau);" in helper
-    assert "return casadi::MX::fmax(0.0, tau);" in helper
+    assert "casadi::MX raw_tca =" in helper
+    assert "casadi::MX clipped_tca =" in helper
+    assert "DynamicTauMode::kTeacherKeTca" in helper
+    assert "dynamic_tau_params_.ke * clipped_tca" in helper
+    assert "return clipped_tca" in helper
     assert "lookahead_x" not in helper
     assert "lookahead_y" not in helper
 
 
-def test_mpc_stage_frozen_tau_keeps_standard_instantaneous_path():
+def test_mpc_standard_distance_keeps_instantaneous_path():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
     h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
 
@@ -852,7 +953,6 @@ def test_mpc_stage_frozen_tau_keeps_standard_instantaneous_path():
         "return casadi::MX::sqrt(lx * lx + ly * ly) - obs_radius - robot_radius_ - beta_i;"
         in h_cbf
     )
-    assert "dynamicTauCasadi" not in h_cbf
     assert "R_safe" not in source
     assert "epsilon" in source
 
@@ -874,6 +974,7 @@ def test_margin_launch_dynamic_tau_numeric_params_are_explicit_doubles():
             assert params[name].attrib.get("type") == "double", (
                 f"dynamic tau param must be type=double: {relative_path}: {name}"
             )
+        assert "dynamic_tau/mode" in params
 
 
 def test_runner_import_context_is_reentrant_and_isolated():
@@ -953,6 +1054,252 @@ def test_csv_checker_accepts_complete_tau_fields_when_metadata_enables_dynamic_t
     assert result.returncode == 0, result.stdout
 
 
+def test_csv_checker_requires_stagewise_tau_log_for_teacher_mode(tmp_path):
+    run_dir = tmp_path / "teacher_missing_stage_log"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert "missing file: tau_stage_log.csv" in result.stdout
+
+
+def test_csv_checker_accepts_teacher_stagewise_tau_contract(tmp_path):
+    run_dir = tmp_path / "teacher_complete"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    write_tau_stage_fixture(run_dir)
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_csv_checker_rejects_empty_teacher_stagewise_tau_log(tmp_path):
+    run_dir = tmp_path / "teacher_empty_stage"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    write_tau_stage_fixture(run_dir, rows=[])
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert "no data rows for enabled Teacher dynamic tau" in result.stdout
+
+
+@pytest.mark.parametrize("missing", ("lx", "ly", "vrel_x", "vrel_y", "tau_active"))
+def test_csv_checker_requires_teacher_stage_replay_fields(tmp_path, missing):
+    run_dir = tmp_path / f"teacher_missing_{missing}"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    write_tau_stage_fixture(run_dir, missing={missing})
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert missing in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    (("tca_raw", "-2.0"), ("tca_clipped", "0.0"), ("tau", "0.6")),
+)
+def test_csv_checker_recomputes_teacher_stage_formula(tmp_path, field, wrong_value):
+    run_dir = tmp_path / f"teacher_wrong_{field}"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    row = teacher_tau_stage_row(overrides={field: wrong_value})
+    write_tau_stage_fixture(run_dir, rows=[row])
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert f"{field}=" in result.stdout
+    assert "does not match recomputed" in result.stdout
+
+
+def test_csv_checker_accepts_computed_but_inactive_teacher_zero_tau(tmp_path):
+    run_dir = tmp_path / "teacher_receding"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    row = teacher_tau_stage_row(lx=1.0, vrel_x=1.0)
+    assert row["tau"] == "0"
+    assert row["tau_valid"] == "1"
+    assert row["tau_active"] == "0"
+    assert row["tau_reason"] == "teacher_receding"
+    write_tau_stage_fixture(run_dir, rows=[row])
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    (
+        ({"tau_valid": "0"}, "tau_valid must be true"),
+        ({"tau_active": "1"}, "does not match recomputed active=False"),
+        ({"tau_reason": "teacher_tangent"}, "does not match recomputed 'teacher_receding'"),
+    ),
+)
+def test_csv_checker_rejects_inconsistent_teacher_zero_tau_state(
+    tmp_path, overrides, expected_error
+):
+    run_dir = tmp_path / "teacher_bad_zero_state"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    row = teacher_tau_stage_row(lx=1.0, vrel_x=1.0, overrides=overrides)
+    write_tau_stage_fixture(run_dir, rows=[row])
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert expected_error in result.stdout
+
+
+def test_csv_checker_recomputes_explicit_ke_teacher_diagnostic(tmp_path):
+    run_dir = tmp_path / "teacher_ke"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata(mode="teacher_ke_tca")),
+        encoding="utf-8",
+    )
+    write_tau_stage_fixture(run_dir, mode="teacher_ke_tca")
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_csv_checker_knows_every_teacher_runtime_reason():
+    with checker_module() as checker:
+        assert {
+            "arithmetic_invalid",
+            "invalid_mode",
+            "stage_audit_unavailable",
+            "teacher_receding",
+            "teacher_tangent",
+            "teacher_tca_active",
+            "teacher_tca_clipped",
+            "teacher_ke_tca_active",
+            "teacher_ke_tca_clipped",
+        }.issubset(checker.KNOWN_TAU_REASONS)
+
+
+def test_csv_checker_rejects_teacher_frozen_tau_policy(tmp_path):
+    run_dir = tmp_path / "teacher_frozen"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(
+            teacher_tau_metadata(policy="numeric_frozen_per_stage")
+        ),
+        encoding="utf-8",
+    )
+    write_tau_stage_fixture(run_dir)
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert "must use mpc_stage_policy='symbolic_stagewise'" in result.stdout
+
+
+def test_csv_checker_rejects_stage_mode_mismatch(tmp_path):
+    run_dir = tmp_path / "teacher_mode_mismatch"
+    write_checker_fixture(
+        run_dir,
+        tau_files={"margin_guard_log.csv", "planner_log.csv"},
+    )
+    (run_dir / "meta.yaml").write_text(
+        yaml.safe_dump(teacher_tau_metadata()), encoding="utf-8"
+    )
+    write_tau_stage_fixture(run_dir, mode="teacher_ke_tca")
+
+    result = run_csv_checker(run_dir)
+
+    assert result.returncode != 0
+    assert "does not match meta mode" in result.stdout
+
+
+def test_standard_scenario_override_cannot_enable_dynamic_tau():
+    with runner_module() as runner:
+        switches = runner.scenario_switches(
+            "Standard_MPC_CBF",
+            {
+                "experiment_switches": {
+                    "dynamic_tau_enabled": True,
+                    "dynamic_tau_mode": "legacy_gate",
+                    "cbf_metric": "seesm",
+                    "semantic_mode": "full",
+                    "fixed_beta": 9.0,
+                    "guard_enabled": "true",
+                    "enable_rate_limit": "true",
+                    "enable_available_projection": "true",
+                    "enable_guard_fallback": "true",
+                    "mpc_feasibility_guard_enabled": "true",
+                    "front_adsm": "true",
+                    "global_seesm_enable": "true",
+                    "side_preference_enabled": "true",
+                }
+            },
+        )
+
+    assert switches["dynamic_tau_enabled"] is False
+    assert switches["dynamic_tau_mode"] == "teacher_tca"
+    assert switches["cbf_metric"] == "distance"
+    assert switches["semantic_mode"] == "fixed"
+    assert switches["fixed_beta"] == 0.4
+    assert switches["guard_enabled"] == "false"
+    assert switches["enable_rate_limit"] == "false"
+    assert switches["enable_available_projection"] == "false"
+    assert switches["enable_guard_fallback"] == "false"
+    assert switches["mpc_feasibility_guard_enabled"] == "false"
+    assert switches["front_adsm"] == "false"
+    assert switches["global_seesm_enable"] == "false"
+    assert switches["side_preference_enabled"] == "false"
+
+
 def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
     with runner_module() as runner:
         run_dir = tmp_path / "summary"
@@ -960,13 +1307,19 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
         (run_dir / "meta.yaml").write_text(
             "dynamic_tau:\n"
             "  enabled: true\n"
+            "  mode: teacher_tca\n"
+            "  delta_tau: 1.0e-6\n"
             "  Ke: 0.3\n"
             "  Tmax: 2.0\n"
             "  min_speed: 1.0e-6\n"
             "  min_distance: 1.0e-6\n"
             "  max_tau: 2.0\n"
-            "  formula: tau=f_r*f_v*f_T*Ke*T_i\n"
-            "  h_ee: '||l+tau*v||-R_obs-R_robot'\n"
+            "  formula: 'tau=clip(-(l dot v_rel)/(||v_rel||^2+delta_tau),0,max_tau)'\n"
+            "  relative_position_convention: l=p_robot-p_obstacle\n"
+            "  relative_velocity_convention: v_rel=v_robot-v_obstacle\n"
+            "  prediction_sign: l(t+tau)=l+tau*v_rel\n"
+            "  mpc_stage_policy: symbolic_stagewise\n"
+            "  h_ee: '||l+tau*v_rel||-R_obs-R_robot'\n"
             "  h_see: 'h_ee-beta'\n"
             "  beta_source: beta_applied_final\n",
             encoding="utf-8",
@@ -988,20 +1341,24 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
             })
 
         metrics = runner.summarize_tau_log(run_dir)
-        assert metrics["tau_source"] == "planner_log.csv"
+        assert metrics["tau_source"] == "planner_log.csv:mpc_stage_representative"
         assert metrics["tau_mean"] == "0.250000"
         runner.write_summary(run_dir, "head_on_context_bl", "SEESM_Ours", [], True, "ok", 1)
 
         summary_md = (run_dir / "summary.md").read_text(encoding="utf-8")
         for field in (
-            "enabled", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
-            "formula", "h_ee", "h_see", "beta_source",
+            "enabled", "mode", "delta_tau", "Ke", "Tmax", "min_speed",
+            "min_distance", "max_tau", "formula", "h_ee", "h_see",
+            "beta_source", "relative_position_convention",
+            "relative_velocity_convention", "prediction_sign", "mpc_stage_policy",
         ):
             assert f"- {field}:" in summary_md
         with (run_dir / "summary.csv").open("r", newline="", encoding="utf-8") as f:
             summary = next(csv.DictReader(f))
-        assert summary["tau_source"] == "planner_log.csv"
+        assert summary["tau_source"] == "planner_log.csv:mpc_stage_representative"
         assert summary["dynamic_tau_enabled"] == "True"
+        assert summary["dynamic_tau_mode"] == "teacher_tca"
+        assert summary["dynamic_tau_mpc_stage_policy"] == "symbolic_stagewise"
         assert summary["dynamic_tau_beta_source"] == "beta_applied_final"
 
 
@@ -1028,7 +1385,7 @@ def test_runner_tau_summary_ignores_invalid_rows_and_falls_back(tmp_path):
         write_tau_log(run_dir / "margin_guard_log.csv", [invalid_row])
         write_tau_log(run_dir / "planner_log.csv", [valid_row])
         metrics = runner.summarize_tau_log(run_dir)
-        assert metrics["tau_source"] == "planner_log.csv"
+        assert metrics["tau_source"] == "planner_log.csv:mpc_stage_representative"
         assert metrics["tau_mean"] == "0.400000"
         assert metrics["tau_max"] == "0.400000"
         assert metrics["tau_active_fraction"] == "1.000000"
@@ -1036,12 +1393,56 @@ def test_runner_tau_summary_ignores_invalid_rows_and_falls_back(tmp_path):
 
         write_tau_log(run_dir / "margin_guard_log.csv", [valid_row, invalid_row])
         metrics = runner.summarize_tau_log(run_dir)
-        assert metrics["tau_source"] == "margin_guard_log.csv"
+        assert metrics["tau_source"] == "margin_guard_log.csv:guard_current_state"
         assert metrics["tau_mean"] == "0.400000"
         assert metrics["tau_max"] == "0.400000"
         assert metrics["tau_active_fraction"] == "1.000000"
         assert metrics["tau_invalid_count"] == 1
         assert metrics["tau_reason_counts"] == "active:1;tau_invalid:1"
+
+
+def test_runner_tau_summary_prioritizes_mpc_stage_and_splits_guard_population(tmp_path):
+    with runner_module() as runner:
+        run_dir = tmp_path / "tau_populations"
+        run_dir.mkdir()
+        active_stage = teacher_tau_stage_row()
+        inactive_stage = teacher_tau_stage_row(lx=1.0, vrel_x=1.0)
+        write_tau_stage_fixture(run_dir, rows=[active_stage, inactive_stage])
+
+        with (run_dir / "margin_guard_log.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as f:
+            writer = csv.DictWriter(f, fieldnames=TAU_HEADERS)
+            writer.writeheader()
+            writer.writerow({
+                "tau": "0.4", "T_i": "0.4", "f_r": "1", "f_v": "1",
+                "f_T": "1", "tau_valid": "1", "tau_reason": "active",
+            })
+        with (run_dir / "planner_log.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as f:
+            writer = csv.DictWriter(f, fieldnames=TAU_HEADERS)
+            writer.writeheader()
+            writer.writerow({
+                "tau": "0.8", "T_i": "0.8", "f_r": "1", "f_v": "1",
+                "f_T": "1", "tau_valid": "1", "tau_reason": "active",
+            })
+
+        metrics = runner.summarize_tau_log(run_dir)
+
+        expected_stage_tau = float(active_stage["tau"])
+        assert metrics["tau_source"] == "tau_stage_log.csv:mpc_stage"
+        assert metrics["tau_mean"] == f"{expected_stage_tau / 2.0:.6f}"
+        assert metrics["tau_computational_valid_count"] == 2
+        assert metrics["tau_active_count"] == 1
+        assert metrics["tau_inactive_valid_count"] == 1
+        assert metrics["tau_invalid_count"] == 0
+        assert metrics["tau_active_fraction"] == "0.500000"
+        assert metrics["tau_mpc_stage_record_count"] == 2
+        assert metrics["tau_mpc_stage_source"] == "tau_stage_log.csv:mpc_stage"
+        assert metrics["tau_guard_record_count"] == 1
+        assert metrics["tau_guard_mean"] == "0.400000"
+        assert metrics["tau_guard_source"] == "margin_guard_log.csv:guard_current_state"
 
 
 def test_runner_classifies_auditable_termination_reasons(tmp_path):
@@ -1155,19 +1556,10 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
     assert baselines["B1_ACBF_fixed"]["planner"] == "acbf0_planner.launch"
 
     switches_fn = top_level_function(tree, "baseline_switches")
-    baseline_sets = membership_sets(switches_fn)
-    assert {
-        "No_semantic", "Fixed_margin", "Category_only",
-        "Unguarded_SEESM", "SEESM_Ours",
-    } in baseline_sets
-    assert {
-        "Category_only", "Unguarded_SEESM", "SEESM_Ours", "No_J_side",
-        "SideWeight_005", "SideWeight_010", "SideWeight_020", "SideWeight_050",
-    } in baseline_sets
     assignments = subscript_assignments(switches_fn)
     assert "dynamic_tau_enabled" in assignments
-    assert True in literal_values(assignments["dynamic_tau_enabled"])
-    assert False in literal_values(assignments["dynamic_tau_enabled"])
+    assert "dynamic_tau_mode" in assignments
+    assert ast_contains_text(switches_fn, "Standard_MPC_CBF")
     assert "seesm" in literal_values(assignments["cbf_metric"])
     assert "distance" in literal_values(assignments["cbf_metric"])
     assert "global_seesm_enable" in assignments
@@ -1181,11 +1573,22 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
     )
     meta_dicts = [node for node in assigned_values(write_meta_fn, "meta") if isinstance(node, ast.Dict)]
     assert meta_dicts
-    dynamic_tau_dict = dict_value(meta_dicts[0], "dynamic_tau")
+    dynamic_tau_value = dict_value(meta_dicts[0], "dynamic_tau")
+    assert isinstance(dynamic_tau_value, ast.Call)
+    assert isinstance(dynamic_tau_value.func, ast.Name)
+    assert dynamic_tau_value.func.id == "dynamic_tau_contract"
+    contract_fn = top_level_function(tree, "dynamic_tau_contract")
+    dynamic_tau_dict = next(
+        node.value
+        for node in ast.walk(contract_fn)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+    )
     assert isinstance(dynamic_tau_dict, ast.Dict)
     assert dict_keys(dynamic_tau_dict) >= {
-        "enabled", "Ke", "Tmax", "min_speed", "min_distance", "max_tau",
-        "formula", "h_ee", "h_see", "beta_source",
+        "enabled", "mode", "delta_tau", "Ke", "Tmax", "min_speed",
+        "min_distance", "max_tau", "formula", "relative_position_convention",
+        "relative_velocity_convention", "prediction_sign", "mpc_stage_policy",
+        "h_ee", "h_see", "beta_source",
     }
 
 
@@ -1238,6 +1641,7 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
             assert args["semantic_mode"] == semantic_mode
             assert args["guard_enabled"] == guard_enabled
             assert bool_value(args["dynamic_tau_enabled"]) is dynamic_enabled
+            assert args["dynamic_tau_mode"] == "teacher_tca"
             assert args["cbf_metric"] == cbf_metric
             assert bool_value(args["global_seesm_enable"]) is global_enabled
             assert start_args["controller_index"] == str(controller_index)
@@ -1250,11 +1654,17 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
                 assert "fixed_beta" in args
             for key in DYNAMIC_TAU_SWITCHES:
                 assert key in args
+                assert key in start_args
+                assert start_args[key] == args[key]
 
             meta_path = write_meta(runner, tmp_path, baseline_id)
             meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
             dynamic_tau = meta["dynamic_tau"]
             assert dynamic_tau["enabled"] is dynamic_enabled
+            assert dynamic_tau["mode"] == "teacher_tca"
+            assert dynamic_tau["mpc_stage_policy"] == (
+                "symbolic_stagewise" if dynamic_enabled else "disabled"
+            )
             assert dynamic_tau["beta_source"] == beta_source
             for key, expected in EXPECTED_DYNAMIC_TAU_METADATA.items():
                 assert dynamic_tau[key] == expected
@@ -1313,14 +1723,21 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
             ("side_dominant_stage", "solver_.last_side_dominant_stage"),
             ("side_dominant_tau", "solver_.last_side_dominant_tau"),
             ("side_dominant_h", "solver_.last_side_dominant_h"),
-            ("solve_time_ms", "solve_time_ms"),
+        ("solve_time_ms", "solve_time_ms"),
         ("dynamic_tau_enabled", "dynamic_tau_enabled"),
+        ("tau_mode", "semantic_guard::dynamicTauModeName(tau_result.mode)"),
         ("tau", "tau_result.tau"),
+        ("tca_raw", "tau_result.t_ca_raw"),
+        ("tca_clipped", "tau_result.t_ca_clipped"),
+        ("tau_scale", "(tau_result.ke_scaled ? dynamic_tau_params_.ke : 1.0)"),
+        ("tau_active", "tau_result.valid"),
+        ("tau_clipped_low", "tau_result.lower_clipped"),
+        ("tau_clipped_high", "tau_result.upper_clipped"),
         ("T_i", "tau_result.T_i"),
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
-        ("tau_valid", "tau_result.valid"),
+            ("tau_valid", "tau_result.computed"),
         ("tau_reason", "tau_result.reason"),
     )
     planner_header_start = mpc_constructor_raw.index("openCsv(planner_csv_")
@@ -1356,18 +1773,31 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("beta_applied", "beta_applied"),
         ("accepted_source", "sanitizeCsvField(accepted_source)"),
         ("margin_age_ms", "margin_age_ms"),
-        ("h_ee", "h_ee"),
-        ("h_see", "h_see"),
+        ("h_phys", "h_phys"),
+        ("h_eesm", "h_eesm"),
+        ("h_seesm", "h_seesm"),
         ("primitive_rejected", "(primitive_rejected ? 1 : 0)"),
         ("shot_rejected", "(shot_rejected ? 1 : 0)"),
         ("reason", "sanitizeCsvField(reason)"),
         ("global_replan_ms", "global_replan_ms"),
         ("tau", "tau_result.tau"),
+        ("tau_mode", "semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode)"),
+        ("delta_tau", "dynamic_tau_params_.delta_tau"),
+        ("relative_dot", "tau_result.relative_dot"),
+        ("speed_squared", "tau_result.speed_squared"),
+        ("denominator", "tau_result.denominator"),
+        ("t_ca_raw", "tau_result.t_ca_raw"),
+        ("t_ca_clipped", "tau_result.t_ca_clipped"),
+        ("tau_unclipped", "tau_result.tau_unclipped"),
+        ("lower_clipped", "tau_result.lower_clipped"),
+        ("upper_clipped", "tau_result.upper_clipped"),
+        ("ke_scaled", "tau_result.ke_scaled"),
         ("T_i", "tau_result.T_i"),
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
-        ("tau_valid", "tau_result.valid"),
+        ("tau_active", "tau_result.valid"),
+        ("tau_valid", "tau_result.computed"),
         ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
     )
     global_header_clean = cpp_function_body(obs_manager, "void prepareGlobalSeesmLog")
@@ -1422,12 +1852,28 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("R_base", "r_base"),
         ("R_sem", "r_sem"),
         ("tau", "tau_result.tau"),
+        ("tau_mode", "semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode)"),
+        ("delta_tau", "dynamic_tau_params_.delta_tau"),
+        ("relative_dot", "tau_result.relative_dot"),
+        ("speed_squared", "tau_result.speed_squared"),
+        ("denominator", "tau_result.denominator"),
+        ("t_ca_raw", "tau_result.t_ca_raw"),
+        ("t_ca_clipped", "tau_result.t_ca_clipped"),
+        ("tau_unclipped", "tau_result.tau_unclipped"),
+        ("lower_clipped", "tau_result.lower_clipped"),
+        ("upper_clipped", "tau_result.upper_clipped"),
+        ("ke_scaled", "tau_result.ke_scaled"),
         ("T_i", "tau_result.T_i"),
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
         ("tau_valid", "tau_result.valid"),
         ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
+        ("h_phys", "h_phys"),
+        ("h_eesm", "h_ee"),
+        ("h_seesm", "h_see"),
+        ("tau_computed", "tau_computed"),
+        ("tau_active", "tau_active"),
     )
     guard_header_fields = csv_header_fields(guard_header_if_raw, 'csv_file_ << "time,')
     assert "csv_file_" in guard_header_if
