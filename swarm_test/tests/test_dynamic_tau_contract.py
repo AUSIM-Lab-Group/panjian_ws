@@ -1819,6 +1819,9 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     )
     global_header_fields = csv_header_fields(global_header_raw, '"t,replan_id,')
     assert "/safety_margin/beta_applied_final" in cpp_string_literals(obs_init_raw)
+    prepare_call = obs_init_raw.index("prepareGlobalSeesmLog();")
+    enable_guard = obs_init_raw.index("if (global_seesm_enable_)")
+    assert prepare_call < enable_guard
     assert "beta_applied = margin_entry.beta_applied" in unsafe_region
     assert "- beta_applied" in unsafe_region
     assert "global_seesm_log_stream_" in global_header_clean

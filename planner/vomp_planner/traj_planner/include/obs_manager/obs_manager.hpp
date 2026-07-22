@@ -101,10 +101,13 @@ public:
     dcbfTraj_pub = nh.advertise<std_msgs::Float32MultiArray>("obs_predict_pub", 100, true);
     obsId_pub = nh.advertise<std_msgs::UInt32MultiArray>("obs_predict_ids", 100, true);
 
+    // The experiment contract requires every declared CSV artifact to exist.
+    // Keep an auditable header-only log when global SEESM is disabled; data rows
+    // remain mandatory only for enabled runs.
+    prepareGlobalSeesmLog();
     if (global_seesm_enable_) {
       applied_margin_sub_ = nh.subscribe("/safety_margin/beta_applied_final", 10,
                                          &Obs_Manager::appliedMarginCallback, this);
-      prepareGlobalSeesmLog();
       ROS_WARN("global SEESM check enabled, tau=%f, margin_timeout=%f, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e",
                tau_global_, global_seesm_margin_timeout_,
                dynamic_tau_enabled_ ? "true" : "false",
