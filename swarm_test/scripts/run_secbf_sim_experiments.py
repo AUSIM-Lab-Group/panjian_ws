@@ -36,6 +36,8 @@ REQUIRED_TRIAL_LOGS = (
     "event_log.csv",
     "tau_stage_log.csv",
     "global_seesm_log.csv",
+    "data_processor_summary.csv",
+    "data_processor_distance.csv",
 )
 B1_REQUIRED_TRIAL_LOGS = (
     "robot_log.csv",
@@ -50,7 +52,8 @@ LOG_PROFILES = {
         "required_data_rows": (
             "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
             "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
-            "event_log.csv", "tau_stage_log.csv",
+            "event_log.csv", "tau_stage_log.csv", "data_processor_summary.csv",
+            "data_processor_distance.csv",
         ),
         "teacher_formula_applicable": True,
     },
@@ -59,7 +62,8 @@ LOG_PROFILES = {
         "required_data_rows": (
             "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
             "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
-            "event_log.csv",
+            "event_log.csv", "data_processor_summary.csv",
+            "data_processor_distance.csv",
         ),
         "teacher_formula_applicable": False,
     },
@@ -634,6 +638,23 @@ def collect_trial_runtime_identity(baseline_id: str) -> dict:
             label: runtime_executable_record(label) for label in labels
         },
     }
+
+
+def verify_repository_context_unchanged(run_context: dict) -> None:
+    repositories = (run_context or {}).get("repositories", {})
+    expected_names = ("panjian_ws", "seesm_social_navigation")
+    for name in expected_names:
+        expected = repositories.get(name)
+        if not isinstance(expected, dict) or not expected.get("path"):
+            raise RuntimeError(f"missing captured repository context for {name}")
+        current = git_repo_provenance(Path(expected["path"]))
+        for field in (
+            "commit", "tree", "branch", "dirty", "working_tree_state_sha256",
+        ):
+            if current.get(field) != expected.get(field):
+                raise RuntimeError(
+                    f"Teacher-v1 repository changed during batch: {name}.{field}"
+                )
 
 
 def collect_run_context(args) -> dict:
@@ -2913,6 +2934,7 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
 
     run_dir = ensure_teacher_output_root(run_dir)
     trial_run_context = copy.deepcopy(getattr(args, "run_context", None) or {})
+    verify_repository_context_unchanged(trial_run_context)
     trial_run_context["runtime"] = collect_trial_runtime_identity(baseline_id)
     if run_dir.exists() and is_complete_run_dir(run_dir):
         if getattr(args, "skip_existing_complete", False):
@@ -3013,6 +3035,7 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
             sort_keys=False,
         ),
     )
+    verify_repository_context_unchanged(trial_run_context)
 
     if baseline_id == "B1_ACBF_fixed":
         verify_passed, verify_note = None, "B1 has no Guard log"

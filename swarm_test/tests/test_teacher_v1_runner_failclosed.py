@@ -181,6 +181,35 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
     assert meta["prediction_step_sec"] == pytest.approx(0.2)
     assert meta["dynamic_tau"]["h_eesm"].startswith("||l+tau")
     assert "h_ee" not in meta["dynamic_tau"]
+    assert "data_processor_summary.csv" in meta["required_logs"]
+    assert "data_processor_distance.csv" in meta["required_logs"]
+
+
+def test_per_trial_repository_state_is_rechecked(monkeypatch, runner):
+    expected = {
+        "path": "/fixture/repo",
+        "commit": "a" * 40,
+        "tree": "b" * 40,
+        "branch": "teacher-v1",
+        "dirty": False,
+        "working_tree_state_sha256": "c" * 64,
+    }
+    context = {
+        "repositories": {
+            "panjian_ws": dict(expected),
+            "seesm_social_navigation": dict(expected),
+        }
+    }
+    monkeypatch.setattr(
+        runner, "git_repo_provenance", lambda _path: dict(expected)
+    )
+    runner.verify_repository_context_unchanged(context)
+
+    changed = dict(expected)
+    changed["dirty"] = True
+    monkeypatch.setattr(runner, "git_repo_provenance", lambda _path: changed)
+    with pytest.raises(RuntimeError, match="changed during batch"):
+        runner.verify_repository_context_unchanged(context)
 
 
 def test_meta_contract_fails_if_compatibility_mirror_diverges(

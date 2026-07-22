@@ -92,7 +92,8 @@ LOG_PROFILE_BY_BASELINE = {
 TEACHER_REQUIRED_LOGS = [
     "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
     "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv", "event_log.csv",
-    "tau_stage_log.csv", "global_seesm_log.csv",
+    "tau_stage_log.csv", "global_seesm_log.csv", "data_processor_summary.csv",
+    "data_processor_distance.csv",
 ]
 B1_REQUIRED_LOGS = [
     "robot_log.csv", "obstacle_log.csv", "event_log.csv",
