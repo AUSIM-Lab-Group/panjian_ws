@@ -78,7 +78,7 @@ public:
                           << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
                           << "h_ee,h_see,R_base,R_sem,tau,tau_mode,delta_tau,"
-                          << "relative_dot,speed_squared,denominator,t_ca_raw,t_ca_clipped,"
+                          << "relative_dot,speed_squared,denominator,tca_raw,tca_clipped,"
                           << "tau_unclipped,lower_clipped,upper_clipped,ke_scaled,"
                           << "T_i,f_r,f_v,f_T,tau_valid,tau_reason,"
                           << "h_phys,h_eesm,h_seesm,tau_computed,tau_active\n";
@@ -209,9 +209,11 @@ private:
                     p_rel.x(), p_rel.y(), v_rel.x(), v_rel.y(),
                     inflated_radius, dynamic_tau_params_);
             } else {
-                tau_result.tau = tau_;
-                tau_result.valid = true;
-                tau_result.reason = "fixed_config";
+                tau_result.mode = dynamic_tau_params_.mode;
+                tau_result.tau = 0.0;
+                tau_result.computed = true;
+                tau_result.valid = false;
+                tau_result.reason = "disabled";
             }
             const bool tau_computed = !dynamic_tau_enabled_ ||
                                       tau_result.computed;
@@ -309,7 +311,7 @@ private:
                           << tau_result.ke_scaled << ","
                           << tau_result.T_i << ","
                           << tau_result.f_r << "," << tau_result.f_v << ","
-                          << tau_result.f_T << "," << tau_result.valid << ","
+                          << tau_result.f_T << "," << tau_computed << ","
                           << sanitizeCsvField(tau_result.reason) << ","
                           << h_phys << "," << h_ee << "," << h_see << ","
                           << tau_computed << "," << tau_active << "\n";

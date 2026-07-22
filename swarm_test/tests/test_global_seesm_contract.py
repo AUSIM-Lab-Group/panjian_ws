@@ -88,10 +88,13 @@ def test_global_seesm_predicate_contract():
     assert "/safety_margin/beta\"" not in obs
     assert "AppliedMarginArray" in obs
     assert "is_SEESM_unsafe" in obs
-    assert "tau_result.tau = tau_global_" in obs
-    assert 'tau_result.reason = "fixed_config"' in obs
-    assert "(p_rel + tau_result.tau * v_rel).norm() - radius - robot_R - beta_applied" in obs
-    assert "double h_ee = p_rel.norm() - radius - robot_R" in obs
+    assert "tau_result.tau = 0.0" in obs
+    assert "tau_result.computed = true" in obs
+    assert "tau_result.valid = false" in obs
+    assert 'tau_result.reason = "disabled"' in obs
+    assert "(p_rel + tau_result.tau * v_rel).norm() - radius - robot_R" in obs
+    assert "const double h_phys = p_rel.norm() - radius - robot_R" in obs
+    assert "const double h_seesm = h_eesm - beta_applied" in obs
     assert "global_seesm_enable" in astar_h
     assert "is_used_global_seesm_" in astar_h
     assert "is_SEESM_unsafe" in astar_cpp
@@ -156,8 +159,8 @@ def test_global_seesm_final_beta_dynamic_tau_and_log_contract():
 
     header_chunks = (
         '"t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"',
-        '"margin_age_ms,h_ee,h_see,primitive_rejected,shot_rejected,reason,global_replan_ms,"',
-        '"tau,T_i,f_r,f_v,f_T,tau_valid,tau_reason\\n"',
+        '"margin_age_ms,h_phys,h_eesm,h_seesm,primitive_rejected,shot_rejected,reason,global_replan_ms,"',
+        '"T_i,f_r,f_v,f_T,tau_computed,tau_active,tau_valid,tau_reason\\n"',
     )
     assert obs.index(header_chunks[0]) < obs.index(header_chunks[1]) < obs.index(header_chunks[2])
     for field in (

@@ -15,6 +15,7 @@ struct MpcTauStageAudit {
     double ly = 0.0;
     double vrel_x = 0.0;
     double vrel_y = 0.0;
+    double r_base = 0.0;
     double h_eesm = 0.0;
     double h_seesm = 0.0;
     semantic_guard::DynamicTauResult tau_result;

@@ -160,6 +160,38 @@ def test_common_eval_prefers_valid_logged_tau_over_reconstruction(tmp_path):
     assert math.isclose(metrics["min_h_eval"], 0.1, abs_tol=1.0e-12)
 
 
+def test_common_eval_prefers_tau_computed_and_final_applied_margin(tmp_path):
+    (tmp_path / "meta.yaml").write_text(
+        "dynamic_tau:\n"
+        "  enabled: true\n"
+        "  mode: teacher_tca\n"
+        "  delta_tau: 1.0e-6\n"
+        "  max_tau: 2.0\n",
+        encoding="utf-8",
+    )
+    rows = [{
+        "time": "0.1", "h_seesm": "1.1", "h_eesm": "1.2",
+        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
+        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
+        "beta_applied": "0.1", "tau": "0.0", "tau_computed": "1",
+        "tau_active": "0", "tau_valid": "0",
+    }]
+    with (tmp_path / "margin_guard_log.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    metrics = postprocess.semantic_violation_metrics(tmp_path)
+
+    # tau_computed=true makes the valid inactive tau=0 authoritative even
+    # though the deprecated tau_valid field says false. The final applied
+    # margin is 0.1, not the requested beta_bar*mu=0.6.
+    assert math.isclose(metrics["min_h_eval"], 1.1, abs_tol=1.0e-12)
+    assert math.isclose(metrics["min_h_seesm_from_log"], 1.1, abs_tol=1.0e-12)
+
+
 def test_mpc_feasibility_excludes_no_cbf_emergency_fallback(tmp_path):
     rows = [
         {

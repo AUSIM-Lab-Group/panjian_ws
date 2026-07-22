@@ -131,7 +131,7 @@ public:
                 "mpc_feasibility_guard_enabled,candidate_feasibility_checked,mpc_feasibility_guard_used,"
                 "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
                 "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,solve_time_ms,"
-                "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_active,tau_clipped_low,tau_clipped_high,"
+                "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
                 "T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
@@ -141,8 +141,8 @@ public:
                 "candidate_feasibility_checked,mpc_feasibility_guard_used\n");
         openCsv(tau_stage_csv_, tau_stage_log_path,
                 "t,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
-                "tca_raw,tca_clipped,tau,tau_scale,tau_active,tau_clipped_low,tau_clipped_high,"
-                "beta,h_eesm,h_seesm,tau_valid,tau_reason\n");
+                "tca_raw,tca_clipped,tau,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
+                "R_base,beta,h_eesm,h_seesm,tau_valid,tau_reason\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -441,11 +441,12 @@ private:
         const bool dynamic_tau_enabled = dynamic_tau_enabled_;
         semantic_guard::DynamicTauResult tau_result;
         tau_result.mode = dynamic_tau_params_.mode;
-        if (!obstacle_contract_valid || solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
-            solver_.last_constrained_obs_index * N_ >= obs_matrix_.cols()) {
-            tau_result.reason = "no_constrained_obstacle";
-        } else if (!dynamic_tau_enabled) {
+        if (!dynamic_tau_enabled) {
+            tau_result.computed = true;
             tau_result.reason = "disabled";
+        } else if (!obstacle_contract_valid || solver_.last_constrained_obs_index < 0 || N_ <= 0 ||
+                   solver_.last_constrained_obs_index * N_ >= obs_matrix_.cols()) {
+            tau_result.reason = "no_constrained_obstacle";
         } else if (!solver_.last_tau_stage_audit.empty()) {
             // This value was evaluated from the optimized first-stage state in
             // MPC_SECBF_SOLVE::solve(). Do not reconstruct Teacher TCA from the
@@ -492,6 +493,7 @@ private:
                          << tau_result.t_ca_raw << ","
                          << tau_result.t_ca_clipped << ","
                          << (tau_result.ke_scaled ? dynamic_tau_params_.ke : 1.0) << ","
+                         << tau_result.computed << ","
                          << tau_result.valid << ","
                          << tau_result.lower_clipped << ","
                          << tau_result.upper_clipped << ","
@@ -537,9 +539,11 @@ private:
                            << tau.t_ca_clipped << ","
                            << tau.tau << ","
                            << (tau.ke_scaled ? dynamic_tau_params_.ke : 1.0) << ","
+                           << tau.computed << ","
                            << tau.valid << ","
                            << tau.lower_clipped << ","
                            << tau.upper_clipped << ","
+                           << audit.r_base << ","
                            << audit.beta << ","
                            << audit.h_eesm << ","
                            << audit.h_seesm << ","

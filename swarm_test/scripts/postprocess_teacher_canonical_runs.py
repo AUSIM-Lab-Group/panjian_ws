@@ -199,7 +199,15 @@ def logged_tau(row: dict[str, str]) -> Optional[float]:
     value = parse_float(row.get("tau"))
     if value is None or not math.isfinite(value) or value < 0.0:
         return None
-    validity = str(row.get("tau_valid", "")).strip().lower()
+    # Teacher-v1 separates successful formula evaluation from a positive
+    # look-ahead horizon.  Prefer tau_computed; tau_valid is retained only for
+    # archived logs where it represented one of these two concepts.
+    validity_field = (
+        row.get("tau_computed")
+        if str(row.get("tau_computed", "")).strip()
+        else row.get("tau_valid", "")
+    )
+    validity = str(validity_field).strip().lower()
     if validity in {"0", "false", "no"}:
         return None
     return value
@@ -323,7 +331,6 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
         }
 
     dynamic_tau = load_dynamic_tau_contract(run_dir)
-    dynamic_tau_enabled = bool(dynamic_tau["enabled"])
 
     time_groups: dict[str, bool] = {}
     h_values: list[float] = []
@@ -331,7 +338,9 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
     h_eesm_eval_log_errors: list[float] = []
     pair_violations = 0
     for row in rows:
-        h_see = parse_float(row.get("h_see"))
+        h_see = parse_float(row.get("h_seesm"))
+        if h_see is None:
+            h_see = parse_float(row.get("h_see"))
         if h_see is not None:
             h_values.append(h_see)
             violated = h_see < 0.0
@@ -343,18 +352,32 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
         speed = parse_float(row.get("rel_v_norm"))
         cos_delta = parse_float(row.get("cos_delta"))
         inflated_radius = parse_float(row.get("R_base"))
+        beta_applied = parse_float(row.get("beta_applied"))
         beta_bar = parse_float(row.get("beta_bar"))
         mu = parse_float(row.get("mu"))
-        values = (distance, speed, cos_delta, inflated_radius, beta_bar, mu)
-        if any(value is None or not math.isfinite(value) for value in values):
+        geometry_values = (distance, speed, cos_delta, inflated_radius)
+        if any(
+            value is None or not math.isfinite(value)
+            for value in geometry_values
+        ):
             continue
+        if beta_applied is None or not math.isfinite(beta_applied):
+            if any(
+                value is None or not math.isfinite(value)
+                for value in (beta_bar, mu)
+            ):
+                continue
+            beta_applied = min(
+                max(0.0, float(beta_bar)) *
+                max(0.0, min(1.0, float(mu))),
+                max(0.0, float(beta_bar)),
+            )
 
         distance = max(0.0, float(distance))
         speed = max(0.0, float(speed))
         cos_delta = max(-1.0, min(1.0, float(cos_delta)))
         inflated_radius = max(0.0, float(inflated_radius))
-        beta_bar = max(0.0, float(beta_bar))
-        mu = max(0.0, min(1.0, float(mu)))
+        beta_applied = max(0.0, float(beta_applied))
 
         # A valid logged tau is the value the runtime actually used and takes
         # precedence.  Older logs without it are reconstructed using their
@@ -373,12 +396,12 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             + tau * tau * speed * speed
         )
         h_eesm_eval = math.sqrt(max(0.0, norm_squared)) - inflated_radius
-        beta_candidate = beta_bar * mu
-        beta_eval = min(beta_candidate, beta_bar)
-        h_eval_values.append(h_eesm_eval - beta_eval)
+        h_eval_values.append(h_eesm_eval - beta_applied)
 
-        logged_h_eesm = parse_float(row.get("h_ee"))
-        if dynamic_tau_enabled and logged_h_eesm is not None:
+        logged_h_eesm = parse_float(row.get("h_eesm"))
+        if logged_h_eesm is None:
+            logged_h_eesm = parse_float(row.get("h_ee"))
+        if logged_h_eesm is not None:
             h_eesm_eval_log_errors.append(abs(h_eesm_eval - logged_h_eesm))
 
     if not h_values:

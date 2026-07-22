@@ -2,6 +2,7 @@ import ast
 import csv
 from contextlib import contextmanager
 import importlib.util
+import math
 import re
 import subprocess
 import sys
@@ -44,8 +45,8 @@ EXPECTED_DYNAMIC_TAU_METADATA = {
     "relative_position_convention": "l=p_robot-p_obstacle",
     "relative_velocity_convention": "v_rel=v_robot-v_obstacle",
     "prediction_sign": "l(t+tau)=l+tau*v_rel",
-    "h_ee": "||l+tau*v_rel||-R_obs-R_robot",
-    "h_see": "h_ee-beta",
+    "h_eesm": "||l+tau*v_rel||-R_obs-R_robot",
+    "h_seesm": "h_eesm-beta",
 }
 BASELINE_CONTRACT = (
     ("Standard_MPC_CBF", False, "distance", False, "fixed", "fixed_config", 0.4, "false", 6),
@@ -242,8 +243,8 @@ CHECKER_HEADERS = {
 TAU_HEADERS = ["tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"]
 TAU_STAGE_HEADERS = [
     "t", "obs_id", "stage", "tau_mode", "lx", "ly", "vrel_x", "vrel_y",
-    "tca_raw", "tca_clipped", "tau", "tau_active", "beta", "h_eesm",
-    "h_seesm", "tau_valid", "tau_reason",
+    "tca_raw", "tca_clipped", "tau", "tau_computed", "tau_active",
+    "R_base", "beta", "h_eesm", "h_seesm", "tau_valid", "tau_reason",
 ]
 
 
@@ -271,6 +272,8 @@ def teacher_tau_metadata(enabled=True, mode="teacher_tca", policy=None):
             "relative_velocity_convention": "v_rel=v_robot-v_obstacle",
             "prediction_sign": "l(t+tau)=l+tau*v_rel",
             "mpc_stage_policy": policy,
+            "h_eesm": "||l+tau*v_rel||-R_obs-R_robot",
+            "h_seesm": "h_eesm-beta",
         }
     }
 
@@ -285,6 +288,9 @@ def teacher_tau_stage_row(
     tca_clipped = min(max(tca_raw, 0.0), max_tau)
     tau_unclipped = ke * tca_clipped if mode == "teacher_ke_tca" else tca_clipped
     tau = min(tau_unclipped, max_tau)
+    r_base = 0.8
+    beta = 0.4
+    h_eesm = math.hypot(lx + tau * vrel_x, ly + tau * vrel_y) - r_base
     active = tau > 0.0
     if tca_clipped <= 0.0:
         reason = "teacher_receding" if relative_dot > 0.0 else "teacher_tangent"
@@ -308,10 +314,12 @@ def teacher_tau_stage_row(
         "tca_raw": f"{tca_raw:.12g}",
         "tca_clipped": f"{tca_clipped:.12g}",
         "tau": f"{tau:.12g}",
+        "tau_computed": "1",
         "tau_active": "1" if active else "0",
-        "beta": "0.4",
-        "h_eesm": "0.9",
-        "h_seesm": "0.5",
+        "R_base": f"{r_base:.12g}",
+        "beta": f"{beta:.12g}",
+        "h_eesm": f"{h_eesm:.12g}",
+        "h_seesm": f"{h_eesm - beta:.12g}",
         "tau_valid": "1",
         "tau_reason": reason,
     }
@@ -1168,7 +1176,7 @@ def test_csv_checker_accepts_computed_but_inactive_teacher_zero_tau(tmp_path):
 @pytest.mark.parametrize(
     ("overrides", "expected_error"),
     (
-        ({"tau_valid": "0"}, "tau_valid must be true"),
+        ({"tau_valid": "0"}, "tau_valid alias must match tau_computed=true"),
         ({"tau_active": "1"}, "does not match recomputed active=False"),
         ({"tau_reason": "teacher_tangent"}, "does not match recomputed 'teacher_receding'"),
     ),
@@ -1319,8 +1327,8 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
             "  relative_velocity_convention: v_rel=v_robot-v_obstacle\n"
             "  prediction_sign: l(t+tau)=l+tau*v_rel\n"
             "  mpc_stage_policy: symbolic_stagewise\n"
-            "  h_ee: '||l+tau*v_rel||-R_obs-R_robot'\n"
-            "  h_see: 'h_ee-beta'\n"
+            "  h_eesm: '||l+tau*v_rel||-R_obs-R_robot'\n"
+            "  h_seesm: 'h_eesm-beta'\n"
             "  beta_source: beta_applied_final\n",
             encoding="utf-8",
         )
@@ -1348,7 +1356,7 @@ def test_runner_tau_summary_falls_back_and_writes_audit_block(tmp_path):
         summary_md = (run_dir / "summary.md").read_text(encoding="utf-8")
         for field in (
             "enabled", "mode", "delta_tau", "Ke", "Tmax", "min_speed",
-            "min_distance", "max_tau", "formula", "h_ee", "h_see",
+            "min_distance", "max_tau", "formula", "h_eesm", "h_seesm",
             "beta_source", "relative_position_convention",
             "relative_velocity_convention", "prediction_sign", "mpc_stage_policy",
         ):
@@ -1512,8 +1520,11 @@ def test_runner_ignores_all_zero_obstacle_startup_rows(tmp_path):
         assert metrics["log_min_distance_m"] == "0.200000"
 
 
-def test_runner_aggregate_summary_unions_legacy_and_new_columns(tmp_path):
+def test_runner_aggregate_summary_unions_only_sealed_complete_columns(
+    tmp_path, monkeypatch
+):
     with runner_module() as runner:
+        monkeypatch.setattr(runner, "is_complete_run_dir", lambda _: True)
         old_dir = tmp_path / "old"
         new_dir = tmp_path / "new"
         old_dir.mkdir()
@@ -1588,7 +1599,7 @@ def test_runner_source_has_structured_baseline_and_writer_assignments():
         "enabled", "mode", "delta_tau", "Ke", "Tmax", "min_speed",
         "min_distance", "max_tau", "formula", "relative_position_convention",
         "relative_velocity_convention", "prediction_sign", "mpc_stage_policy",
-        "h_ee", "h_see", "beta_source",
+        "h_eesm", "h_seesm", "beta_source",
     }
 
 
@@ -1730,6 +1741,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("tca_raw", "tau_result.t_ca_raw"),
         ("tca_clipped", "tau_result.t_ca_clipped"),
         ("tau_scale", "(tau_result.ke_scaled ? dynamic_tau_params_.ke : 1.0)"),
+        ("tau_computed", "tau_result.computed"),
         ("tau_active", "tau_result.valid"),
         ("tau_clipped_low", "tau_result.lower_clipped"),
         ("tau_clipped_high", "tau_result.upper_clipped"),
@@ -1786,8 +1798,8 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("relative_dot", "tau_result.relative_dot"),
         ("speed_squared", "tau_result.speed_squared"),
         ("denominator", "tau_result.denominator"),
-        ("t_ca_raw", "tau_result.t_ca_raw"),
-        ("t_ca_clipped", "tau_result.t_ca_clipped"),
+        ("tca_raw", "tau_result.t_ca_raw"),
+        ("tca_clipped", "tau_result.t_ca_clipped"),
         ("tau_unclipped", "tau_result.tau_unclipped"),
         ("lower_clipped", "tau_result.lower_clipped"),
         ("upper_clipped", "tau_result.upper_clipped"),
@@ -1796,6 +1808,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
+        ("tau_computed", "tau_result.computed"),
         ("tau_active", "tau_result.valid"),
         ("tau_valid", "tau_result.computed"),
         ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
@@ -1857,8 +1870,8 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("relative_dot", "tau_result.relative_dot"),
         ("speed_squared", "tau_result.speed_squared"),
         ("denominator", "tau_result.denominator"),
-        ("t_ca_raw", "tau_result.t_ca_raw"),
-        ("t_ca_clipped", "tau_result.t_ca_clipped"),
+        ("tca_raw", "tau_result.t_ca_raw"),
+        ("tca_clipped", "tau_result.t_ca_clipped"),
         ("tau_unclipped", "tau_result.tau_unclipped"),
         ("lower_clipped", "tau_result.lower_clipped"),
         ("upper_clipped", "tau_result.upper_clipped"),
@@ -1867,7 +1880,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
-        ("tau_valid", "tau_result.valid"),
+        ("tau_valid", "tau_computed"),
         ("tau_reason", "sanitizeCsvField(tau_result.reason)"),
         ("h_phys", "h_phys"),
         ("h_eesm", "h_ee"),

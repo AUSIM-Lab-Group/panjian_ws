@@ -315,10 +315,11 @@ public:
             p_rel.x(), p_rel.y(), v_rel.x(), v_rel.y(), radius + robot_R,
             dynamic_tau_params_);
       } else {
-        tau_result.tau = tau_global_;
+        tau_result.mode = dynamic_tau_params_.mode;
+        tau_result.tau = 0.0;
         tau_result.computed = true;
-        tau_result.valid = true;
-        tau_result.reason = "fixed_config";
+        tau_result.valid = false;
+        tau_result.reason = "disabled";
       }
 
       const double h_phys = p_rel.norm() - radius - robot_R;
@@ -469,9 +470,9 @@ private:
     global_seesm_log_stream_
         << "t,replan_id,global_seesm_enable,obs_id,beta_applied,accepted_source,"
         << "margin_age_ms,h_phys,h_eesm,h_seesm,primitive_rejected,shot_rejected,reason,global_replan_ms,"
-        << "tau,tau_mode,delta_tau,relative_dot,speed_squared,denominator,t_ca_raw,t_ca_clipped,"
+        << "tau,tau_mode,delta_tau,relative_dot,speed_squared,denominator,tca_raw,tca_clipped,"
         << "tau_unclipped,lower_clipped,upper_clipped,ke_scaled,"
-        << "T_i,f_r,f_v,f_T,tau_active,tau_valid,tau_reason\n";
+        << "T_i,f_r,f_v,f_T,tau_computed,tau_active,tau_valid,tau_reason\n";
     global_seesm_log_stream_.flush();
   }
 
@@ -547,6 +548,7 @@ private:
                              << tau_result.f_r << ","
                              << tau_result.f_v << ","
                              << tau_result.f_T << ","
+                             << tau_result.computed << ","
                              << tau_result.valid << ","
                              << tau_result.computed << ","
                              << sanitizeCsvField(tau_result.reason) << "\n";

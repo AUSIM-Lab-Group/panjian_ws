@@ -55,6 +55,7 @@ TAU_STAGE_NUMERIC_FIELDS = (
     "stage", "lx", "ly", "vrel_x", "vrel_y", "tca_raw", "tca_clipped",
     "tau", "beta", "h_eesm", "h_seesm",
 )
+TEACHER_TAU_STAGE_EXTRA_FIELDS = frozenset({"tau_computed", "R_base"})
 KNOWN_TAU_REASONS = {
     "invalid", "non_finite_input", "invalid_config", "speed_degenerate",
     "distance_degenerate", "angle_invalid", "receding_or_nonclosing",
@@ -77,6 +78,43 @@ TEACHER_TAU_FORMULAS = {
 RELATIVE_POSITION_CONVENTION = "l=p_robot-p_obstacle"
 RELATIVE_VELOCITY_CONVENTION = "v_rel=v_robot-v_obstacle"
 PREDICTION_SIGN_CONVENTION = "l(t+tau)=l+tau*v_rel"
+
+ALGORITHM_VERSION = "teacher_v1"
+FORMULA_VERSION = "teacher_v1_formula_001"
+LOG_SCHEMA_VERSION = "teacher_v1_log_schema_001"
+TEACHER_MANUSCRIPT_SHA256 = (
+    "c4482f2acda626162a830859db1745d12ee3afaf0c8820b47a3dd94b641ebdf5"
+)
+LOG_PROFILE_BY_BASELINE = {
+    "B1_ACBF_fixed": "legacy_b1_v1",
+    "Standard_MPC_CBF": "teacher_distance_mpc_v1",
+}
+TEACHER_REQUIRED_LOGS = [
+    "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
+    "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv", "event_log.csv",
+    "tau_stage_log.csv", "global_seesm_log.csv",
+]
+B1_REQUIRED_LOGS = [
+    "robot_log.csv", "obstacle_log.csv", "event_log.csv",
+    "data_processor_summary.csv", "data_processor_distance.csv",
+]
+TEACHER_CANONICAL_FILE_FIELDS = {
+    "obstacle_log.csv": {
+        "tau", "tau_mode", "h_phys", "h_eesm", "tau_computed",
+        "tau_active", "tau_reason",
+    },
+    "margin_guard_log.csv": {
+        "h_phys", "h_eesm", "h_seesm", "tau_computed", "tau_active",
+        "tau_valid", "tca_raw", "tca_clipped",
+    },
+    "planner_log.csv": {
+        "tau_computed", "tau_active", "tau_valid", "tca_raw", "tca_clipped",
+    },
+    "global_seesm_log.csv": {
+        "h_phys", "h_eesm", "h_seesm", "tau_computed", "tau_active",
+        "tau_valid", "tca_raw", "tca_clipped",
+    },
+}
 
 PAPER_FIELDS = {
     "t": [("robot_log.csv", "t"), ("margin_guard_log.csv", "time")],
@@ -114,6 +152,152 @@ def read_header(path):
 def read_rows(path):
     with path.open("r", newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def expected_log_profile(baseline_id):
+    return LOG_PROFILE_BY_BASELINE.get(baseline_id, "teacher_seesm_v1")
+
+
+def validate_teacher_metadata(run_dir, errors):
+    meta_path = run_dir / "meta.yaml"
+    canonical_path = run_dir / "run_meta.yaml"
+    if not meta_path.exists():
+        errors.append("missing file: meta.yaml")
+    if not canonical_path.exists():
+        errors.append("missing file: run_meta.yaml")
+    if not meta_path.exists() or not canonical_path.exists():
+        return {}, ""
+    if yaml is None:
+        errors.append("PyYAML is unavailable; cannot validate Teacher metadata")
+        return {}, ""
+    try:
+        if meta_path.read_bytes() != canonical_path.read_bytes():
+            errors.append("meta.yaml is not byte-identical to run_meta.yaml")
+        with canonical_path.open("r", encoding="utf-8") as stream:
+            meta = yaml.safe_load(stream)
+        if not isinstance(meta, dict):
+            raise ValueError("top-level YAML value must be a mapping")
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        errors.append(f"invalid Teacher metadata: {exc}")
+        return {}, ""
+
+    for key, expected in (
+        ("algorithm_version", ALGORITHM_VERSION),
+        ("formula_version", FORMULA_VERSION),
+        ("log_schema_version", LOG_SCHEMA_VERSION),
+        ("teacher_manuscript_sha256", TEACHER_MANUSCRIPT_SHA256),
+    ):
+        if meta.get(key) != expected:
+            errors.append(f"metadata {key} must be {expected!r}")
+    if not str(meta.get("protocol_id", "")).strip():
+        errors.append("metadata protocol_id must be nonempty")
+    if meta.get("run_state") not in {"running", "complete", "invalid"}:
+        errors.append("metadata run_state is invalid")
+
+    baseline_id = str(meta.get("baseline_id", ""))
+    profile = expected_log_profile(baseline_id)
+    if meta.get("log_profile") != profile:
+        errors.append(
+            f"metadata log_profile {meta.get('log_profile')!r} does not "
+            f"match baseline profile {profile!r}"
+        )
+    expected_logs = B1_REQUIRED_LOGS if profile == "legacy_b1_v1" else TEACHER_REQUIRED_LOGS
+    if meta.get("required_logs") != expected_logs:
+        errors.append("metadata required_logs does not match code-controlled profile")
+    if not isinstance(meta.get("provenance"), dict) or not meta.get("provenance"):
+        errors.append("metadata provenance must be a nonempty mapping")
+    artifacts = meta.get("artifact_hashes")
+    if not isinstance(artifacts, dict) or not artifacts.get("obstacles_param.yaml"):
+        errors.append("metadata artifact_hashes.obstacles_param.yaml is required")
+
+    def require_bool(field, expected):
+        try:
+            actual = parse_meta_bool(meta.get(field), field)
+        except ValueError as exc:
+            errors.append(f"metadata {exc}")
+            return
+        if actual is not expected:
+            errors.append(
+                f"metadata {field} must be {str(expected).lower()} for {baseline_id}"
+            )
+
+    if baseline_id == "B1_ACBF_fixed":
+        for field, expected in {
+            "semantic_mode": "not_applicable",
+            "cbf_metric": "legacy_acbf",
+            "fixed_beta": 0.30,
+            "front_adsm": "true",
+        }.items():
+            if meta.get(field) != expected:
+                errors.append(f"metadata {field} must be {expected!r} for B1")
+        for field in (
+            "guard_enable", "enable_rate_limit", "enable_available_projection",
+            "enable_guard_fallback", "mpc_feasibility_guard_enabled",
+            "global_seesm_enable", "side_preference_enabled",
+        ):
+            require_bool(field, False)
+        if meta.get("mu_weights") is not None or meta.get("guard_eta") is not None:
+            errors.append("metadata B1 semantic Guard fields must be not applicable")
+    elif baseline_id == "Standard_MPC_CBF":
+        if meta.get("semantic_mode") != "fixed" or meta.get("cbf_metric") != "distance":
+            errors.append("metadata Standard_MPC_CBF must be fixed/distance")
+        for field in (
+            "guard_enable", "enable_rate_limit", "enable_available_projection",
+            "enable_guard_fallback", "mpc_feasibility_guard_enabled", "front_adsm",
+            "global_seesm_enable", "side_preference_enabled",
+        ):
+            require_bool(field, False)
+    return meta, profile
+
+
+def validate_b1_profile(run_dir, errors):
+    headers = {}
+    for file_name in B1_REQUIRED_LOGS:
+        path = run_dir / file_name
+        if not path.exists() or path.stat().st_size <= 1:
+            errors.append(f"missing or empty B1 log: {file_name}")
+            continue
+        if file_name in FILE_FIELDS:
+            header = read_header(path)
+            headers[file_name] = header
+            missing = sorted(FILE_FIELDS[file_name] - header)
+            if missing:
+                errors.append(f"{file_name}: missing fields {missing}")
+            if not read_rows(path):
+                errors.append(f"{file_name}: no data rows")
+    robot_rows = read_rows(run_dir / "robot_log.csv") if (run_dir / "robot_log.csv").exists() else []
+    obstacle_rows = read_rows(run_dir / "obstacle_log.csv") if (run_dir / "obstacle_log.csv").exists() else []
+    if len(robot_rows) < 2:
+        errors.append("robot_log.csv: B1 requires at least two samples")
+    if len(obstacle_rows) < 2:
+        errors.append("obstacle_log.csv: B1 requires at least two samples")
+    meaningful_rows = 0
+    for row in obstacle_rows:
+        try:
+            values = [
+                float(row.get(field, "0"))
+                for field in ("x", "y", "radius", "d_i", "rel_v", "h_EE")
+            ]
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(value) for value in values) and any(
+            abs(value) > 1.0e-12 for value in values
+        ):
+            meaningful_rows += 1
+    if meaningful_rows == 0:
+        errors.append("obstacle_log.csv: B1 has only all-zero startup rows")
+    event_rows = read_rows(run_dir / "event_log.csv") if (run_dir / "event_log.csv").exists() else []
+    events = {row.get("event", "") for row in event_rows}
+    if not {"start", "stop"}.issubset(events):
+        errors.append("event_log.csv: B1 requires start and stop events")
+    return headers
+
+
+def validate_event_log(path, errors):
+    rows = read_rows(path)
+    events = {str(row.get("event", "")).strip() for row in rows}
+    if not {"start", "stop"}.issubset(events):
+        errors.append("event_log.csv: requires start and stop events")
 
 
 def parse_meta_bool(value, field):
@@ -203,6 +387,8 @@ def dynamic_tau_contract(run_dir, errors=None):
                 "relative_position_convention": RELATIVE_POSITION_CONVENTION,
                 "relative_velocity_convention": RELATIVE_VELOCITY_CONVENTION,
                 "prediction_sign": PREDICTION_SIGN_CONVENTION,
+                "h_eesm": "||l+tau*v_rel||-R_obs-R_robot",
+                "h_seesm": "h_eesm-beta",
             }
             for key, expected_value in expected.items():
                 if dynamic_tau.get(key) != expected_value:
@@ -284,14 +470,59 @@ def validate_tau_file(file_name, path, errors, required=False):
     return header
 
 
-def validate_tau_stage_file(path, dynamic_contract, errors, required=False):
+def validate_disabled_tau_rows(file_name, path, expected_mode, errors):
+    header = read_header(path)
+    if "tau" not in header:
+        return
+    for row_index, row in enumerate(read_rows(path), start=2):
+        try:
+            tau = float(row.get("tau", ""))
+        except (TypeError, ValueError):
+            errors.append(f"{file_name}:{row_index}: invalid disabled tau")
+            continue
+        if not math.isfinite(tau) or abs(tau) > 1.0e-12:
+            errors.append(
+                f"{file_name}:{row_index}: disabled dynamic tau must equal zero"
+            )
+        if "tau_mode" in header and row.get("tau_mode") != expected_mode:
+            errors.append(
+                f"{file_name}:{row_index}: disabled tau_mode does not match metadata"
+            )
+        active = str(row.get("tau_active", "")).strip().lower()
+        if "tau_active" in header and active not in {"0", "false", "no"}:
+            errors.append(
+                f"{file_name}:{row_index}: disabled tau_active must be false"
+            )
+        reason = str(row.get("tau_reason", "")).strip()
+        computed = str(row.get("tau_computed", "")).strip().lower()
+        if "tau_reason" in header and reason != "disabled":
+            errors.append(
+                f"{file_name}:{row_index}: disabled tau_reason must equal 'disabled'"
+            )
+        if "tau_computed" in header and computed not in {"1", "true", "yes"}:
+            errors.append(
+                f"{file_name}:{row_index}: disabled tau must be marked computed"
+            )
+        if "tau_valid" in header and "tau_computed" in header:
+            valid_alias = str(row.get("tau_valid", "")).strip().lower()
+            if valid_alias != computed:
+                errors.append(
+                    f"{file_name}:{row_index}: tau_valid alias must match tau_computed"
+                )
+
+
+def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
+                            canonical_teacher=False):
     file_name = "tau_stage_log.csv"
     if not path.exists():
         if required:
             errors.append(f"missing file: {file_name}")
         return set()
     header = read_header(path)
-    missing = sorted(TAU_STAGE_FIELDS - header)
+    required_fields = TAU_STAGE_FIELDS
+    if canonical_teacher:
+        required_fields = required_fields | TEACHER_TAU_STAGE_EXTRA_FIELDS
+    missing = sorted(required_fields - header)
     if missing:
         errors.append(f"{file_name}: missing fields {missing}")
         return header
@@ -330,7 +561,10 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False):
                 f"does not match meta mode {expected_mode!r}"
             )
         numeric_values = {}
-        for field in TAU_STAGE_NUMERIC_FIELDS:
+        numeric_fields = TAU_STAGE_NUMERIC_FIELDS + (
+            ("R_base",) if canonical_teacher else ()
+        )
+        for field in numeric_fields:
             try:
                 value = float(row[field])
             except (KeyError, TypeError, ValueError):
@@ -348,6 +582,11 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False):
             errors.append(f"{file_name}:{row_index}: tau must be nonnegative")
 
         tau_valid = parse_bool(row, "tau_valid", row_index)
+        tau_computed = (
+            parse_bool(row, "tau_computed", row_index)
+            if "tau_computed" in header
+            else tau_valid
+        )
         tau_active = parse_bool(row, "tau_active", row_index)
         reason = str(row.get("tau_reason", "")).strip()
         if reason not in KNOWN_TAU_REASONS:
@@ -420,10 +659,15 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False):
             # tau_valid is computational validity, whereas tau_active says
             # whether the valid formula produced a strictly positive horizon.
             # Receding/tangent rows therefore require (valid=true, active=false).
+            if tau_computed is not None and not tau_computed:
+                errors.append(
+                    f"{file_name}:{row_index}: tau_computed must be true for a "
+                    "finite Teacher formula evaluation"
+                )
             if tau_valid is not None and not tau_valid:
                 errors.append(
-                    f"{file_name}:{row_index}: tau_valid must be true for a "
-                    "finite Teacher formula evaluation"
+                    f"{file_name}:{row_index}: deprecated tau_valid alias must "
+                    "match tau_computed=true"
                 )
             if tau_active is not None and tau_active != expected_active:
                 errors.append(
@@ -444,6 +688,17 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False):
                 errors.append(
                     f"{file_name}:{row_index}: h_seesm != h_eesm - beta"
                 )
+        if all(
+            field in numeric_values
+            for field in ("lx", "ly", "vrel_x", "vrel_y", "tau", "R_base", "h_eesm")
+        ):
+            expected_h_eesm = math.hypot(
+                numeric_values["lx"] + numeric_values["tau"] * numeric_values["vrel_x"],
+                numeric_values["ly"] + numeric_values["tau"] * numeric_values["vrel_y"],
+            ) - numeric_values["R_base"]
+            check_close(
+                row_index, "h_eesm", numeric_values["h_eesm"], expected_h_eesm
+            )
     return header
 
 
@@ -502,13 +757,38 @@ def validate_mpc_margin_rows(path, errors):
 
 def main():
     parser = argparse.ArgumentParser(description="Check Phase 5 CSV field contract")
+    parser.add_argument(
+        "--require-teacher-meta", action="store_true",
+        help="require canonical Teacher-v1 metadata and log profile",
+    )
     parser.add_argument("run_dir", type=Path)
     args = parser.parse_args()
 
     headers = {}
     errors = []
+    profile = ""
+    teacher_meta = {}
+    if args.require_teacher_meta:
+        teacher_meta, profile = validate_teacher_metadata(args.run_dir, errors)
     dynamic_contract = dynamic_tau_contract(args.run_dir, errors)
     dynamic_enabled = dynamic_contract["enabled"]
+    if profile == "legacy_b1_v1":
+        if dynamic_enabled:
+            errors.append("legacy_b1_v1 must have dynamic_tau.enabled=false")
+        validate_b1_profile(args.run_dir, errors)
+        if errors:
+            for error in errors:
+                print(f"ERROR: {error}", file=sys.stderr)
+            return 1
+        print(f"Legacy B1 CSV profile checks passed: {args.run_dir}")
+        return 0
+
+    if args.require_teacher_meta:
+        for file_name in TEACHER_REQUIRED_LOGS:
+            path = args.run_dir / file_name
+            if not path.exists() or path.stat().st_size <= 1:
+                errors.append(f"missing or empty required Teacher log: {file_name}")
+
     for file_name, required in FILE_FIELDS.items():
         path = args.run_dir / file_name
         if not path.exists():
@@ -519,8 +799,22 @@ def main():
         missing = sorted(required - header)
         if missing:
             errors.append(f"{file_name}: missing fields {missing}")
-        elif file_name in {"margin_guard_log.csv", "planner_log.csv"}:
+        if args.require_teacher_meta:
+            canonical_missing = sorted(
+                TEACHER_CANONICAL_FILE_FIELDS.get(file_name, set()) - header
+            )
+            if canonical_missing:
+                errors.append(
+                    f"{file_name}: missing canonical Teacher fields {canonical_missing}"
+                )
+        if not missing and file_name in {"margin_guard_log.csv", "planner_log.csv"}:
             validate_tau_file(file_name, path, errors, required=dynamic_enabled)
+        if args.require_teacher_meta and not missing and file_name == "event_log.csv":
+            validate_event_log(path, errors)
+        if args.require_teacher_meta and not dynamic_enabled:
+            validate_disabled_tau_rows(
+                file_name, path, dynamic_contract["mode"], errors
+            )
 
     for file_name, required in OPTIONAL_FILE_FIELDS.items():
         path = args.run_dir / file_name
@@ -547,6 +841,30 @@ def main():
                     f"{file_name}: missing complete legacy or Teacher barrier field group"
                 )
             validate_tau_file(file_name, path, errors, required=dynamic_enabled)
+            if args.require_teacher_meta:
+                canonical_missing = sorted(
+                    TEACHER_CANONICAL_FILE_FIELDS["global_seesm_log.csv"] - header
+                )
+                if canonical_missing:
+                    errors.append(
+                        f"{file_name}: missing canonical Teacher fields {canonical_missing}"
+                    )
+                if not dynamic_enabled:
+                    validate_disabled_tau_rows(
+                        file_name, path, dynamic_contract["mode"], errors
+                    )
+                try:
+                    global_enabled = parse_meta_bool(
+                        teacher_meta.get("global_seesm_enable", False),
+                        "global_seesm_enable",
+                    )
+                except ValueError as exc:
+                    errors.append(f"meta.yaml: {exc}")
+                    global_enabled = False
+                if global_enabled and not read_rows(path):
+                    errors.append(
+                        "global_seesm_log.csv: global_seesm_enable=true requires data rows"
+                    )
 
     teacher_mode = dynamic_contract["mode"] in TEACHER_TAU_MODES
     tau_stage_path = args.run_dir / "tau_stage_log.csv"
@@ -555,6 +873,7 @@ def main():
         dynamic_contract,
         errors,
         required=dynamic_enabled and teacher_mode,
+        canonical_teacher=args.require_teacher_meta,
     )
     if tau_stage_header:
         headers["tau_stage_log.csv"] = tau_stage_header

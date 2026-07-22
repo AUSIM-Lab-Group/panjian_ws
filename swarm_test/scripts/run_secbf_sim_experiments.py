@@ -5,6 +5,7 @@ import argparse
 import copy
 import csv
 import datetime as dt
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -31,9 +32,95 @@ REQUIRED_TRIAL_LOGS = (
     "margin_guard_log.csv",
     "planner_log.csv",
     "timing_log.csv",
+    "mpc_margin_log.csv",
     "event_log.csv",
     "tau_stage_log.csv",
+    "global_seesm_log.csv",
 )
+B1_REQUIRED_TRIAL_LOGS = (
+    "robot_log.csv",
+    "obstacle_log.csv",
+    "event_log.csv",
+    "data_processor_summary.csv",
+    "data_processor_distance.csv",
+)
+LOG_PROFILES = {
+    "teacher_seesm_v1": {
+        "required_logs": REQUIRED_TRIAL_LOGS,
+        "required_data_rows": (
+            "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
+            "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
+            "event_log.csv", "tau_stage_log.csv",
+        ),
+        "teacher_formula_applicable": True,
+    },
+    "teacher_distance_mpc_v1": {
+        "required_logs": REQUIRED_TRIAL_LOGS,
+        "required_data_rows": (
+            "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
+            "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
+            "event_log.csv",
+        ),
+        "teacher_formula_applicable": False,
+    },
+    "legacy_b1_v1": {
+        "required_logs": B1_REQUIRED_TRIAL_LOGS,
+        "required_data_rows": B1_REQUIRED_TRIAL_LOGS,
+        "teacher_formula_applicable": False,
+    },
+}
+
+EXPECTED_ROS_PACKAGE_PATHS = {
+    "swarm_test": "swarm_test",
+    "mpc_secbf": "planner/mpc_secbf",
+    "semantic_guard": "planner/semantic_guard",
+    "mpc_dcbf": "planner/mpc_dcbf",
+    "traj_planner": "planner/vomp_planner/traj_planner",
+}
+
+# These are the algorithm-bearing executables selected by the two planner
+# launch families.  Every real trial resolves and hashes its own subset, so a
+# source-clean worktree cannot silently execute a stale Legacy overlay.
+RUNTIME_NODE_SPECS = {
+    "teacher_mpc": (
+        "mpc_secbf", "mpc_secbf_node",
+        ("planner/mpc_secbf", "planner/semantic_guard/include"),
+    ),
+    "teacher_guard_ground_truth": (
+        "semantic_guard", "beta_ground_truth_node",
+        ("planner/semantic_guard",),
+    ),
+    "global_planner": (
+        "traj_planner", "globalFsm_by_adsm",
+        ("planner/vomp_planner/traj_planner", "planner/semantic_guard/include"),
+    ),
+    "obstacle_manager": (
+        "traj_planner", "obs_Manager_node",
+        ("planner/vomp_planner/traj_planner", "planner/semantic_guard/include"),
+    ),
+    "phase5_logger": (
+        "swarm_test", "phase5_csv_logger.py", ("swarm_test/scripts",),
+    ),
+    "legacy_acbf_mpc": (
+        "mpc_dcbf", "mpc_node_c", ("planner/mpc_dcbf",),
+    ),
+}
+
+ALGORITHM_VERSION = "teacher_v1"
+FORMULA_VERSION = "teacher_v1_formula_001"
+LOG_SCHEMA_VERSION = "teacher_v1_log_schema_001"
+DEFAULT_PROTOCOL_ID = "teacher_v1_protocol_001"
+TEACHER_MANUSCRIPT_PATH = Path("/home/lxr20/下载/draft_V7_071.tex")
+TEACHER_MANUSCRIPT_SHA256 = (
+    "c4482f2acda626162a830859db1745d12ee3afaf0c8820b47a3dd94b641ebdf5"
+)
+TEACHER_OUTPUT_ROOT = Path(
+    "/home/lxr20/lxr/seesm_social_navigation/新计划实验输出目录"
+)
+TEACHER_PARAMETER_FREEZE = TEACHER_OUTPUT_ROOT / "01_spec/parameter_freeze.yaml"
+TEACHER_SEESM_REPO = Path("/home/lxr20/lxr/Teacher-v1/seesm_social_navigation")
+RUN_COMPLETE_SENTINEL = "RUN_COMPLETE.txt"
+RUN_INVALID_SENTINEL = "RUN_INVALID.txt"
 GOAL_TOLERANCE_M = 0.55
 DEADLOCK_MEAN_ABS_V_MPS = 0.05
 
@@ -323,10 +410,310 @@ RELATIVE_VELOCITY_CONVENTION = "v_rel=v_robot-v_obstacle"
 PREDICTION_SIGN_CONVENTION = "l(t+tau)=l+tau*v_rel"
 
 
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(str(temporary), str(path))
+
+
+def log_profile_for_baseline(baseline_id: str) -> str:
+    if baseline_id == "B1_ACBF_fixed":
+        return "legacy_b1_v1"
+    if baseline_id == "Standard_MPC_CBF":
+        return "teacher_distance_mpc_v1"
+    return "teacher_seesm_v1"
+
+
+def required_logs_for_baseline(baseline_id: str) -> tuple:
+    return tuple(LOG_PROFILES[log_profile_for_baseline(baseline_id)]["required_logs"])
+
+
+def ensure_teacher_output_root(output_path: Path) -> Path:
+    """Resolve and constrain every real Teacher run to the frozen output root."""
+    allowed_root = TEACHER_OUTPUT_ROOT.expanduser().resolve(strict=False)
+    resolved = Path(output_path).expanduser().resolve(strict=False)
+    if resolved != allowed_root and allowed_root not in resolved.parents:
+        raise ValueError(
+            f"Teacher-v1 output must be under {allowed_root}; got {resolved}"
+        )
+    return resolved
+
+
+def _git_bytes(repository: Path, *arguments: str) -> bytes:
+    result = subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"git provenance failed for {repository}: {' '.join(arguments)}: {message}"
+        )
+    return result.stdout
+
+
+def git_repo_provenance(repository: Path) -> dict:
+    repository = Path(repository).resolve(strict=True)
+    commit = _git_bytes(repository, "rev-parse", "HEAD").decode().strip()
+    tree = _git_bytes(repository, "rev-parse", "HEAD^{tree}").decode().strip()
+    branch = _git_bytes(repository, "branch", "--show-current").decode().strip()
+    status = _git_bytes(
+        repository, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    )
+    tracked_patch = _git_bytes(repository, "diff", "--binary", "HEAD", "--")
+    index_patch = _git_bytes(repository, "diff", "--cached", "--binary", "HEAD", "--")
+    untracked_manifest = _git_bytes(
+        repository, "ls-files", "--others", "--exclude-standard", "-z"
+    )
+    state_payload = b"\0".join(
+        (status, tracked_patch, index_patch, untracked_manifest)
+    )
+    return {
+        "path": str(repository),
+        "commit": commit,
+        "tree": tree,
+        "branch": branch,
+        "dirty": bool(status),
+        "status_sha256": sha256_bytes(status),
+        "tracked_patch_sha256": sha256_bytes(tracked_patch),
+        "index_patch_sha256": sha256_bytes(index_patch),
+        "untracked_manifest_sha256": sha256_bytes(untracked_manifest),
+        "working_tree_state_sha256": sha256_bytes(state_payload),
+    }
+
+
+def checked_file_hash(path: Path, expected_sha256=None) -> dict:
+    path = Path(path).expanduser().resolve(strict=True)
+    actual = sha256_file(path)
+    if expected_sha256 is not None and actual != expected_sha256:
+        raise RuntimeError(
+            f"source hash mismatch for {path}: expected {expected_sha256}, got {actual}"
+        )
+    return {"path": str(path), "sha256": actual}
+
+
+def resolve_ros_package(package: str) -> Path:
+    result = subprocess.run(
+        ["rospack", "find", package],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"rospack find {package} failed: {result.stderr.strip()}"
+        )
+    return Path(result.stdout.strip()).resolve(strict=True)
+
+
+def command_version(command: list) -> str:
+    result = subprocess.run(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"toolchain provenance failed: {' '.join(command)}: "
+            f"{result.stdout.strip()}"
+        )
+    return result.stdout.splitlines()[0].strip() if result.stdout else ""
+
+
+def tracked_source_latest_mtime_ns(source_roots: tuple) -> tuple:
+    root = repo_root().resolve(strict=True)
+    relative_roots = [str(Path(value)) for value in source_roots]
+    tracked = _git_bytes(root, "ls-files", "-z", "--", *relative_roots)
+    paths = []
+    for raw_name in tracked.split(b"\0"):
+        if not raw_name:
+            continue
+        path = (root / raw_name.decode("utf-8")).resolve(strict=True)
+        paths.append(path)
+    if not paths:
+        raise RuntimeError(
+            f"no tracked source files found for runtime roots {relative_roots}"
+        )
+    return max(path.stat().st_mtime_ns for path in paths), len(paths)
+
+
+def runtime_executable_record(label: str) -> dict:
+    try:
+        import roslib.packages
+    except ImportError as exc:
+        raise RuntimeError("roslib is required for runtime provenance") from exc
+
+    package, executable, source_roots = RUNTIME_NODE_SPECS[label]
+    candidates = roslib.packages.find_node(package, executable) or []
+    resolved_candidates = sorted(
+        {str(Path(candidate).resolve(strict=True)) for candidate in candidates}
+    )
+    if len(resolved_candidates) != 1:
+        raise RuntimeError(
+            f"runtime node {package}/{executable} must resolve uniquely; "
+            f"got {resolved_candidates}"
+        )
+    path = Path(resolved_candidates[0])
+    if not path.is_file() or not os.access(str(path), os.X_OK):
+        raise RuntimeError(f"runtime node is not executable: {path}")
+
+    package_path = resolve_ros_package(package)
+    expected_package_path = (
+        repo_root() / EXPECTED_ROS_PACKAGE_PATHS[package]
+    ).resolve(strict=True)
+    if package_path != expected_package_path:
+        raise RuntimeError(
+            f"ROS overlay mismatch for {package}: got {package_path}, "
+            f"expected {expected_package_path}"
+        )
+
+    latest_source_mtime_ns, tracked_source_count = (
+        tracked_source_latest_mtime_ns(source_roots)
+    )
+    source_tree = repo_root().resolve(strict=True)
+    executes_source_directly = path == source_tree or source_tree in path.parents
+    if not executes_source_directly and path.stat().st_mtime_ns < latest_source_mtime_ns:
+        raise RuntimeError(
+            f"stale runtime node {package}/{executable}: binary {path} predates "
+            "its tracked Teacher-v1 sources; rebuild the isolated overlay"
+        )
+
+    build_prefix = ""
+    for raw_prefix in os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
+        if not raw_prefix:
+            continue
+        prefix = Path(raw_prefix).resolve(strict=False)
+        if path == prefix or prefix in path.parents:
+            build_prefix = str(prefix)
+            break
+    stat = path.stat()
+    return {
+        "label": label,
+        "package": package,
+        "executable": executable,
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "build_prefix": build_prefix,
+        "package_source_path": str(package_path),
+        "source_roots": list(source_roots),
+        "tracked_source_count": tracked_source_count,
+        "latest_source_mtime_ns": latest_source_mtime_ns,
+        "executes_source_directly": executes_source_directly,
+    }
+
+
+def collect_trial_runtime_identity(baseline_id: str) -> dict:
+    labels = (
+        ("legacy_acbf_mpc", "global_planner", "obstacle_manager", "phase5_logger")
+        if baseline_id == "B1_ACBF_fixed"
+        else (
+            "teacher_mpc", "teacher_guard_ground_truth", "global_planner",
+            "obstacle_manager", "phase5_logger",
+        )
+    )
+    return {
+        "baseline_id": baseline_id,
+        "executables": {
+            label: runtime_executable_record(label) for label in labels
+        },
+    }
+
+
+def collect_run_context(args) -> dict:
+    panjian = git_repo_provenance(repo_root())
+    seesm = git_repo_provenance(TEACHER_SEESM_REPO)
+    for label, source in (("panjian_ws", panjian), ("seesm_social_navigation", seesm)):
+        if source["branch"] != "teacher-v1":
+            raise RuntimeError(
+                f"{label} must be on teacher-v1, got {source['branch']!r}"
+            )
+        if source["dirty"]:
+            raise RuntimeError(
+                f"{label} Teacher-v1 source is dirty; commit or isolate changes before a real run"
+            )
+
+    resolved_packages = {}
+    for package, relative_path in EXPECTED_ROS_PACKAGE_PATHS.items():
+        resolved = resolve_ros_package(package)
+        expected = (repo_root() / relative_path).resolve(strict=True)
+        if resolved != expected:
+            raise RuntimeError(
+                f"ROS overlay mismatch: rospack resolves {package} to "
+                f"{resolved}, expected {expected}"
+            )
+        resolved_packages[package] = str(resolved)
+
+    inputs = {
+        "teacher_manuscript": checked_file_hash(
+            TEACHER_MANUSCRIPT_PATH, TEACHER_MANUSCRIPT_SHA256
+        ),
+        "parameter_freeze": checked_file_hash(TEACHER_PARAMETER_FREEZE),
+        "scenario_config": checked_file_hash(Path(args.config)),
+        "secbf_planner_launch": checked_file_hash(
+            repo_root() / "swarm_test/launch/secbf_planner.launch"
+        ),
+        "acbf0_planner_launch": checked_file_hash(
+            repo_root() / "swarm_test/launch/acbf0_planner.launch"
+        ),
+        "start_test_launch": checked_file_hash(
+            repo_root() / "swarm_test/launch/start_test.launch"
+        ),
+    }
+    if getattr(args, "seed_manifest", None):
+        inputs["seed_manifest"] = checked_file_hash(Path(args.seed_manifest))
+    return {
+        "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "repositories": {
+            "panjian_ws": panjian,
+            "seesm_social_navigation": seesm,
+        },
+        "inputs": inputs,
+        "ros": {
+            "package_paths": resolved_packages,
+            "ros_package_path": os.environ.get("ROS_PACKAGE_PATH", ""),
+            "cmake_prefix_path": os.environ.get("CMAKE_PREFIX_PATH", ""),
+        },
+        "build_environment": {
+            "ros_distribution": command_version(["rosversion", "-d"]),
+            "cmake": command_version(["cmake", "--version"]),
+            "compiler": command_version(["g++", "--version"]),
+            "python": sys.version.splitlines()[0],
+        },
+    }
+
+
 def bool_switch(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def strict_bool_value(value, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{field} must be a boolean")
 
 
 def ros_bool(value) -> str:
@@ -563,7 +950,22 @@ def scenario_switches(baseline_id: str, scenario: dict) -> dict:
                 "Teacher-v1 runner only permits teacher_tca or explicit "
                 "teacher_ke_tca diagnostic mode"
             )
-    if baseline_id == "Standard_MPC_CBF":
+    if baseline_id == "B1_ACBF_fixed":
+        # B1 is the frozen legacy ACBF launch, not a Teacher SEESM method.
+        # Record only its effective launch semantics instead of inheriting the
+        # Teacher defaults into metadata.
+        values["cbf_metric"] = "legacy_acbf"
+        values["semantic_mode"] = "not_applicable"
+        values["fixed_beta"] = 0.30
+        values["guard_enabled"] = "false"
+        values["enable_rate_limit"] = "false"
+        values["enable_available_projection"] = "false"
+        values["enable_guard_fallback"] = "false"
+        values["mpc_feasibility_guard_enabled"] = "false"
+        values["front_adsm"] = "true"
+        values["global_seesm_enable"] = "false"
+        values["side_preference_enabled"] = "false"
+    elif baseline_id == "Standard_MPC_CBF":
         # Scenario YAML is allowed to tune experiment methods, but it must not
         # mutate the definition of the distance-only Standard control.  Re-lock
         # every semantic/Guard/global/side path after applying scenario values.
@@ -612,8 +1014,8 @@ def dynamic_tau_contract(switches: dict, beta_source: str) -> dict:
         "relative_velocity_convention": RELATIVE_VELOCITY_CONVENTION,
         "prediction_sign": PREDICTION_SIGN_CONVENTION,
         "mpc_stage_policy": mpc_stage_policy,
-        "h_ee": "||l+tau*v_rel||-R_obs-R_robot",
-        "h_see": "h_ee-beta",
+        "h_eesm": "||l+tau*v_rel||-R_obs-R_robot",
+        "h_seesm": "h_eesm-beta",
         "beta_source": beta_source,
     }
 
@@ -676,14 +1078,35 @@ def write_reference_path_config(run_dir: Path, scenario: dict):
 def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: dict,
                    classes_arg: str, num_obs: int, duration_sec: int,
                    reference_waypoints=None, trial=None, resolved_baseline_id=None,
-                   requested_baseline_label=None) -> Path:
+                   requested_baseline_label=None, protocol_id=DEFAULT_PROTOCOL_ID,
+                   run_context=None, artifact_hashes=None) -> Path:
     meta_path = run_dir / "meta.yaml"
+    canonical_meta_path = run_dir / "run_meta.yaml"
     start_x, start_y = scenario_start_xy(scenario)
     goal_x, goal_y = scenario_goal_xy(scenario)
     map_cfg = scenario.get("map", {})
     baseline = BASELINES[baseline_id]
     switches = scenario_switches(baseline_id, scenario)
+    is_legacy_b1 = baseline_id == "B1_ACBF_fixed"
+    log_profile = log_profile_for_baseline(baseline_id)
+    profile_contract = LOG_PROFILES[log_profile]
+    random_seed = trial["seed"] if trial is not None else 1
     meta = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "formula_version": FORMULA_VERSION,
+        "log_schema_version": LOG_SCHEMA_VERSION,
+        "protocol_id": protocol_id,
+        "log_profile": log_profile,
+        "run_state": "running",
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "teacher_manuscript_sha256": TEACHER_MANUSCRIPT_SHA256,
+        "teacher_formula_applicable": profile_contract["teacher_formula_applicable"],
+        "method_algorithm_version": (
+            "legacy_v1_acbf_frozen"
+            if baseline_id == "B1_ACBF_fixed"
+            else ALGORITHM_VERSION
+        ),
+        "safety_bound_applicable": baseline_id != "B1_ACBF_fixed",
         "experiment_id": (
             "Exp2_category_aware" if scenario_id.startswith("Exp2_")
             else "Exp3_context_modulation" if scenario_id.startswith("Exp3_")
@@ -718,10 +1141,13 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "obstacle_count": num_obs,
         "obstacle_classes": classes_arg,
         "obstacles": scenario.get("obstacles", []),
-        "beta_table": scenario_beta_bar(baseline_id, scenario),
-        "mu_weights": scenario_mu_weights(baseline_id, scenario),
-        "guard_eta": 0.10,
-        "guard_enable": baseline["guard_enabled"],
+        "beta_table": (
+            {"legacy_fixed_clearance_m": 0.30}
+            if is_legacy_b1 else scenario_beta_bar(baseline_id, scenario)
+        ),
+        "mu_weights": None if is_legacy_b1 else scenario_mu_weights(baseline_id, scenario),
+        "guard_eta": None if is_legacy_b1 else 0.10,
+        "guard_enable": False if is_legacy_b1 else baseline["guard_enabled"],
         "semantic_mode": switches["semantic_mode"],
         "enable_rate_limit": switches["enable_rate_limit"],
         "enable_available_projection": switches["enable_available_projection"],
@@ -744,26 +1170,39 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "dynamic_tau": dynamic_tau_contract(
             switches, baseline_beta_source(baseline_id)
         ),
-        "guard_tau": 0.20,
+        "guard_tau_policy": (
+            "dynamic_tau_contract"
+            if bool_switch(switches["dynamic_tau_enabled"])
+            else "disabled_zero"
+        ),
         "mpc_horizon": 20,
-        "dt": 0.10,
+        "control_period_sec": 0.10,
+        "prediction_step_sec": 0.20,
         "planner_v_max": scenario_planner_v_max(scenario),
-        "random_seed": 1,
+        "random_seed": random_seed,
         "duration_sec": duration_sec,
-        "safety_contract": {
-            "h_see": "||p_rel + tau v_rel|| - R_obs - R_robot - beta_i",
-            "guard_upper_bound": "min(beta_bar_i, max(0, h_EE - eta))",
-            "fixed_margin_baseline": "beta_i = d_safe",
-        },
-        "required_logs": [
-            "robot_log.csv",
-            "obstacle_log.csv",
-            "margin_guard_log.csv",
-            "planner_log.csv",
-            "timing_log.csv",
-            "event_log.csv",
-            "tau_stage_log.csv",
-        ],
+        "safety_contract": (
+            {
+                "applicable": False,
+                "method": "legacy_acbf_controller_type_4",
+                "fixed_clearance_m": 0.30,
+                "tau_scale": 0.30,
+            }
+            if is_legacy_b1 else {
+                "applicable": True,
+                "h_phys": "||l||-R_obs-R_robot",
+                "h_eesm": "||l+tau*v_rel||-R_obs-R_robot",
+                "h_seesm": "h_eesm-beta_i",
+                "guard_upper_bound": (
+                    "min(beta_max(c),beta_previous+delta_beta_plus,"
+                    "max(h_eesm-h_min,0))"
+                ),
+                "fixed_margin_baseline": "beta_i = d_safe",
+            }
+        ),
+        "required_logs": list(profile_contract["required_logs"]),
+        "provenance": run_context or {},
+        "artifact_hashes": artifact_hashes or {},
     }
     if is_reference_path_scene(scenario):
         waypoints = reference_waypoints
@@ -778,9 +1217,591 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
     if trial is not None:
         meta["trial_manifest"] = {"trial_id": trial["trial_id"], "seed": trial["seed"], "scenario_id": trial["scenario_id"]}
         meta["perturbations"] = trial["rows"]
-    with meta_path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(meta, f, sort_keys=False, allow_unicode=True)
+    serialized = yaml.safe_dump(
+        meta, sort_keys=False, allow_unicode=True
+    )
+    # run_meta.yaml is canonical. meta.yaml is a byte-identical compatibility
+    # mirror for existing analysis scripts.
+    atomic_write_text(canonical_meta_path, serialized)
+    atomic_write_text(meta_path, serialized)
     return meta_path
+
+
+def load_yaml_mapping(path: Path) -> dict:
+    if yaml is None:
+        raise RuntimeError("PyYAML is required for Teacher-v1 metadata")
+    with Path(path).open("r", encoding="utf-8") as stream:
+        payload = yaml.safe_load(stream)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return payload
+
+
+def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
+    errors = []
+    run_dir = Path(run_dir)
+    meta_path = run_dir / "meta.yaml"
+    canonical_path = run_dir / "run_meta.yaml"
+    if not meta_path.exists():
+        errors.append("missing meta.yaml")
+    if not canonical_path.exists():
+        errors.append("missing run_meta.yaml")
+    if errors:
+        return False, errors
+    try:
+        meta_bytes = meta_path.read_bytes()
+        canonical_bytes = canonical_path.read_bytes()
+        if meta_bytes != canonical_bytes:
+            errors.append("meta.yaml is not byte-identical to run_meta.yaml")
+        meta = load_yaml_mapping(canonical_path)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return False, [f"invalid run metadata: {exc}"]
+    except yaml.YAMLError as exc:
+        return False, [f"invalid run metadata YAML: {exc}"]
+
+    expected_values = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "formula_version": FORMULA_VERSION,
+        "log_schema_version": LOG_SCHEMA_VERSION,
+        "teacher_manuscript_sha256": TEACHER_MANUSCRIPT_SHA256,
+    }
+    for key, expected in expected_values.items():
+        if meta.get(key) != expected:
+            errors.append(f"{key} must be {expected!r}")
+    protocol_id = str(meta.get("protocol_id", "")).strip()
+    if not protocol_id:
+        errors.append("protocol_id must be nonempty")
+    if meta.get("run_state") not in {"running", "complete", "invalid"}:
+        errors.append("run_state must be running, complete, or invalid")
+
+    baseline_id = str(meta.get("baseline_id", ""))
+    if baseline_id not in BASELINES:
+        expected_profile = ""
+        errors.append(f"unknown baseline_id in metadata: {baseline_id!r}")
+    else:
+        expected_profile = log_profile_for_baseline(baseline_id)
+    if meta.get("log_profile") != expected_profile:
+        errors.append(
+            f"log_profile {meta.get('log_profile')!r} does not match baseline "
+            f"profile {expected_profile!r}"
+        )
+    if expected_profile:
+        expected_logs = list(LOG_PROFILES[expected_profile]["required_logs"])
+        if meta.get("required_logs") != expected_logs:
+            errors.append("required_logs does not match the code-controlled log profile")
+        expected_formula_applicable = LOG_PROFILES[expected_profile][
+            "teacher_formula_applicable"
+        ]
+        if meta.get("teacher_formula_applicable") is not expected_formula_applicable:
+            errors.append("teacher_formula_applicable does not match log profile")
+
+    def require_meta_bool(field, expected):
+        try:
+            actual = strict_bool_value(meta.get(field), field)
+        except (TypeError, ValueError):
+            errors.append(f"{field} must be a boolean")
+            return
+        if actual is not expected:
+            errors.append(f"{field} must be {str(expected).lower()} for {baseline_id}")
+
+    if baseline_id == "B1_ACBF_fixed":
+        expected_b1_values = {
+            "semantic_mode": "not_applicable",
+            "cbf_metric": "legacy_acbf",
+            "fixed_beta": 0.30,
+            "front_adsm": "true",
+        }
+        for field, expected in expected_b1_values.items():
+            if meta.get(field) != expected:
+                errors.append(f"{field} must be {expected!r} for B1_ACBF_fixed")
+        for field in (
+            "guard_enable", "enable_rate_limit", "enable_available_projection",
+            "enable_guard_fallback", "mpc_feasibility_guard_enabled",
+            "global_seesm_enable", "side_preference_enabled",
+        ):
+            require_meta_bool(field, False)
+        if meta.get("mu_weights") is not None or meta.get("guard_eta") is not None:
+            errors.append("B1 semantic Guard metadata must be not applicable")
+        safety_contract = meta.get("safety_contract", {})
+        if not isinstance(safety_contract, dict) or safety_contract.get("applicable") is not False:
+            errors.append("B1 safety_contract must declare applicable=false")
+    elif baseline_id == "Standard_MPC_CBF":
+        if meta.get("semantic_mode") != "fixed" or meta.get("cbf_metric") != "distance":
+            errors.append("Standard_MPC_CBF must use fixed/distance metadata")
+        for field in (
+            "guard_enable", "enable_rate_limit", "enable_available_projection",
+            "enable_guard_fallback", "mpc_feasibility_guard_enabled", "front_adsm",
+            "global_seesm_enable", "side_preference_enabled",
+        ):
+            require_meta_bool(field, False)
+        dynamic_meta = meta.get("dynamic_tau", {})
+        if not isinstance(dynamic_meta, dict) or dynamic_meta.get("enabled") is not False:
+            errors.append("Standard_MPC_CBF must disable dynamic_tau")
+    elif expected_profile == "teacher_seesm_v1":
+        if meta.get("cbf_metric") != "seesm":
+            errors.append("Teacher SEESM profile must use cbf_metric='seesm'")
+        dynamic_meta = meta.get("dynamic_tau", {})
+        if not isinstance(dynamic_meta, dict) or dynamic_meta.get("enabled") is not True:
+            errors.append("Teacher SEESM profile must enable dynamic_tau")
+
+    try:
+        ensure_teacher_output_root(run_dir)
+    except ValueError as exc:
+        if strict_provenance:
+            errors.append(str(exc))
+
+    provenance = meta.get("provenance")
+    if strict_provenance:
+        if not isinstance(provenance, dict):
+            errors.append("provenance must be a mapping")
+        else:
+            repositories = provenance.get("repositories")
+            inputs = provenance.get("inputs")
+            if not isinstance(repositories, dict):
+                errors.append("provenance.repositories must be a mapping")
+            else:
+                for repo_name in ("panjian_ws", "seesm_social_navigation"):
+                    source = repositories.get(repo_name)
+                    if not isinstance(source, dict):
+                        errors.append(f"missing provenance repository {repo_name}")
+                        continue
+                    if not str(source.get("commit", "")).strip():
+                        errors.append(f"{repo_name} provenance is missing commit")
+                    if not str(source.get("tree", "")).strip():
+                        errors.append(f"{repo_name} provenance is missing tree")
+                    if source.get("branch") != "teacher-v1":
+                        errors.append(f"{repo_name} provenance branch is not teacher-v1")
+                    if source.get("dirty") is not False:
+                        errors.append(f"{repo_name} provenance must be clean")
+                    if not str(source.get("working_tree_state_sha256", "")).strip():
+                        errors.append(f"{repo_name} provenance is missing state hash")
+            if not isinstance(inputs, dict):
+                errors.append("provenance.inputs must be a mapping")
+            else:
+                manuscript = inputs.get("teacher_manuscript", {})
+                if manuscript.get("sha256") != TEACHER_MANUSCRIPT_SHA256:
+                    errors.append("provenance teacher manuscript hash mismatch")
+                for input_name in (
+                    "parameter_freeze", "scenario_config", "secbf_planner_launch",
+                    "acbf0_planner_launch", "start_test_launch",
+                ):
+                    record = inputs.get(input_name)
+                    if not isinstance(record, dict) or not str(record.get("sha256", "")):
+                        errors.append(f"missing provenance input hash {input_name}")
+
+            ros_provenance = provenance.get("ros")
+            if not isinstance(ros_provenance, dict):
+                errors.append("provenance.ros must be a mapping")
+            else:
+                package_paths = ros_provenance.get("package_paths")
+                if not isinstance(package_paths, dict):
+                    errors.append("provenance.ros.package_paths must be a mapping")
+                else:
+                    for package, relative_path in EXPECTED_ROS_PACKAGE_PATHS.items():
+                        expected_path = str(
+                            (repo_root() / relative_path).resolve(strict=True)
+                        )
+                        if package_paths.get(package) != expected_path:
+                            errors.append(
+                                f"provenance ROS package path mismatch for {package}"
+                            )
+
+            build_environment = provenance.get("build_environment")
+            if not isinstance(build_environment, dict):
+                errors.append("provenance.build_environment must be a mapping")
+            else:
+                for tool in ("ros_distribution", "cmake", "compiler", "python"):
+                    if not str(build_environment.get(tool, "")).strip():
+                        errors.append(
+                            f"provenance.build_environment.{tool} is required"
+                        )
+
+            runtime = provenance.get("runtime")
+            if not isinstance(runtime, dict):
+                errors.append("provenance.runtime must be a mapping")
+            else:
+                if runtime.get("baseline_id") != baseline_id:
+                    errors.append("provenance.runtime baseline_id mismatch")
+                records = runtime.get("executables")
+                expected_labels = (
+                    (
+                        "legacy_acbf_mpc", "global_planner", "obstacle_manager",
+                        "phase5_logger",
+                    )
+                    if baseline_id == "B1_ACBF_fixed"
+                    else (
+                        "teacher_mpc", "teacher_guard_ground_truth",
+                        "global_planner", "obstacle_manager", "phase5_logger",
+                    )
+                )
+                if not isinstance(records, dict):
+                    errors.append("provenance.runtime.executables must be a mapping")
+                else:
+                    for label in expected_labels:
+                        record = records.get(label)
+                        if not isinstance(record, dict):
+                            errors.append(f"missing runtime executable {label}")
+                            continue
+                        if not str(record.get("path", "")).strip():
+                            errors.append(f"runtime executable {label} has no path")
+                        digest = str(record.get("sha256", ""))
+                        if len(digest) != 64:
+                            errors.append(f"runtime executable {label} has invalid hash")
+                        if not str(record.get("package_source_path", "")).strip():
+                            errors.append(
+                                f"runtime executable {label} has no package source path"
+                            )
+                        if (
+                            not record.get("executes_source_directly")
+                            and not str(record.get("build_prefix", "")).strip()
+                        ):
+                            errors.append(
+                                f"compiled runtime executable {label} has no build prefix"
+                            )
+
+        artifacts = meta.get("artifact_hashes")
+        if not isinstance(artifacts, dict) or not artifacts.get("obstacles_param.yaml"):
+            errors.append("artifact_hashes.obstacles_param.yaml is required")
+        elif isinstance(artifacts, dict):
+            for artifact_name, expected_hash in artifacts.items():
+                artifact_path = run_dir / artifact_name
+                if not artifact_path.exists():
+                    errors.append(f"missing hashed trial artifact {artifact_name}")
+                elif sha256_file(artifact_path) != expected_hash:
+                    errors.append(f"trial artifact hash mismatch: {artifact_name}")
+    return not errors, errors
+
+
+def update_run_meta_state(run_dir: Path, state: str, validation: dict) -> None:
+    if state not in {"complete", "invalid"}:
+        raise ValueError(f"invalid final run state: {state}")
+    run_dir = Path(run_dir)
+    meta = load_yaml_mapping(run_dir / "run_meta.yaml")
+    meta["run_state"] = state
+    meta["finalized_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    meta["validation"] = validation
+    serialized = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
+    atomic_write_text(run_dir / "run_meta.yaml", serialized)
+    atomic_write_text(run_dir / "meta.yaml", serialized)
+
+
+def parse_sentinel(path: Path) -> dict:
+    values = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        return {}
+    return values
+
+
+def write_integrity_manifest(run_dir: Path) -> Path:
+    run_dir = Path(run_dir)
+    meta = load_yaml_mapping(run_dir / "run_meta.yaml")
+    names = list(meta.get("required_logs", []))
+    names.extend(meta.get("artifact_hashes", {}).keys())
+    names.extend(
+        [
+            "run_meta.yaml", "meta.yaml", "summary.csv", "summary.md",
+            "csv_contract_check.txt", "process_status.yaml",
+            "verify_safety_bound.txt",
+        ]
+    )
+    unique_names = []
+    for name in names:
+        name = str(name)
+        if name not in unique_names and (run_dir / name).exists():
+            unique_names.append(name)
+    lines = [f"{sha256_file(run_dir / name)}  {name}" for name in unique_names]
+    manifest = run_dir / "trial_integrity.sha256"
+    atomic_write_text(manifest, "\n".join(lines) + "\n")
+    return manifest
+
+
+def verify_integrity_manifest(run_dir: Path) -> bool:
+    run_dir = Path(run_dir)
+    manifest = run_dir / "trial_integrity.sha256"
+    if not manifest.exists() or manifest.stat().st_size <= 0:
+        return False
+    try:
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            expected, separator, relative_name = line.partition("  ")
+            if not separator or not expected or not relative_name:
+                return False
+            relative = Path(relative_name)
+            if relative.is_absolute() or ".." in relative.parts:
+                return False
+            target = run_dir / relative
+            if not target.is_file() or sha256_file(target) != expected:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def is_complete_run_dir(run_dir: Path) -> bool:
+    run_dir = Path(run_dir)
+    complete = run_dir / RUN_COMPLETE_SENTINEL
+    invalid = run_dir / RUN_INVALID_SENTINEL
+    if not complete.exists() or complete.stat().st_size <= 0 or invalid.exists():
+        return False
+    if not (run_dir / "summary.csv").exists() or not (run_dir / "run_meta.yaml").exists():
+        return False
+    sentinel = parse_sentinel(complete)
+    expected_hash = sentinel.get("run_meta_sha256", "")
+    if sentinel.get("trial_valid") != "true":
+        return False
+    if not expected_hash or expected_hash != sha256_file(run_dir / "run_meta.yaml"):
+        return False
+    manifest_hash = sentinel.get("integrity_manifest_sha256", "")
+    manifest_path = run_dir / "trial_integrity.sha256"
+    if (
+        not manifest_hash
+        or not manifest_path.exists()
+        or sha256_file(manifest_path) != manifest_hash
+        or not verify_integrity_manifest(run_dir)
+    ):
+        return False
+    try:
+        meta = load_yaml_mapping(run_dir / "run_meta.yaml")
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    if meta.get("run_state") != "complete":
+        return False
+    meta_ok, _ = validate_run_meta_contract(run_dir, strict_provenance=True)
+    logs_ok, _ = audit_required_logs(run_dir, str(meta.get("baseline_id", "")))
+    return meta_ok and logs_ok
+
+
+def summary_declares_valid(run_dir: Path) -> tuple:
+    path = Path(run_dir) / "summary.csv"
+    if not path.exists():
+        return False, ["missing summary.csv"]
+    try:
+        with path.open("r", newline="", encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+    except (OSError, csv.Error) as exc:
+        return False, [f"invalid summary.csv: {exc}"]
+    if len(rows) != 1:
+        return False, ["summary.csv must contain exactly one data row"]
+    row = rows[0]
+    if str(row.get("trial_valid", "")).strip().lower() not in {
+        "1", "true", "yes",
+    }:
+        return False, ["summary.csv does not declare trial_valid=true"]
+    if not str(row.get("termination_reason", "")).strip():
+        return False, ["summary.csv has no termination_reason"]
+    return True, []
+
+
+def validate_process_status(run_dir: Path) -> tuple:
+    path = Path(run_dir) / "process_status.yaml"
+    if not path.exists():
+        return False, ["missing process_status.yaml"]
+    try:
+        status = load_yaml_mapping(path)
+    except (OSError, RuntimeError, TypeError, ValueError, yaml.YAMLError) as exc:
+        return False, [f"invalid process_status.yaml: {exc}"]
+    errors = []
+    if status.get("process_contract_passed") is not True:
+        errors.append("process_status.yaml does not declare process_contract_passed=true")
+    if status.get("unexpected_exits") not in ([], None):
+        errors.append("process_status.yaml contains unexpected process exits")
+    return not errors, errors
+
+
+def seal_trial(run_dir: Path, valid: bool, validation: dict) -> Path:
+    run_dir = Path(run_dir)
+    validation = dict(validation)
+    state = "complete" if valid else "invalid"
+    update_run_meta_state(run_dir, state, validation)
+    finalization_errors = []
+    if valid:
+        meta = load_yaml_mapping(run_dir / "run_meta.yaml")
+        baseline_id = str(meta.get("baseline_id", ""))
+        meta_ok, meta_errors = validate_run_meta_contract(
+            run_dir, strict_provenance=True
+        )
+        logs_ok, log_errors = audit_required_logs(run_dir, baseline_id)
+        csv_ok, _ = run_csv_contract_check(run_dir)
+        summary_ok, summary_errors = summary_declares_valid(run_dir)
+        process_ok, process_errors = validate_process_status(run_dir)
+        finalization_errors.extend(meta_errors)
+        finalization_errors.extend(log_errors)
+        finalization_errors.extend(summary_errors)
+        finalization_errors.extend(process_errors)
+        if validation.get("trial_valid") is not True:
+            finalization_errors.append("validation.trial_valid is not true")
+        if validation.get("metadata_contract_passed") is not True or not meta_ok:
+            finalization_errors.append("metadata contract did not pass")
+        if validation.get("csv_contract_passed") is not True or not csv_ok:
+            finalization_errors.append("CSV contract did not pass finalization")
+        if validation.get("process_contract_passed") is not True or not process_ok:
+            finalization_errors.append("process contract did not pass finalization")
+        if not logs_ok:
+            finalization_errors.append("required-log audit did not pass finalization")
+        if not summary_ok:
+            finalization_errors.append("summary audit did not pass finalization")
+        finalization_errors = list(dict.fromkeys(finalization_errors))
+        if finalization_errors:
+            valid = False
+            state = "invalid"
+            validation["trial_valid"] = False
+            validation["metadata_contract_passed"] = bool(meta_ok)
+            validation["csv_contract_passed"] = bool(csv_ok)
+            validation["process_contract_passed"] = bool(process_ok)
+            validation["finalization_errors"] = finalization_errors
+            validation["invalid_reasons"] = list(dict.fromkeys(
+                list(validation.get("invalid_reasons", []))
+                + finalization_errors
+            ))
+            update_run_meta_state(run_dir, state, validation)
+    integrity_manifest = write_integrity_manifest(run_dir) if valid else None
+    sentinel_name = RUN_COMPLETE_SENTINEL if valid else RUN_INVALID_SENTINEL
+    opposite_name = RUN_INVALID_SENTINEL if valid else RUN_COMPLETE_SENTINEL
+    if (run_dir / opposite_name).exists():
+        raise RuntimeError(f"refusing to create dual trial sentinels in {run_dir}")
+    reasons = validation.get("invalid_reasons", [])
+    lines = [
+        "TEACHER_V1_RUN_COMPLETE" if valid else "TEACHER_V1_RUN_INVALID",
+        f"validated_at={dt.datetime.now(dt.timezone.utc).isoformat()}",
+        f"trial_valid={'true' if valid else 'false'}",
+        f"termination_reason={validation.get('termination_reason', '')}",
+        f"run_meta_sha256={sha256_file(run_dir / 'run_meta.yaml')}",
+        "integrity_manifest_sha256=" + (
+            sha256_file(integrity_manifest) if integrity_manifest is not None else ""
+        ),
+        f"invalid_reasons={';'.join(str(reason) for reason in reasons)}",
+    ]
+    sentinel_path = run_dir / sentinel_name
+    atomic_write_text(sentinel_path, "\n".join(lines) + "\n")
+    return sentinel_path
+
+
+def csv_has_data_rows(path: Path) -> bool:
+    path = Path(path)
+    if not path.exists() or path.stat().st_size <= 1:
+        return False
+    with path.open("r", newline="", encoding="utf-8", errors="replace") as stream:
+        rows = [row for row in csv.reader(stream) if any(cell.strip() for cell in row)]
+    if path.name.startswith("data_processor_"):
+        return bool(rows)
+    return len(rows) >= 2
+
+
+def audit_required_logs(run_dir: Path, baseline_id: str):
+    profile = LOG_PROFILES[log_profile_for_baseline(baseline_id)]
+    run_dir = Path(run_dir)
+    errors = []
+    for name in profile["required_logs"]:
+        path = run_dir / name
+        if not path.exists() or path.stat().st_size <= 1:
+            errors.append(f"missing or empty required log: {name}")
+    for name in profile["required_data_rows"]:
+        if not csv_has_data_rows(run_dir / name):
+            errors.append(f"required log has no data rows: {name}")
+
+    def dict_rows(name):
+        path = run_dir / name
+        if not path.exists():
+            return []
+        try:
+            with path.open("r", newline="", encoding="utf-8", errors="replace") as stream:
+                return list(csv.DictReader(stream))
+        except (OSError, csv.Error):
+            return []
+
+    meta_path = run_dir / "run_meta.yaml"
+    if meta_path.exists():
+        event_rows = dict_rows("event_log.csv")
+        events = {str(row.get("event", "")).strip() for row in event_rows}
+        if not {"start", "stop"}.issubset(events):
+            errors.append("event_log.csv must contain start and stop events")
+
+    if baseline_id == "B1_ACBF_fixed":
+        if len(dict_rows("robot_log.csv")) < 2:
+            errors.append("B1 robot_log.csv requires at least two samples")
+        obstacle_rows = dict_rows("obstacle_log.csv")
+        if len(obstacle_rows) < 2:
+            errors.append("B1 obstacle_log.csv requires at least two samples")
+        meaningful_obstacle_rows = 0
+        for row in obstacle_rows:
+            try:
+                values = [
+                    float(row.get(field, "0"))
+                    for field in ("x", "y", "radius", "d_i", "rel_v", "h_EE")
+                ]
+            except (TypeError, ValueError):
+                continue
+            if all(math.isfinite(value) for value in values) and any(
+                abs(value) > 1.0e-12 for value in values
+            ):
+                meaningful_obstacle_rows += 1
+        if meaningful_obstacle_rows == 0:
+            errors.append("B1 obstacle_log.csv has only all-zero startup rows")
+
+    if meta_path.exists():
+        try:
+            meta = load_yaml_mapping(meta_path)
+        except (OSError, RuntimeError, TypeError, ValueError, yaml.YAMLError) as exc:
+            errors.append(f"cannot audit log coverage without valid metadata: {exc}")
+            meta = {}
+        try:
+            global_seesm_enabled = strict_bool_value(
+                meta.get("global_seesm_enable", False),
+                "global_seesm_enable",
+            )
+        except (TypeError, ValueError):
+            global_seesm_enabled = False
+            errors.append("global_seesm_enable metadata is not boolean")
+        if global_seesm_enabled and not csv_has_data_rows(
+            run_dir / "global_seesm_log.csv"
+        ):
+            errors.append(
+                "global_seesm_enable=true requires global_seesm_log.csv data rows"
+            )
+
+        try:
+            duration_sec = float(meta.get("duration_sec", 0.0))
+        except (TypeError, ValueError):
+            duration_sec = 0.0
+        minimum_span = max(0.5, duration_sec * 0.5)
+        coverage_logs = ["robot_log.csv", "obstacle_log.csv"]
+        if baseline_id != "B1_ACBF_fixed":
+            coverage_logs.append("planner_log.csv")
+        for name in coverage_logs:
+            timestamps = []
+            for row in dict_rows(name):
+                try:
+                    value = float(row.get("t", row.get("time", "")))
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(value):
+                    timestamps.append(value)
+            if len(timestamps) < 2:
+                errors.append(f"{name} has fewer than two timestamped samples")
+            elif max(timestamps) - min(timestamps) < minimum_span:
+                errors.append(
+                    f"{name} covers less than 50% of duration_sec"
+                )
+    return not errors, errors
+
+
+def run_csv_contract_check(run_dir: Path):
+    command = [
+        sys.executable,
+        str(repo_root() / "swarm_test/scripts/check_experiment_csv_fields.py"),
+        "--require-teacher-meta",
+        str(run_dir),
+    ]
+    result = subprocess.run(
+        command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        check=False,
+    )
+    atomic_write_text(Path(run_dir) / "csv_contract_check.txt", result.stdout)
+    return result.returncode == 0, "csv_contract_check.txt"
 
 
 def obstacle_classes(obstacles: list) -> str:
@@ -1278,8 +2299,8 @@ def dynamic_tau_audit(run_dir: Path) -> dict:
         "dynamic_tau_min_distance": "",
         "dynamic_tau_max_tau": "",
         "dynamic_tau_formula": "",
-        "dynamic_tau_h_ee": "",
-        "dynamic_tau_h_see": "",
+        "dynamic_tau_h_eesm": "",
+        "dynamic_tau_h_seesm": "",
         "dynamic_tau_beta_source": "",
         "dynamic_tau_relative_position_convention": "",
         "dynamic_tau_relative_velocity_convention": "",
@@ -1309,8 +2330,8 @@ def dynamic_tau_audit(run_dir: Path) -> dict:
         for source_key, output_key in (
             ("mode", "dynamic_tau_mode"),
             ("formula", "dynamic_tau_formula"),
-            ("h_ee", "dynamic_tau_h_ee"),
-            ("h_see", "dynamic_tau_h_see"),
+            ("h_eesm", "dynamic_tau_h_eesm"),
+            ("h_seesm", "dynamic_tau_h_seesm"),
             ("beta_source", "dynamic_tau_beta_source"),
             ("relative_position_convention", "dynamic_tau_relative_position_convention"),
             ("relative_velocity_convention", "dynamic_tau_relative_velocity_convention"),
@@ -1512,7 +2533,8 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
 
 
 def classify_termination_reason(run_dir: Path, nav_metrics: dict,
-                                phase5_metrics: dict, planner_metrics: dict) -> str:
+                                phase5_metrics: dict, planner_metrics: dict,
+                                baseline_id="SEESM_Ours") -> str:
     """Classify one trial using only auditable logs and final metrics.
 
     Collision takes priority over goal arrival, because a trial that reaches the
@@ -1520,11 +2542,13 @@ def classify_termination_reason(run_dir: Path, nav_metrics: dict,
     infeasible MPC solve is classified only when the trial does not eventually
     reach the goal; this preserves the distinction between recovery and failure.
     """
-    missing = [
-        name for name in REQUIRED_TRIAL_LOGS
-        if not (run_dir / name).exists() or (run_dir / name).stat().st_size <= 1
-    ]
-    if missing or phase5_metrics.get("robot_records", 0) <= 0 or planner_metrics.get("planner_records", 0) <= 0:
+    logs_ok, _ = audit_required_logs(run_dir, baseline_id)
+    planner_required = baseline_id != "B1_ACBF_fixed"
+    if (
+        not logs_ok
+        or phase5_metrics.get("robot_records", 0) <= 0
+        or (planner_required and planner_metrics.get("planner_records", 0) <= 0)
+    ):
         return "invalid"
 
     def as_float(metrics, key):
@@ -1568,7 +2592,10 @@ def guard_log_path(run_dir: Path) -> Path:
 
 
 def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
-                  verify_passed, verify_note, duration_sec):
+                  verify_passed, verify_note, duration_sec,
+                  csv_contract_passed=None, csv_contract_note="",
+                  metadata_contract_passed=None, process_contract_passed=True,
+                  invalid_reasons=None):
     summary_md = run_dir / "summary.md"
     summary_csv = run_dir / "summary.csv"
     guard_log = guard_log_path(run_dir)
@@ -1582,7 +2609,26 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
     nav_metrics = summarize_data_processor(data_summary, duration_sec)
     phase5_metrics = summarize_phase5_logs(run_dir)
     termination_reason = classify_termination_reason(
-        run_dir, nav_metrics, phase5_metrics, planner_metrics
+        run_dir, nav_metrics, phase5_metrics, planner_metrics, baseline_id
+    )
+    invalid_reasons = list(invalid_reasons or [])
+    logs_ok, log_errors = audit_required_logs(run_dir, baseline_id)
+    invalid_reasons.extend(log_errors)
+    if termination_reason == "invalid":
+        invalid_reasons.append("termination classification is invalid")
+    if csv_contract_passed is not True:
+        invalid_reasons.append("CSV contract failed")
+    if metadata_contract_passed is not True:
+        invalid_reasons.append("metadata contract failed")
+    if process_contract_passed is not True:
+        invalid_reasons.append("process contract failed")
+    invalid_reasons = list(dict.fromkeys(invalid_reasons))
+    trial_valid = (
+        logs_ok
+        and termination_reason != "invalid"
+        and csv_contract_passed is True
+        and metadata_contract_passed is True
+        and process_contract_passed is True
     )
     phase5_metrics["success"] = (
         int(termination_reason == "success") if termination_reason != "invalid" else ""
@@ -1604,6 +2650,13 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- termination_reason: {termination_reason}",
         f"- goal_reached: {phase5_metrics['goal_reached']}",
         f"- success: {phase5_metrics['success']}",
+        f"- trial_valid: {trial_valid}",
+        f"- log_profile: {log_profile_for_baseline(baseline_id)}",
+        f"- csv_contract_passed: {csv_contract_passed}",
+        f"- csv_contract_note: {csv_contract_note}",
+        f"- metadata_contract_passed: {metadata_contract_passed}",
+        f"- process_contract_passed: {process_contract_passed}",
+        f"- invalid_reasons: {';'.join(invalid_reasons)}",
         f"- robot_path_length_m: {phase5_metrics['robot_path_length_m']}",
         f"- robot_final_goal_distance_m: {phase5_metrics['robot_final_goal_distance_m']}",
         f"- log_min_distance_m: {phase5_metrics['log_min_distance_m']}",
@@ -1657,8 +2710,8 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- min_distance: {tau_audit['dynamic_tau_min_distance']}",
         f"- max_tau: {tau_audit['dynamic_tau_max_tau']}",
         f"- formula: {tau_audit['dynamic_tau_formula']}",
-        f"- h_ee: {tau_audit['dynamic_tau_h_ee']}",
-        f"- h_see: {tau_audit['dynamic_tau_h_see']}",
+        f"- h_eesm: {tau_audit['dynamic_tau_h_eesm']}",
+        f"- h_seesm: {tau_audit['dynamic_tau_h_seesm']}",
         f"- beta_source: {tau_audit['dynamic_tau_beta_source']}",
         f"- relative_position_convention: {tau_audit['dynamic_tau_relative_position_convention']}",
         f"- relative_velocity_convention: {tau_audit['dynamic_tau_relative_velocity_convention']}",
@@ -1682,7 +2735,10 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "nav_path_length_m", "nav_travel_time_s", "nav_mean_vel_ms",
                 "nav_mean_ang_rads", "nav_var_vel", "nav_var_ang",
                 "nav_collision_count", "nav_min_distance_m",
-                "termination_reason", "goal_reached", "success", "robot_records", "robot_path_length_m",
+                "termination_reason", "goal_reached", "success", "trial_valid",
+                "log_profile", "csv_contract_passed", "csv_contract_note",
+                "metadata_contract_passed", "process_contract_passed",
+                "invalid_reasons", "robot_records", "robot_path_length_m",
                 "robot_travel_time_s", "robot_final_goal_distance_m",
                 "robot_mean_abs_v", "robot_mean_abs_w",
                 "robot_velocity_smoothness", "robot_control_effort",
@@ -1717,7 +2773,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "dynamic_tau_enabled", "dynamic_tau_mode", "dynamic_tau_delta_tau",
                 "dynamic_tau_ke", "dynamic_tau_tmax",
                 "dynamic_tau_min_speed", "dynamic_tau_min_distance", "dynamic_tau_max_tau",
-                "dynamic_tau_formula", "dynamic_tau_h_ee", "dynamic_tau_h_see",
+                "dynamic_tau_formula", "dynamic_tau_h_eesm", "dynamic_tau_h_seesm",
                 "dynamic_tau_beta_source", "dynamic_tau_relative_position_convention",
                 "dynamic_tau_relative_velocity_convention", "dynamic_tau_prediction_sign",
                 "dynamic_tau_mpc_stage_policy", "output_dir",
@@ -1731,6 +2787,13 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             "guard_log_exists": guard_log.exists(),
             "data_processor_summary_exists": data_summary.exists(),
             "data_processor_distance_exists": data_distance.exists(),
+            "trial_valid": trial_valid,
+            "log_profile": log_profile_for_baseline(baseline_id),
+            "csv_contract_passed": csv_contract_passed,
+            "csv_contract_note": csv_contract_note,
+            "metadata_contract_passed": metadata_contract_passed,
+            "process_contract_passed": process_contract_passed,
+            "invalid_reasons": ";".join(invalid_reasons),
             **nav_metrics,
             **phase5_metrics,
             "safety_bound_passed": verify_passed,
@@ -1740,6 +2803,11 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
             **tau_audit,
             "output_dir": str(run_dir),
         })
+    return {
+        "trial_valid": trial_valid,
+        "termination_reason": termination_reason,
+        "invalid_reasons": invalid_reasons,
+    }
 
 
 def write_aggregate_summary(output_root: Path, run_dirs: list):
@@ -1747,6 +2815,8 @@ def write_aggregate_summary(output_root: Path, run_dirs: list):
     fieldnames = []
     fieldname_set = set()
     for run_dir in run_dirs:
+        if not is_complete_run_dir(run_dir):
+            continue
         summary_csv = run_dir / "summary.csv"
         if not summary_csv.exists():
             continue
@@ -1784,17 +2854,41 @@ def quarantine_incomplete_run_dir(run_dir: Path, timestamp: str) -> Path:
     return candidate
 
 
+def mark_exception_invalid(run_dir: Path, error: Exception) -> None:
+    run_dir = Path(run_dir)
+    if not run_dir.exists() or is_complete_run_dir(run_dir):
+        return
+    reason = f"runner exception: {type(error).__name__}: {error}"
+    validation = {
+        "trial_valid": False,
+        "termination_reason": "invalid",
+        "csv_contract_passed": False,
+        "metadata_contract_passed": False,
+        "process_contract_passed": False,
+        "safety_bound_passed": None,
+        "invalid_reasons": [reason],
+    }
+    if (run_dir / "run_meta.yaml").exists():
+        seal_trial(run_dir, False, validation)
+        return
+    atomic_write_text(
+        run_dir / RUN_INVALID_SENTINEL,
+        "\n".join(
+            [
+                "TEACHER_V1_RUN_INVALID",
+                f"validated_at={dt.datetime.now(dt.timezone.utc).isoformat()}",
+                "trial_valid=false",
+                "termination_reason=invalid",
+                f"invalid_reasons={reason}",
+            ]
+        ) + "\n",
+    )
+
+
 def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp: str,
             trial=None, requested_baseline_label=None):
     run_suffix = trial["trial_id"] if trial is not None else timestamp
     run_dir = Path(args.output_root) / f"{run_suffix}_{scenario_id}_{baseline_id}"
-    summary_path = run_dir / "summary.csv"
-    if getattr(args, "skip_existing_complete", False) and summary_path.exists() and summary_path.stat().st_size > 0:
-        print(f"Skipped complete {scenario_id} / {baseline_id}: {run_dir}")
-        return run_dir
-    if run_dir.exists() and not summary_path.exists():
-        quarantined = quarantine_incomplete_run_dir(run_dir, timestamp)
-        print(f"Quarantined incomplete {scenario_id} / {baseline_id}: {quarantined}")
     if trial is not None:
         scenario, obstacles = materialize_trial(scenario, trial)
     else:
@@ -1817,13 +2911,36 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
             print(f"{name}: {' '.join(cmd)}")
         return None
 
+    run_dir = ensure_teacher_output_root(run_dir)
+    trial_run_context = copy.deepcopy(getattr(args, "run_context", None) or {})
+    trial_run_context["runtime"] = collect_trial_runtime_identity(baseline_id)
+    if run_dir.exists() and is_complete_run_dir(run_dir):
+        if getattr(args, "skip_existing_complete", False):
+            print(f"Skipped sealed complete {scenario_id} / {baseline_id}: {run_dir}")
+            return run_dir
+        raise RuntimeError(
+            f"refusing to overwrite sealed complete trial without a new trial id: {run_dir}"
+        )
+    if run_dir.exists():
+        quarantined = quarantine_incomplete_run_dir(run_dir, timestamp)
+        print(f"Quarantined unsealed/invalid {scenario_id} / {baseline_id}: {quarantined}")
+
     run_dir.mkdir(parents=True, exist_ok=True)
+    artifact_paths = []
     if trial is not None:
         write_trial_artifacts(run_dir, scenario, trial, baseline_id)
+        artifact_paths.extend(
+            [run_dir / "effective_obstacles.yaml", run_dir / "trial_manifest_row.csv"]
+        )
     obstacle_params = write_obstacle_params(run_dir, obstacles)
+    artifact_paths.append(obstacle_params)
     reference_waypoints = None
     if is_reference_path_scene(scenario):
-        _, reference_waypoints = write_reference_path_config(run_dir, scenario)
+        reference_path, reference_waypoints = write_reference_path_config(run_dir, scenario)
+        artifact_paths.append(reference_path)
+    artifact_hashes = {
+        path.name: sha256_file(path) for path in artifact_paths if path.exists()
+    }
     write_run_meta(
         run_dir,
         scenario_id,
@@ -1836,12 +2953,16 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         trial=trial,
         resolved_baseline_id=baseline_id,
         requested_baseline_label=requested_baseline_label,
+        protocol_id=getattr(args, "protocol_id", DEFAULT_PROTOCOL_ID),
+        run_context=trial_run_context,
+        artifact_hashes=artifact_hashes,
     )
     planner_cmd, start_cmd = build_commands(
         scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
     )
 
     processes = []
+    unexpected_exits = []
     roscore = None
     roscore_log = None
     env = process_env(run_dir)
@@ -1851,25 +2972,47 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
             time.sleep(3.0)
 
         planner, planner_log = start_process(planner_cmd, run_dir / "planner.log", env=env)
-        processes.append((planner, planner_log))
+        processes.append(("planner", planner, planner_log))
         time.sleep(3.0)
 
         starter, starter_log = start_process(start_cmd, run_dir / "start_test.log", env=env)
-        processes.append((starter, starter_log))
+        processes.append(("start_test", starter, starter_log))
 
         deadline = time.time() + args.duration_sec
         while time.time() < deadline:
-            if any(proc.poll() not in (None, 0) for proc, _ in processes):
+            for name, proc, _ in processes:
+                return_code = proc.poll()
+                if return_code is not None:
+                    unexpected_exits.append(
+                        {"process": name, "return_code": int(return_code)}
+                    )
+            if roscore is not None and roscore.poll() is not None:
+                unexpected_exits.append(
+                    {"process": "roscore", "return_code": int(roscore.returncode)}
+                )
+            if unexpected_exits:
                 break
             time.sleep(1.0)
     finally:
-        for proc, log_file in reversed(processes):
+        for _, proc, log_file in reversed(processes):
             stop_process(proc)
             log_file.close()
         if roscore is not None:
             stop_process(roscore)
         if roscore_log is not None:
             roscore_log.close()
+
+    process_contract_passed = not unexpected_exits
+    atomic_write_text(
+        run_dir / "process_status.yaml",
+        yaml.safe_dump(
+            {
+                "unexpected_exits": unexpected_exits,
+                "process_contract_passed": process_contract_passed,
+            },
+            sort_keys=False,
+        ),
+    )
 
     if baseline_id == "B1_ACBF_fixed":
         verify_passed, verify_note = None, "B1 has no Guard log"
@@ -1881,7 +3024,16 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
             delta_bar_beta=scenario.get("theory", {}).get("delta_bar_beta", 0.3),
         )
 
-    write_summary(
+    metadata_contract_passed, metadata_errors = validate_run_meta_contract(
+        run_dir, strict_provenance=True
+    )
+    csv_contract_passed, csv_contract_note = run_csv_contract_check(run_dir)
+    pre_summary_invalid_reasons = list(metadata_errors)
+    pre_summary_invalid_reasons.extend(
+        f"unexpected process exit: {entry['process']}={entry['return_code']}"
+        for entry in unexpected_exits
+    )
+    summary_result = write_summary(
         run_dir,
         scenario_id,
         baseline_id,
@@ -1889,14 +3041,30 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         verify_passed,
         verify_note,
         args.duration_sec,
+        csv_contract_passed=csv_contract_passed,
+        csv_contract_note=csv_contract_note,
+        metadata_contract_passed=metadata_contract_passed,
+        process_contract_passed=process_contract_passed,
+        invalid_reasons=pre_summary_invalid_reasons,
     )
-    print(f"Completed {scenario_id} / {baseline_id}: {run_dir}")
+    validation = {
+        "trial_valid": summary_result["trial_valid"],
+        "termination_reason": summary_result["termination_reason"],
+        "csv_contract_passed": csv_contract_passed,
+        "metadata_contract_passed": metadata_contract_passed,
+        "process_contract_passed": process_contract_passed,
+        "safety_bound_passed": verify_passed,
+        "invalid_reasons": summary_result["invalid_reasons"],
+    }
+    sentinel = seal_trial(run_dir, summary_result["trial_valid"], validation)
+    status = "COMPLETE" if sentinel.name == RUN_COMPLETE_SENTINEL else "INVALID"
+    print(f"{status} {scenario_id} / {baseline_id}: {run_dir}")
     return run_dir
 
 
 def main():
     root = repo_root()
-    default_output = root / "swarm_test/output/secbf_runs"
+    default_output = TEACHER_OUTPUT_ROOT
     parser = argparse.ArgumentParser(description="Run MPC-SECBF simulation experiments")
     parser.add_argument("--scenario", default="all")
     parser.add_argument("--baseline", default="all")
@@ -1904,6 +3072,7 @@ def main():
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--seed-manifest")
     parser.add_argument("--output-root", default=str(default_output))
+    parser.add_argument("--protocol-id")
     parser.add_argument("--roscore", choices=["auto", "external"], default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-existing-complete", action="store_true")
@@ -1914,6 +3083,26 @@ def main():
     args = parser.parse_args()
     args.output_root = str(Path(args.output_root).expanduser().resolve())
     args.config = str(Path(args.config).expanduser().resolve())
+    if args.seed_manifest:
+        args.seed_manifest = str(Path(args.seed_manifest).expanduser().resolve())
+    if args.duration_sec <= 0:
+        parser.error("--duration-sec must be positive")
+    if args.repeat <= 0:
+        parser.error("--repeat must be positive")
+    try:
+        args.output_root = str(ensure_teacher_output_root(Path(args.output_root)))
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not args.dry_run:
+        if not str(args.protocol_id or "").strip():
+            parser.error("--protocol-id is required for every non-dry Teacher-v1 run")
+        try:
+            args.run_context = collect_run_context(args)
+        except (OSError, RuntimeError, ValueError) as exc:
+            parser.error(f"Teacher-v1 provenance preflight failed: {exc}")
+    else:
+        args.protocol_id = args.protocol_id or "teacher_v1_dry_run"
+        args.run_context = None
 
     scenarios = load_scenarios(Path(args.config))
     scenario_ids = selected(SCENARIO_INDEX.keys(), args.scenario)
@@ -1922,25 +3111,76 @@ def main():
     if args.seed_manifest and args.repeat != 1:
         parser.error("--seed-manifest cannot be combined with --repeat != 1")
     trials = load_seed_manifest(Path(args.seed_manifest)) if args.seed_manifest else []
+    if args.seed_manifest:
+        manifest_scenarios = {trial["scenario_id"] for trial in trials}
+        missing_scenarios = sorted(set(scenario_ids) - manifest_scenarios)
+        if missing_scenarios:
+            parser.error(
+                "--seed-manifest has no trials for selected scenario(s): "
+                + ", ".join(missing_scenarios)
+            )
     base_timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     completed_runs = []
+    invalid_runs = []
 
     for repeat_idx in range(args.repeat):
         timestamp = base_timestamp if args.repeat == 1 else f"{base_timestamp}_r{repeat_idx + 1:02d}"
         for scenario_id in scenario_ids:
-            scenario_trials = [trial for trial in trials if trial["scenario_id"] == scenario_id] or [None]
+            scenario_trials = (
+                [trial for trial in trials if trial["scenario_id"] == scenario_id]
+                if args.seed_manifest else [None]
+            )
             for trial in scenario_trials:
                 for requested, baseline_id in zip(requested_baselines, baseline_ids):
-                    run_dir = run_one(scenario_id, baseline_id, scenarios[scenario_id], args, timestamp,
-                                      trial=trial, requested_baseline_label=requested)
+                    run_suffix = trial["trial_id"] if trial is not None else timestamp
+                    expected_run_dir = (
+                        Path(args.output_root)
+                        / f"{run_suffix}_{scenario_id}_{baseline_id}"
+                    )
+                    try:
+                        run_dir = run_one(
+                            scenario_id, baseline_id, scenarios[scenario_id], args,
+                            timestamp, trial=trial,
+                            requested_baseline_label=requested,
+                        )
+                    except Exception as exc:
+                        if not args.dry_run:
+                            try:
+                                mark_exception_invalid(expected_run_dir, exc)
+                            except Exception as sentinel_exc:
+                                print(
+                                    f"ERROR could not seal invalid trial {expected_run_dir}: "
+                                    f"{sentinel_exc}",
+                                    file=sys.stderr,
+                                )
+                        print(
+                            f"ERROR {scenario_id} / {baseline_id}: {exc}",
+                            file=sys.stderr,
+                        )
+                        invalid_runs.append(
+                            f"{scenario_id}/{baseline_id}: {exc}"
+                        )
+                        continue
                     if run_dir is not None:
-                        completed_runs.append(run_dir)
+                        if is_complete_run_dir(run_dir):
+                            completed_runs.append(run_dir)
+                        else:
+                            invalid_runs.append(str(run_dir))
 
     if completed_runs:
         aggregate_csv = write_aggregate_summary(Path(args.output_root), completed_runs)
         if aggregate_csv is not None:
             print(f"Wrote aggregate summary: {aggregate_csv}")
+    if invalid_runs:
+        print(
+            f"Teacher-v1 batch invalid: {len(invalid_runs)} trial(s)",
+            file=sys.stderr,
+        )
+        for invalid in invalid_runs:
+            print(f"  - {invalid}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

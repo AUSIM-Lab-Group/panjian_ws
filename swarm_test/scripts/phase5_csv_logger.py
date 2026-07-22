@@ -21,8 +21,16 @@ def parse_classes(text):
 
 
 def yaw_from_quat(q):
-    siny = 2.0 * (q.w * q.z + q.x * q.y)
-    cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    values = (float(q.x), float(q.y), float(q.z), float(q.w))
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("odometry quaternion is non-finite")
+    norm_squared = sum(value * value for value in values)
+    if not math.isfinite(norm_squared) or norm_squared <= 1.0e-24:
+        raise ValueError("odometry quaternion is degenerate")
+    inv_norm = 1.0 / math.sqrt(norm_squared)
+    x, y, z, w = (value * inv_norm for value in values)
+    siny = 2.0 * (w * z + x * y)
+    cosy = 1.0 - 2.0 * (y * y + z * z)
     return math.atan2(siny, cosy)
 
 
@@ -278,7 +286,11 @@ class Phase5CsvLogger:
         self.cmd_w = msg.angular.z
 
     def odom_cb(self, msg):
-        yaw = yaw_from_quat(msg.pose.pose.orientation)
+        try:
+            yaw = yaw_from_quat(msg.pose.pose.orientation)
+        except ValueError as exc:
+            rospy.logerr_throttle(1.0, "phase5_csv_logger: %s", exc)
+            return
         body_vx = msg.twist.twist.linear.x
         body_vy = msg.twist.twist.linear.y
         cos_yaw = math.cos(yaw)
@@ -326,7 +338,9 @@ class Phase5CsvLogger:
 
             d_i = rel_v = ttc = h_phys = h_eesm = 0.0
             tau_result = _tau_result(
-                self.dynamic_tau["mode"], "no_odometry"
+                self.dynamic_tau["mode"],
+                "no_odometry" if self.dynamic_tau_enabled else "disabled",
+                computed=not self.dynamic_tau_enabled,
             )
             if self.robot is not None:
                 # Use the same simultaneous relative convention as Guard:
@@ -352,7 +366,7 @@ class Phase5CsvLogger:
                     )
                 else:
                     tau_result = _tau_result(
-                        "disabled", "disabled", computed=True
+                        self.dynamic_tau["mode"], "disabled", computed=True
                     )
                 hx = lx + tau_result["tau"] * rvx
                 hy = ly + tau_result["tau"] * rvy

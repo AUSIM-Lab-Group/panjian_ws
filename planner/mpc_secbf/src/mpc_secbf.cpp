@@ -383,6 +383,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
                     audit.ly = static_cast<double>(state_sol(1, stage)) - obs(1);
                     audit.vrel_x = static_cast<double>(state_sol(3, stage)) - obs(5);
                     audit.vrel_y = static_cast<double>(state_sol(4, stage)) - obs(6);
+                    audit.r_base = obs(2) + robot_radius_;
 
                     if (dynamic_tau_params_.mode ==
                         semantic_guard::DynamicTauMode::kLegacyGate) {
@@ -404,7 +405,7 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
                     const double lookahead_y =
                         audit.ly + audit.tau_result.tau * audit.vrel_y;
                     audit.h_eesm = std::hypot(lookahead_x, lookahead_y) -
-                                   obs(2) - robot_radius_;
+                                   audit.r_base;
                     audit.h_seesm = audit.h_eesm - beta_i;
                     last_tau_stage_audit.push_back(audit);
                 }
@@ -522,7 +523,7 @@ casadi::MX MPC_SECBF_SOLVE::dynamicTauCasadi(const casadi::MX& lx,
             (dynamic_tau_params_.mode !=
                  semantic_guard::DynamicTauMode::kTeacherKeTca ||
              (std::isfinite(dynamic_tau_params_.ke) &&
-              dynamic_tau_params_.ke >= 0.0));
+              dynamic_tau_params_.ke > 0.0));
         if (!teacher_config_valid) {
             return casadi::MX(0.0);
         }
