@@ -762,18 +762,8 @@ private:
         bool success = false;
         std::vector<double> final_beta_values;
 
-        const bool skip_redundant_full_candidate =
-            mpc_feasibility_guard_enabled_ && obstacle_ids_.size() > 1;
         if (!validateBetaCountLocked(beta_list_, "candidate")) {
             first_attempt_status = "beta_count_mismatch";
-        } else if (skip_redundant_full_candidate) {
-            // The multi-obstacle Teacher Guard immediately performs its
-            // sequential feasibility search with unprocessed components set
-            // to zero.  Solving the full candidate once beforehand is
-            // redundant and can consume an entire control period; the
-            // sequential q=0 attempts still test the same candidate margins
-            // componentwise and remain the auditable feasibility decision.
-            first_attempt_status = "not_run";
         } else {
             success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
             first_attempt_status = success ? "success" : "infeasible";
