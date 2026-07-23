@@ -282,9 +282,9 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
     }
     const int obs_num = obs_matrix->cols() / N_;
     const int obstacle_slots = std::max(1, std::min(max_cbf_obstacles_, obs_num));
-    // The cached graph has exactly max_cbf_obstacles slots.  Preserve the
-    // previous implementation for oversized payloads rather than silently
-    // dropping obstacles from a safety problem.
+    // The selected active set is packed into a graph whose slot count equals
+    // the selected count.  Oversized payloads are still capped by the same
+    // max_cbf_obstacles safety budget as the rebuild path.
     if (static_cast<int>(beta_list.size()) < obs_num) {
         return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);
     }
