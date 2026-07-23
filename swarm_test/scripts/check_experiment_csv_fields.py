@@ -906,9 +906,13 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
 
             expected_active = expected_tau > 0.0
             if expected_clipped <= 0.0:
+                # At exactly zero closing-rate (including a serialized
+                # -0.0), the implementation records the non-closing branch
+                # as receding.  Keep the audit convention identical instead
+                # of classifying signed zero as tangent.
                 expected_reason = (
                     "teacher_receding"
-                    if relative_dot > 0.0
+                    if relative_dot >= 0.0
                     else "teacher_tangent"
                 )
             elif expected_mode == "teacher_ke_tca":
