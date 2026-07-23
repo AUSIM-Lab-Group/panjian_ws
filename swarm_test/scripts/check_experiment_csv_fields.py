@@ -950,7 +950,18 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
                     f"{file_name}:{row_index}: deprecated tau_valid alias must "
                     "match tau_computed=true"
                 )
-            if tau_active is not None and tau_active != expected_active:
+            active_matches = tau_active is None or tau_active == expected_active
+            if (
+                not active_matches
+                and not expected_active
+                and tau_active
+                and speed_squared <= 1.0e-16
+                and abs(numeric_values.get("tau", 0.0)) <= 1.0e-12
+            ):
+                # A positive sub-ulp internal TCA value can be serialized as
+                # tau=0 while the producer still marks the branch active.
+                active_matches = True
+            if not active_matches:
                 errors.append(
                     f"{file_name}:{row_index}: tau_active={tau_active} does not "
                     f"match recomputed active={expected_active}"
