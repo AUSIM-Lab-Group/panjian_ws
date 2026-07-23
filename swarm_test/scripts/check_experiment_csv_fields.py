@@ -969,9 +969,14 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
                     f"match recomputed active={expected_active}"
                 )
             if reason not in expected_reasons:
+                expected_reason_text = (
+                    repr(expected_reason)
+                    if len(expected_reasons) == 1
+                    else repr(sorted(expected_reasons))
+                )
                 errors.append(
                     f"{file_name}:{row_index}: tau_reason {reason!r} does not "
-                    f"match recomputed {sorted(expected_reasons)!r}"
+                    f"match recomputed {expected_reason_text}"
                 )
         if all(field in numeric_values for field in ("h_eesm", "h_seesm", "beta")):
             residual = abs(
