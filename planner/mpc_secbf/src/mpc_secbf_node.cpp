@@ -55,6 +55,7 @@ public:
         // Parameters
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         double epsilon_max, slack_weight;
+        double qf_scale, delta_u_weight, delta_u_max;
         int N;
         int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
@@ -111,6 +112,19 @@ public:
         nh_.param("mpc/beta_bar_unknown", beta_unknown, 0.4);
         nh_.param("mpc/epsilon_max", epsilon_max, 0.05);
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
+        nh_.param("mpc/qf_scale", qf_scale, 1.1);
+        nh_.param("mpc/delta_u_weight", delta_u_weight, 0.02);
+        nh_.param("mpc/delta_u_max", delta_u_max, 0.4);
+        if (!std::isfinite(qf_scale) || qf_scale <= 0.0 ||
+            !std::isfinite(delta_u_weight) || delta_u_weight < 0.0 ||
+            !std::isfinite(delta_u_max) || delta_u_max <= 0.0) {
+            throw std::invalid_argument("invalid Teacher-v1 Qf/Delta-u parameters");
+        }
+        // Retain the validated runtime values for the planner and margin CSV
+        // audit rows; do not let custom launch overrides appear as defaults.
+        qf_scale_ = qf_scale;
+        delta_u_weight_ = delta_u_weight;
+        delta_u_max_ = delta_u_max;
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
         nh_.param("mpc/guard_kappa", guard_kappa, 0.5);
@@ -159,6 +173,9 @@ public:
         N_ = N;
         Ts_ = Ts;
         mpc_feasibility_guard_enabled_ = mpc_feasibility_guard_enabled;
+        qf_scale_ = qf_scale;
+        delta_u_weight_ = delta_u_weight;
+        delta_u_max_ = delta_u_max;
         guard_kappa_ = guard_kappa;
         guard_max_backtracks_ = static_cast<std::size_t>(guard_max_backtracks);
         guard_time_budget_ms_ = guard_time_budget_ms;
@@ -169,7 +186,8 @@ public:
                             dynamic_tau_enabled_, dynamic_tau_params_,
                             side_preference_enabled, side_weight, side_epsilon_n,
                             side_horizon, side_sign, side_min_obstacle_speed,
-                            side_activation_distance);
+                            side_activation_distance, qf_scale, delta_u_weight,
+                            delta_u_max);
         side_preference_enabled_ = side_preference_enabled;
         side_weight_ = side_weight;
 
@@ -178,7 +196,7 @@ public:
                 "cmd_v,cmd_w,ref_x,ref_y,tracking_error,obs_count,constrained_obs_count,beta_count,used_fallback,"
                 "mpc_feasibility_guard_enabled,candidate_feasibility_checked,mpc_feasibility_guard_used,"
                 "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
-                "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,solve_time_ms,"
+                "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,delta_u_max_observed,qf_scale,delta_u_weight,delta_u_bound,solve_time_ms,"
                 "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
                 "T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
@@ -186,7 +204,7 @@ public:
         openCsv(mpc_margin_csv_, mpc_margin_log_path,
                 "t,obstacle_cycle_id,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
                 "first_attempt_status,final_status,mpc_feasibility_guard_enabled,"
-                "candidate_feasibility_checked,mpc_feasibility_guard_used\n");
+                "candidate_feasibility_checked,mpc_feasibility_guard_used,delta_u_max_observed,qf_scale,delta_u_weight,delta_u_bound\n");
         openCsv(tau_stage_csv_, tau_stage_log_path,
                 "t,obstacle_cycle_id,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
                 "tca_raw,tca_clipped,tau,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
@@ -871,6 +889,10 @@ private:
                          << solver_.last_side_dominant_stage << ","
                          << solver_.last_side_dominant_tau << ","
                          << solver_.last_side_dominant_h << ","
+                         << solver_.last_delta_u_max << ","
+                         << qf_scale_ << ","
+                         << delta_u_weight_ << ","
+                         << delta_u_max_ << ","
                          << solve_time_ms << ","
                          << dynamic_tau_enabled << ","
                          << semantic_guard::dynamicTauModeName(tau_result.mode) << ","
@@ -965,7 +987,11 @@ private:
                             << final_status << ","
                             << (mpc_feasibility_guard_enabled_ ? 1 : 0) << ","
                             << (candidate_checked ? 1 : 0) << ","
-                            << (mpc_guard_used ? 1 : 0) << "\n";
+                            << (mpc_guard_used ? 1 : 0) << ","
+                            << solver_.last_delta_u_max << ","
+                            << qf_scale_ << ","
+                            << delta_u_weight_ << ","
+                            << delta_u_max_ << "\n";
         }
         mpc_margin_csv_.flush();
     }
@@ -1111,6 +1137,9 @@ private:
     bool active_enforce_positive_increment_bound_ = true;
     bool active_enforce_available_margin_bound_ = true;
     double typed_payload_timeout_sec_ = 0.50;
+    double qf_scale_ = 1.1;
+    double delta_u_weight_ = 0.02;
+    double delta_u_max_ = 0.4;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_, guard_attempt_csv_;

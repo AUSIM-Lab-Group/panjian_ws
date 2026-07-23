@@ -65,4 +65,6 @@ if(CATKIN_ENABLE_TESTING)
     test/test_typed_margin_contract.cpp)
   catkin_add_gtest(guard_backtracking_test
     test/test_guard_backtracking.cpp)
+  catkin_add_gtest(safety_recurrence_test
+    test/test_safety_recurrence.cpp)
 endif()

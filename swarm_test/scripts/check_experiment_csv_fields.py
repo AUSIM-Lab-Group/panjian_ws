@@ -29,6 +29,7 @@ FILE_FIELDS = {
         "t", "obstacle_cycle_id", "mpc_status", "first_attempt_status",
         "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
+        "delta_u_max_observed", "qf_scale", "delta_u_weight", "delta_u_bound",
         "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
         "mpc_feasibility_guard_used",
     },
@@ -42,6 +43,7 @@ OPTIONAL_FILE_FIELDS = {
         "accepted_beta_source",
         "first_attempt_status", "final_status", "mpc_feasibility_guard_enabled",
         "candidate_feasibility_checked", "mpc_feasibility_guard_used",
+        "delta_u_max_observed", "qf_scale", "delta_u_weight", "delta_u_bound",
     },
     "global_seesm_log.csv": {
         "t", "replan_id", "global_seesm_enable", "obs_id", "beta_applied",
@@ -324,6 +326,40 @@ def validate_semantic_contract_metadata(meta, baseline_id, errors):
         errors.append("metadata typed history_commit_policy mismatch")
 
 
+def validate_t3_objective_metadata(meta, baseline_id, errors):
+    """Fail closed if the logged T3 objective contract is missing or mutated."""
+    if baseline_id == "B1_ACBF_fixed":
+        return
+    expected = {
+        "version": "teacher_v1_t3_objective_001",
+        "first_input_reference": "[cur_state.vx,0]",
+        "delta_u_constraint": "[-delta_u_max,delta_u_max]",
+    }
+    contract = meta.get("mpc_objective_contract")
+    if not isinstance(contract, dict):
+        errors.append("metadata mpc_objective_contract must be a mapping")
+        return
+    for field, expected_value in expected.items():
+        if contract.get(field) != expected_value:
+            errors.append(f"metadata mpc_objective_contract.{field} mismatch")
+    for field, lower, strict in (
+        ("qf_scale", 0.0, True),
+        ("delta_u_weight", 0.0, False),
+        ("delta_u_max", 0.0, True),
+    ):
+        try:
+            top_value = float(meta.get(field))
+            contract_value = float(contract.get(field))
+        except (TypeError, ValueError):
+            errors.append(f"metadata T3 {field} must be numeric")
+            continue
+        invalid = top_value <= lower if strict else top_value < lower
+        if (not math.isfinite(top_value) or invalid or
+                not math.isfinite(contract_value) or
+                contract_value != top_value):
+            errors.append(f"metadata T3 {field} mismatch or invalid")
+
+
 def validate_teacher_metadata(run_dir, errors):
     meta_path = run_dir / "meta.yaml"
     canonical_path = run_dir / "run_meta.yaml"
@@ -362,6 +398,7 @@ def validate_teacher_metadata(run_dir, errors):
 
     baseline_id = str(meta.get("baseline_id", ""))
     validate_semantic_contract_metadata(meta, baseline_id, errors)
+    validate_t3_objective_metadata(meta, baseline_id, errors)
     profile = expected_log_profile(baseline_id)
     if meta.get("log_profile") != profile:
         errors.append(

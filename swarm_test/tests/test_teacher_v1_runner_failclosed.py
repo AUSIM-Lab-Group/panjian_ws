@@ -258,6 +258,60 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
     ]
 
 
+def test_teacher_t3_objective_parameters_are_frozen_in_metadata_and_launch(
+    tmp_path, runner
+):
+    """Q_f and delta-u settings must be provenance-visible and launched."""
+    run_dir = tmp_path / "t3_objective"
+    meta_path = write_meta(runner, run_dir)
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+
+    assert meta["qf_scale"] == pytest.approx(1.1)
+    assert meta["delta_u_weight"] == pytest.approx(0.02)
+    assert meta["delta_u_max"] == pytest.approx(0.4)
+    objective = meta["mpc_objective_contract"]
+    assert objective["version"] == "teacher_v1_t3_objective_001"
+    assert objective["qf_scale"] == pytest.approx(meta["qf_scale"])
+    assert objective["delta_u_weight"] == pytest.approx(meta["delta_u_weight"])
+    assert objective["delta_u_max"] == pytest.approx(meta["delta_u_max"])
+    assert objective["first_input_reference"] == "[cur_state.vx,0]"
+    assert objective["delta_u_constraint"] == "[-delta_u_max,delta_u_max]"
+
+    planner, _ = runner.build_commands(
+        "head_on_context_bl", "SEESM_Ours", run_dir,
+        run_dir / "obstacles_param.yaml", "[adult]", 1, scenario(),
+    )
+    launch_args = {
+        token.split(":=", 1)[0]: token.split(":=", 1)[1]
+        for token in planner if ":=" in token
+    }
+    assert float(launch_args["qf_scale"]) == pytest.approx(1.1)
+    assert float(launch_args["delta_u_weight"]) == pytest.approx(0.02)
+    assert float(launch_args["delta_u_max"]) == pytest.approx(0.4)
+
+
+def test_meta_contract_rejects_mutated_t3_objective_parameters(
+    tmp_path, monkeypatch, runner
+):
+    allowed = tmp_path / "allowed"
+    run_dir = allowed / "trial"
+    monkeypatch.setattr(runner, "TEACHER_OUTPUT_ROOT", allowed)
+    write_meta(runner, run_dir)
+    meta = yaml.safe_load((run_dir / "run_meta.yaml").read_text(encoding="utf-8"))
+    meta["qf_scale"] = 9.0
+    meta["mpc_objective_contract"]["delta_u_max"] = -1.0
+    payload = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
+    (run_dir / "run_meta.yaml").write_text(payload, encoding="utf-8")
+    (run_dir / "meta.yaml").write_text(payload, encoding="utf-8")
+
+    passed, errors = runner.validate_run_meta_contract(
+        run_dir, strict_provenance=True
+    )
+    assert not passed
+    assert any("qf_scale" in error for error in errors)
+    assert any("delta_u_max" in error for error in errors)
+
+
 def test_beta_max_is_a_distinct_provisional_table_and_launch_parameter(
     tmp_path, runner
 ):

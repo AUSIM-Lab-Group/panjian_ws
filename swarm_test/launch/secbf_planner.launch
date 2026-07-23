@@ -52,6 +52,9 @@
   <arg name="dynamic_tau_max_tau" default="2.0"/>
   <arg name="epsilon_max" default="0.05"/>
   <arg name="slack_weight" default="1000.0"/>
+  <arg name="qf_scale" default="1.1"/>
+  <arg name="delta_u_weight" default="0.02"/>
+  <arg name="delta_u_max" default="0.4"/>
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
@@ -194,6 +197,9 @@
     <arg name="robot_radius" value="0.4"/>
     <arg name="epsilon_max" value="$(arg epsilon_max)"/>
     <arg name="slack_weight" value="$(arg slack_weight)"/>
+    <arg name="qf_scale" value="$(arg qf_scale)"/>
+    <arg name="delta_u_weight" value="$(arg delta_u_weight)"/>
+    <arg name="delta_u_max" value="$(arg delta_u_max)"/>
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>

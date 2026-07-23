@@ -48,7 +48,10 @@ public:
                      int side_horizon = 20,
                      double side_sign = 1.0,
                      double side_min_obstacle_speed = 1e-3,
-                     double side_activation_distance = 3.0);
+                     double side_activation_distance = 3.0,
+                     double qf_scale = 1.1,
+                     double delta_u_weight = 0.02,
+                     double delta_u_max = 0.4);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -78,6 +81,7 @@ public:
     int last_side_dynamic_obstacle_count = 0;
     double last_side_dominant_tau = 0.0;
     double last_side_dominant_h = 0.0;
+    double last_delta_u_max = 0.0;
     // Values evaluated from the optimized stage states. They are the same
     // stage-wise Teacher-v1 quantities used by the NLP, not a current-state
     // reconstruction performed by the ROS node.
@@ -129,6 +133,9 @@ private:
     double side_sign_ = 1.0;
     double side_min_obstacle_speed_ = 1e-3;
     double side_activation_distance_ = 3.0;
+    double qf_scale_ = 1.1;
+    double delta_u_weight_ = 0.02;
+    double delta_u_max_ = 0.4;
     std::vector<double> Q_, R_;
 
     // CasADi objects

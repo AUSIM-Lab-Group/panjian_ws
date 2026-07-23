@@ -15,7 +15,9 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    bool side_preference_enabled, double side_weight,
                                    double side_epsilon_n, int side_horizon,
                                    double side_sign, double side_min_obstacle_speed,
-                                   double side_activation_distance) {
+                                   double side_activation_distance,
+                                   double qf_scale, double delta_u_weight,
+                                   double delta_u_max) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -39,6 +41,11 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
     side_sign_ = side_sign >= 0.0 ? 1.0 : -1.0;
     side_min_obstacle_speed_ = std::max(0.0, side_min_obstacle_speed);
     side_activation_distance_ = std::max(0.0, side_activation_distance);
+    qf_scale_ = std::isfinite(qf_scale) && qf_scale > 0.0 ? qf_scale : 1.1;
+    delta_u_weight_ = std::isfinite(delta_u_weight) && delta_u_weight >= 0.0
+                          ? delta_u_weight : 0.02;
+    delta_u_max_ = std::isfinite(delta_u_max) && delta_u_max > 0.0
+                       ? delta_u_max : 0.4;
 
     kine_equation_ = setKinematicEquation();
     ROS_INFO("MPC-SECBF initialized: N=%d, Ts=%.2f, v_max=%.2f, gamma=%.3f, beta_unknown=%.2f, robot_radius=%.2f, epsilon_max=%.3f, max_cbf_obstacles=%d, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e, side_preference=%s, side_weight=%.3f, side_horizon=%d",
@@ -109,9 +116,23 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         Q_mat(1, 1) += 0.05;
         Q_mat(2, 2) += 0.005;
     }
-    // Terminal cost
+    // Independent terminal cost Q_f (Teacher-v1 T3; provisional scale).
     casadi::MX X_err_e = X_k_(casadi::Slice(0, 3), N_) - X_ref(casadi::Slice(), N_ - 1);
-    cost += casadi::MX::mtimes({X_err_e.T(), 1.1 * Q_mat, X_err_e});
+    casadi::DM Qf_mat = casadi::DM::zeros(3, 3);
+    Qf_mat(0, 0) = qf_scale_ * Q_[0];
+    Qf_mat(1, 1) = qf_scale_ * Q_[1];
+    Qf_mat(2, 2) = qf_scale_ * Q_[2];
+    cost += casadi::MX::mtimes({X_err_e.T(), Qf_mat, X_err_e});
+    // Control-increment regularisation. The first increment uses measured v
+    // and a provisional measured omega=0 because the state message has no
+    // angular-rate component; the same bound is enforced as a hard constraint.
+    casadi::MX previous_u = casadi::MX::vertcat({(*cur_state)(3), 0.0});
+    for (int i = 0; i < N_; ++i) {
+        casadi::MX delta_u = U_k_(casadi::Slice(), i) - previous_u;
+        cost += delta_u_weight_ * casadi::MX::sumsqr(delta_u);
+        prob.subject_to(prob.bounded(-delta_u_max_, delta_u, delta_u_max_));
+        previous_u = U_k_(casadi::Slice(), i);
+    }
     cost += slack_weight_ * casadi::MX::sumsqr(epsilon);
 
     // Soft side-passing preference from Eqs. (35)--(42):
@@ -359,6 +380,16 @@ bool MPC_SECBF_SOLVE::solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_st
         for (int i = 0; i < N_; i++) {
             predict_u.push_back(static_cast<double>(ctrl_sol(0, i)));
             predict_u.push_back(static_cast<double>(ctrl_sol(1, i)));
+        }
+        double previous_v = (*cur_state)(3);
+        double previous_w = 0.0;  // state contract has no measured omega
+        for (int i = 0; i < N_; ++i) {
+            const double dv = predict_u[2 * i] - previous_v;
+            const double dw = predict_u[2 * i + 1] - previous_w;
+            last_delta_u_max = std::max(last_delta_u_max,
+                                        std::max(std::abs(dv), std::abs(dw)));
+            previous_v = predict_u[2 * i];
+            previous_w = predict_u[2 * i + 1];
         }
 
         // Evaluate the actual stage-wise tau values from the optimized robot
@@ -628,6 +659,7 @@ void MPC_SECBF_SOLVE::resetAuditMetrics() {
     last_slack_sum = 0.0;
     last_slack_mean = 0.0;
     last_slack_max = 0.0;
+    last_delta_u_max = 0.0;
     last_constrained_obs_count = 0;
     last_constrained_obs_index = -1;
     last_side_cost = 0.0;

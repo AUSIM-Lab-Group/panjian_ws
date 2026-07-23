@@ -87,6 +87,65 @@ def test_mpc_launch_exposes_seesm_default_metric():
     assert '<param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>' in launch
 
 
+def test_teacher_t3_independent_terminal_cost_and_input_increment_contract():
+    """Freeze the executable T3 objective/actuator contract.
+
+    Q_f and the delta-u penalty/bound are deliberately separate parameters;
+    they must be visible in the solver, loaded by the ROS node, and forwarded
+    by both launch layers.  This catches the easy-to-miss failure mode where
+    the objective is changed in ``mpc_secbf.cpp`` but every experiment still
+    runs the old hard-coded defaults.
+    """
+    source = (REPO_ROOT / "planner/mpc_secbf/src/mpc_secbf.cpp").read_text(encoding="utf-8")
+    header = (REPO_ROOT / "planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h").read_text(encoding="utf-8")
+    node = (REPO_ROOT / "planner/mpc_secbf/src/mpc_secbf_node.cpp").read_text(encoding="utf-8")
+    mpc_launch = (REPO_ROOT / "planner/mpc_secbf/launch/mpc_secbf.launch").read_text(encoding="utf-8")
+    planner_launch = (REPO_ROOT / "swarm_test/launch/secbf_planner.launch").read_text(encoding="utf-8")
+
+    # Solver API/state and the independent terminal Q_f expression.
+    assert "double qf_scale" in header
+    assert "double delta_u_weight" in header
+    assert "double delta_u_max" in header
+    assert "qf_scale_" in header and "delta_u_weight_" in header and "delta_u_max_" in header
+    assert "Qf_mat" in source
+    assert "qf_scale_ * Q_[0]" in source
+    assert "qf_scale_ * Q_[1]" in source
+    assert "qf_scale_ * Q_[2]" in source
+
+    # Delta-u is both penalized and constrained, including the first input
+    # increment against the measured state (the documented provisional
+    # omega=0 convention is part of the auditable implementation).
+    assert "delta_u_weight_ * casadi::MX::sumsqr(delta_u)" in source
+    assert "prob.subject_to(prob.bounded(-delta_u_max_, delta_u, delta_u_max_))" in source
+    assert "casadi::MX previous_u = casadi::MX::vertcat({(*cur_state)(3), 0.0})" in source
+    assert "last_delta_u_max" in source
+
+    # ROS parameter plumbing must not silently leave the solver at defaults.
+    for name, ros_name, default in (
+        ("qf_scale", "mpc/qf_scale", "1.1"),
+        ("delta_u_weight", "mpc/delta_u_weight", "0.02"),
+        ("delta_u_max", "mpc/delta_u_max", "0.4"),
+    ):
+        assert f'<arg name="{name}" default="{default}"/>' in mpc_launch
+        assert f'<param name="{ros_name}" value="$(arg {name})" type="double"/>' in mpc_launch
+        assert f'<arg name="{name}" default="{default}"/>' in planner_launch
+        assert f'<arg name="{name}" value="$(arg {name})"/>' in planner_launch
+        assert f'"{ros_name}"' in node
+        assert f"{name}" in node
+        # The values are also emitted in planner/mpc-margin CSV audit rows;
+        # copy the validated ROS values into the node's member state instead
+        # of silently logging the member defaults for custom runs.
+        assert f"{name}_ = {name};" in node
+
+    # The call site must pass the loaded values as the final three init_solver
+    # arguments, rather than relying on header defaults.
+    assert "solver_.init_solver" in node
+    init_call = node.split("solver_.init_solver", 1)[1].split(");", 1)[0]
+    assert "qf_scale" in init_call
+    assert "delta_u_weight" in init_call
+    assert "delta_u_max" in init_call
+
+
 def _runner():
     path = REPO_ROOT / "swarm_test/scripts/run_secbf_sim_experiments.py"
     spec = importlib.util.spec_from_file_location("runner", path)

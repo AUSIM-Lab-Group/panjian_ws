@@ -376,6 +376,9 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "fixed_beta": 0.4,
     "epsilon_max": 0.05,
     "slack_weight": 1000.0,
+    "qf_scale": 1.1,
+    "delta_u_weight": 0.02,
+    "delta_u_max": 0.4,
     "max_cbf_obstacles": 6,
     "guard_h_min": 0.10,
     "delta_beta_positive": 0.30,
@@ -1342,6 +1345,17 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "fixed_beta": switches["fixed_beta"],
         "epsilon_max": switches["epsilon_max"],
         "slack_weight": switches["slack_weight"],
+        "qf_scale": switches["qf_scale"],
+        "delta_u_weight": switches["delta_u_weight"],
+        "delta_u_max": switches["delta_u_max"],
+        "mpc_objective_contract": {
+            "version": "teacher_v1_t3_objective_001",
+            "qf_scale": float(switches["qf_scale"]),
+            "delta_u_weight": float(switches["delta_u_weight"]),
+            "delta_u_max": float(switches["delta_u_max"]),
+            "first_input_reference": "[cur_state.vx,0]",
+            "delta_u_constraint": "[-delta_u_max,delta_u_max]",
+        },
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
         "cbf_metric": switches["cbf_metric"],
         "front_adsm": switches["front_adsm"],
@@ -1606,6 +1620,45 @@ def validate_semantic_margin_metadata(meta: dict, baseline_id: str,
         errors.append("typed_cycle_contract.history_commit_policy mismatch")
 
 
+def validate_t3_objective_metadata(meta: dict, baseline_id: str,
+                                   errors: list) -> None:
+    """Validate the provenance-visible Teacher-v1 T3 objective contract."""
+    if baseline_id == "B1_ACBF_fixed":
+        # The legacy ACBF launch does not instantiate MPC-SECBF.  Its
+        # compatibility metadata may still carry defaults, but no T3 contract
+        # is applicable to that controller.
+        return
+    expected = {
+        "version": "teacher_v1_t3_objective_001",
+        "first_input_reference": "[cur_state.vx,0]",
+        "delta_u_constraint": "[-delta_u_max,delta_u_max]",
+    }
+    contract = meta.get("mpc_objective_contract")
+    if not isinstance(contract, dict):
+        errors.append("mpc_objective_contract must be a mapping")
+        return
+    for field, value in expected.items():
+        if contract.get(field) != value:
+            errors.append(f"mpc_objective_contract.{field} mismatch")
+
+    for field, lower, strict in (
+        ("qf_scale", 0.0, True),
+        ("delta_u_weight", 0.0, False),
+        ("delta_u_max", 0.0, True),
+    ):
+        try:
+            top_value = float(meta.get(field))
+            contract_value = float(contract.get(field))
+        except (TypeError, ValueError):
+            errors.append(f"T3 {field} must be numeric")
+            continue
+        invalid = top_value <= lower if strict else top_value < lower
+        if (not math.isfinite(top_value) or invalid or
+                not math.isfinite(contract_value) or
+                contract_value != top_value):
+            errors.append(f"T3 {field} mismatch or invalid")
+
+
 def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
     errors = []
     run_dir = Path(run_dir)
@@ -1665,6 +1718,31 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
             errors.append("teacher_formula_applicable does not match log profile")
 
     validate_semantic_margin_metadata(meta, baseline_id, errors)
+    validate_t3_objective_metadata(meta, baseline_id, errors)
+
+    # T3 objective values are provenance-bearing parameters, not comments.
+    objective = meta.get("mpc_objective_contract")
+    if not isinstance(objective, dict):
+        errors.append("mpc_objective_contract must be a mapping")
+    else:
+        if objective.get("version") != "teacher_v1_t3_objective_001":
+            errors.append("mpc_objective_contract.version mismatch")
+        for field in ("qf_scale", "delta_u_weight", "delta_u_max"):
+            try:
+                top_value = float(meta[field])
+                contract_value = float(objective[field])
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"mpc_objective_contract.{field} must be numeric")
+                continue
+            if (not math.isfinite(top_value) or not math.isfinite(contract_value) or
+                    top_value <= 0.0 or
+                    (field == "delta_u_weight" and top_value < 0.0) or
+                    abs(top_value - contract_value) > 1.0e-12):
+                errors.append(f"mpc_objective_contract.{field} mismatch or invalid")
+        if objective.get("first_input_reference") != "[cur_state.vx,0]":
+            errors.append("mpc_objective_contract.first_input_reference mismatch")
+        if objective.get("delta_u_constraint") != "[-delta_u_max,delta_u_max]":
+            errors.append("mpc_objective_contract.delta_u_constraint mismatch")
 
     def require_meta_bool(field, expected):
         try:
@@ -2259,6 +2337,9 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"fixed_beta:={switches['fixed_beta']}",
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",
+            f"qf_scale:={switches['qf_scale']}",
+            f"delta_u_weight:={switches['delta_u_weight']}",
+            f"delta_u_max:={switches['delta_u_max']}",
             f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
             f"cbf_metric:={switches['cbf_metric']}",
             f"front_adsm:={switches['front_adsm']}",
