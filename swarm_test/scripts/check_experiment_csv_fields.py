@@ -922,6 +922,8 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
                 expected_reasons = {expected_reason}
                 if speed_squared <= 1.0e-16 and abs(expected_raw) <= 1.0e-12:
                     expected_reasons.update({"teacher_receding", "teacher_tangent"})
+                    if tau_active:
+                        expected_reasons.add("teacher_tca_active")
             elif expected_mode == "teacher_ke_tca":
                 expected_reason = (
                     "teacher_ke_tca_clipped"
