@@ -11,6 +11,9 @@
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="guard_kappa" default="0.5"/>
+  <arg name="guard_max_backtracks" default="6"/>
+  <arg name="guard_time_budget_ms" default="500.0"/>
   <arg name="typed_payload_timeout" default="0.50"/>
   <arg name="side_preference_enabled" default="false"/>
   <arg name="side_weight" default="0.05"/>
@@ -40,6 +43,7 @@
   <arg name="timing_log_path" default=""/>
   <arg name="mpc_margin_log_path" default=""/>
   <arg name="tau_stage_log_path" default=""/>
+  <arg name="guard_attempt_log_path" default=""/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
@@ -56,6 +60,9 @@
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <param name="mpc/guard_kappa" value="$(arg guard_kappa)" type="double"/>
+    <param name="mpc/guard_max_backtracks" value="$(arg guard_max_backtracks)" type="int"/>
+    <param name="mpc/guard_time_budget_ms" value="$(arg guard_time_budget_ms)" type="double"/>
     <param name="mpc/typed_payload_timeout" value="$(arg typed_payload_timeout)" type="double"/>
     <param name="mpc/side_preference_enabled" value="$(arg side_preference_enabled)"/>
     <param name="mpc/side_weight" value="$(arg side_weight)"/>
@@ -76,6 +83,7 @@
     <param name="timing_log_path" value="$(arg timing_log_path)"/>
     <param name="mpc_margin_log_path" value="$(arg mpc_margin_log_path)"/>
     <param name="tau_stage_log_path" value="$(arg tau_stage_log_path)"/>
+    <param name="guard_attempt_log_path" value="$(arg guard_attempt_log_path)"/>
 
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <remap from="/global_path" to="$(arg global_path_topic)"/>

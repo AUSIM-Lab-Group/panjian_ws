@@ -35,6 +35,7 @@ REQUIRED_TRIAL_LOGS = (
     "mpc_margin_log.csv",
     "event_log.csv",
     "tau_stage_log.csv",
+    "guard_attempt_log.csv",
     "global_seesm_log.csv",
     "data_processor_summary.csv",
     "data_processor_distance.csv",
@@ -388,7 +389,10 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "dynamic_tau_tmax": 2.0,
     "dynamic_tau_min_speed": 1e-6,
     "dynamic_tau_min_distance": 1e-6,
-    "dynamic_tau_max_tau": 2.0,
+        "dynamic_tau_max_tau": 2.0,
+    "guard_kappa": 0.5,
+    "guard_max_backtracks": 6,
+    "guard_time_budget_ms": 500.0,
     "side_preference_enabled": "true",
     "side_weight": 0.05,
     "side_epsilon_n": 1e-3,
@@ -1170,8 +1174,16 @@ def typed_cycle_contract(baseline_id: str, switches: dict,
         "id_set_policy": "strict_unique_exact_match",
         "stale_cycle_policy": "reject_nonincreasing_or_unknown_cycle",
         "accepted_sources": [
-            "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+            "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
         ],
+        "guard": {
+            "finite_candidate_set": "beta_pre_guard*kappa^q for q=0..Q-1 plus explicit zero at q=Q",
+            "kappa": float(switches["guard_kappa"]),
+            "max_backtracks_q": int(switches["guard_max_backtracks"]),
+            "time_budget_ms": float(switches["guard_time_budget_ms"]),
+            "risk_proxy": "beta_tilde_descending_then_obstacle_id",
+            "multi_obstacle_policy": "accepted_components_fixed_unprocessed_components_zero",
+        },
         "history_commit_policy": "accepted_feedback_except_no_cbf",
     }
 
@@ -1587,7 +1599,7 @@ def validate_semantic_margin_metadata(meta: dict, baseline_id: str,
     if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
         errors.append("typed_cycle_contract.stale_cycle_policy mismatch")
     if typed.get("accepted_sources") != [
-        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
     ]:
         errors.append("typed_cycle_contract.accepted_sources mismatch")
     if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
@@ -2241,6 +2253,9 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"enable_available_projection:={switches['enable_available_projection']}",
             f"enable_guard_fallback:={switches['enable_guard_fallback']}",
             f"mpc_feasibility_guard_enabled:={switches['mpc_feasibility_guard_enabled']}",
+            f"guard_kappa:={switches['guard_kappa']}",
+            f"guard_max_backtracks:={switches['guard_max_backtracks']}",
+            f"guard_time_budget_ms:={switches['guard_time_budget_ms']}",
             f"fixed_beta:={switches['fixed_beta']}",
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",

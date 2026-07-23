@@ -24,6 +24,9 @@
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="guard_kappa" default="0.5"/>
+  <arg name="guard_max_backtracks" default="6"/>
+  <arg name="guard_time_budget_ms" default="500.0"/>
   <arg name="typed_payload_timeout" default="0.50"/>
   <arg name="side_preference_enabled" default="false"/>
   <arg name="side_weight" default="0.05"/>
@@ -194,6 +197,9 @@
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <arg name="guard_kappa" value="$(arg guard_kappa)"/>
+    <arg name="guard_max_backtracks" value="$(arg guard_max_backtracks)"/>
+    <arg name="guard_time_budget_ms" value="$(arg guard_time_budget_ms)"/>
     <arg name="typed_payload_timeout" value="$(arg typed_payload_timeout)"/>
     <arg name="side_preference_enabled" value="$(arg side_preference_enabled)"/>
     <arg name="side_weight" value="$(arg side_weight)"/>
@@ -218,6 +224,7 @@
     <arg name="timing_log_path" value="$(arg output_dir)/timing_log.csv"/>
     <arg name="mpc_margin_log_path" value="$(arg output_dir)/mpc_margin_log.csv"/>
     <arg name="tau_stage_log_path" value="$(arg output_dir)/tau_stage_log.csv"/>
+    <arg name="guard_attempt_log_path" value="$(arg output_dir)/guard_attempt_log.csv"/>
   </include>
 
   <!-- 轨迹可视化 -->

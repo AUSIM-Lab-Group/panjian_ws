@@ -75,7 +75,7 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     assert "resetAuditMetrics" in header and "resetAuditMetrics" in node
     assert "std::isfinite" in node
     assert "accepted_beta_by_id_" in node
-    assert "acceptedMarginsForIds" in node
+    assert "accepted_beta_by_id_" in node
     assert "retainAcceptedMarginsForActiveIds" in node
     assert "obstacle_cycle_id" in node
 

@@ -63,4 +63,6 @@ if(CATKIN_ENABLE_TESTING)
     test/test_semantic_margin_update.cpp)
   catkin_add_gtest(typed_margin_contract_test
     test/test_typed_margin_contract.cpp)
+  catkin_add_gtest(guard_backtracking_test
+    test/test_guard_backtracking.cpp)
 endif()

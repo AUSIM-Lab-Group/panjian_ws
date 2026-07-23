@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -22,6 +23,7 @@
 #include "semantic_guard/PreGuardMarginArray.h"
 #include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
+#include "semantic_guard/guard_backtracking.hpp"
 #include "semantic_guard/planar_velocity.hpp"
 #include "semantic_guard/typed_margin_contract.hpp"
 
@@ -56,6 +58,8 @@ public:
         int N;
         int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
+        double guard_kappa, guard_time_budget_ms;
+        int guard_max_backtracks;
         bool side_preference_enabled;
         double side_weight, side_epsilon_n, side_sign, side_min_obstacle_speed, side_activation_distance;
         int side_horizon;
@@ -109,6 +113,14 @@ public:
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
+        nh_.param("mpc/guard_kappa", guard_kappa, 0.5);
+        nh_.param("mpc/guard_max_backtracks", guard_max_backtracks, 6);
+        nh_.param("mpc/guard_time_budget_ms", guard_time_budget_ms, 500.0);
+        if (!std::isfinite(guard_kappa) || guard_kappa <= 0.0 || guard_kappa > 1.0 ||
+            guard_max_backtracks < 1 || !std::isfinite(guard_time_budget_ms) ||
+            guard_time_budget_ms <= 0.0) {
+            throw std::invalid_argument("invalid Teacher-v1 Guard backtracking parameters");
+        }
         nh_.param("mpc/typed_payload_timeout", typed_payload_timeout_sec_, 0.50);
         if (!std::isfinite(typed_payload_timeout_sec_) ||
             typed_payload_timeout_sec_ <= 0.0) {
@@ -134,10 +146,12 @@ public:
         std::string timing_log_path;
         std::string mpc_margin_log_path;
         std::string tau_stage_log_path;
+        std::string guard_attempt_log_path;
         nh_.param<std::string>("planner_log_path", planner_log_path, "");
         nh_.param<std::string>("timing_log_path", timing_log_path, "");
         nh_.param<std::string>("mpc_margin_log_path", mpc_margin_log_path, "");
         nh_.param<std::string>("tau_stage_log_path", tau_stage_log_path, "");
+        nh_.param<std::string>("guard_attempt_log_path", guard_attempt_log_path, "");
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -145,6 +159,9 @@ public:
         N_ = N;
         Ts_ = Ts;
         mpc_feasibility_guard_enabled_ = mpc_feasibility_guard_enabled;
+        guard_kappa_ = guard_kappa;
+        guard_max_backtracks_ = static_cast<std::size_t>(guard_max_backtracks);
+        guard_time_budget_ms_ = guard_time_budget_ms;
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
@@ -174,6 +191,10 @@ public:
                 "t,obstacle_cycle_id,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
                 "tca_raw,tca_clipped,tau,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
                 "R_base,beta,h_eesm,h_seesm,tau_valid,tau_reason\n");
+        openCsv(guard_attempt_csv_, guard_attempt_log_path,
+                "t,obstacle_cycle_id,attempt_index,obstacle_id,obstacle_order,q,kappa,"
+                "candidate_beta,accepted_beta,candidate_beta_vector,accepted_beta_vector,"
+                "solver_success,solver_status,slack_max,solve_time_ms,reject_reason\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -209,6 +230,7 @@ public:
         if (timing_csv_.is_open()) timing_csv_.close();
         if (mpc_margin_csv_.is_open()) mpc_margin_csv_.close();
         if (tau_stage_csv_.is_open()) tau_stage_csv_.close();
+        if (guard_attempt_csv_.is_open()) guard_attempt_csv_.close();
     }
 
 private:
@@ -524,6 +546,101 @@ private:
         pub_cmd_.publish(cmd_vel_);
     }
 
+    static std::string serializeVector(const std::vector<double>& values) {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(9);
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i != 0) stream << '|';
+            stream << values[i];
+        }
+        return stream.str();
+    }
+
+    void writeGuardAttempt(size_t attempt_index, size_t obstacle_index,
+                           size_t q, double candidate_beta,
+                           const std::vector<double>& trial,
+                           const std::vector<double>& accepted,
+                           bool success, const std::string& status,
+                           const std::string& reject_reason,
+                           double solve_time_ms) {
+        if (!guard_attempt_csv_.is_open()) return;
+        guard_attempt_csv_ << std::fixed << std::setprecision(9)
+                           << ros::Time::now().toSec() << ","
+                           << active_obstacle_cycle_id_ << ","
+                           << attempt_index << ","
+                           << obstacle_ids_[obstacle_index] << ","
+                           << obstacle_index << "," << q << ","
+                           << guard_kappa_ << "," << candidate_beta << ","
+                           << trial[obstacle_index] << ","
+                           << serializeVector(trial) << ","
+                           << serializeVector(accepted) << ","
+                           << (success ? 1 : 0) << "," << status << ","
+                           << solver_.last_slack_max << "," << solve_time_ms << ","
+                           << reject_reason << "\n";
+        guard_attempt_csv_.flush();
+    }
+
+    bool runTeacherGuardSearch(const std::vector<double>& candidate,
+                               std::vector<double>* accepted,
+                               std::string* source,
+                               std::string* status,
+                               const ros::Time& search_start) {
+        if (!accepted || !source || !status ||
+            !validateBetaCountLocked(candidate, "guard_candidate")) {
+            return false;
+        }
+        accepted->assign(candidate.size(), 0.0);
+        *source = "candidate";
+        *status = "guard_candidate";
+        std::vector<unsigned int> ids(obstacle_ids_.begin(), obstacle_ids_.end());
+        const auto order = semantic_guard::teacherRiskOrder(ids, beta_tilde_list_);
+        size_t attempt_index = 0;
+        if (order.empty()) {
+            Eigen::MatrixXd empty_obs(7, 0);
+            const bool ok = solver_.solve(&cur_state_, &goal_state_, &empty_obs, *accepted);
+            *status = ok ? "guard_zero" : "baseline_infeasible";
+            return ok;
+        }
+        for (size_t order_position = 0; order_position < order.size(); ++order_position) {
+            const size_t index = order[order_position];
+            bool component_accepted = false;
+            for (size_t q = 0; q <= guard_max_backtracks_; ++q) {
+                const double elapsed_ms = (ros::Time::now() - search_start).toSec() * 1000.0;
+                if (elapsed_ms > guard_time_budget_ms_) {
+                    *status = "guard_budget_exceeded";
+                    return false;
+                }
+                std::vector<double> trial = *accepted;
+                const double beta = semantic_guard::teacherBacktrackingCandidate(
+                    candidate[index], guard_kappa_, q, guard_max_backtracks_);
+                if (!std::isfinite(beta)) {
+                    *status = "guard_invalid_candidate";
+                    return false;
+                }
+                trial[index] = beta;
+                const ros::Time attempt_start = ros::Time::now();
+                const bool ok = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, trial);
+                const double solve_ms = (ros::Time::now() - attempt_start).toSec() * 1000.0;
+                writeGuardAttempt(attempt_index++, index, q, candidate[index], trial,
+                                  *accepted, ok, ok ? "feasible" : "infeasible",
+                                  ok ? "" : (q == guard_max_backtracks_ ? "zero_failed" : "retry_kappa"),
+                                  solve_ms);
+                if (ok) {
+                    *accepted = std::move(trial);
+                    component_accepted = true;
+                    if (q > 0) *source = "kappa";
+                    break;
+                }
+            }
+            if (!component_accepted) {
+                *status = "baseline_infeasible";
+                return false;
+            }
+        }
+        *status = (*source == "candidate") ? "guard_candidate" : "guard_kappa";
+        return true;
+    }
+
     void replanCb(const ros::TimerEvent&) {
         std::lock_guard<std::mutex> lock_o(odom_mutex_);
         std::lock_guard<std::mutex> lock_p(path_mutex_);
@@ -607,38 +724,22 @@ private:
         }
         final_status = first_attempt_status;
 
-        if (!success) {
-            if (mpc_feasibility_guard_enabled_) {
-                mpc_guard_used = true;
-                std::vector<double> previous_beta_values;
-                const bool previous_beta_matches =
-                    semantic_guard::acceptedMarginsForIds(
-                        obstacle_ids_, accepted_beta_by_id_,
-                        &previous_beta_values) &&
-                    validateBetaCountLocked(previous_beta_values, "previous");
-                if (previous_beta_matches) {
-                    success = solver_.solve(&cur_state_, &goal_state_,
-                                            &obs_matrix_,
-                                            previous_beta_values);
-                    if (success) {
-                        mpc_status = "guard_previous";
-                        final_status = "success";
-                        accepted_beta_source = "previous";
-                        final_beta_values = previous_beta_values;
-                    }
-                }
+        if (mpc_feasibility_guard_enabled_) {
+            mpc_guard_used = true;
+            success = runTeacherGuardSearch(beta_list_, &final_beta_values,
+                                            &accepted_beta_source, &mpc_status, t0);
+            final_status = success ? "success" : mpc_status;
+        }
 
-                if (!success) {
-                    std::vector<double> zero_beta(obstacle_ids_.size(), 0.0);
-                    success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, zero_beta);
-                    if (success) {
-                        mpc_status = "guard_zero";
-                        final_status = "success";
-                        accepted_beta_source = "zero";
-                        final_beta_values = zero_beta;
-                    }
-                }
-            }
+        if (!success && mpc_feasibility_guard_enabled_) {
+            // F09 treats failure of the explicit zero candidate as baseline
+            // infeasible. Do not silently turn this theorem path into no-CBF.
+            cmd_vel_.linear.x = 0.0;
+            cmd_vel_.angular.z = 0.0;
+            const double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+            writePlannerCsv("baseline_infeasible", first_attempt_status,
+                            final_status, "none", false, true, cost_ms);
+            return;
         }
 
         if (!success) {
@@ -1012,7 +1113,10 @@ private:
     double typed_payload_timeout_sec_ = 0.50;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
-    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_;
+    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_, guard_attempt_csv_;
+    double guard_kappa_ = 0.5;
+    std::size_t guard_max_backtracks_ = 6;
+    double guard_time_budget_ms_ = 500.0;
 };
 
 int main(int argc, char** argv) {

@@ -254,7 +254,7 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
         "enforce_available_margin_bound",
     ]
     assert typed["accepted_sources"] == [
-        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
     ]
 
 

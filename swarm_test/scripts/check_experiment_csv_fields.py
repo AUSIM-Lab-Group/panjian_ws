@@ -317,7 +317,7 @@ def validate_semantic_contract_metadata(meta, baseline_id, errors):
     if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
         errors.append("metadata typed stale_cycle_policy mismatch")
     if typed.get("accepted_sources") != [
-        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
     ]:
         errors.append("metadata typed accepted_sources mismatch")
     if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
