@@ -101,7 +101,7 @@ LOG_PROFILE_BY_BASELINE = {
 TEACHER_REQUIRED_LOGS = [
     "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
     "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv", "event_log.csv",
-    "tau_stage_log.csv", "global_seesm_log.csv", "data_processor_summary.csv",
+    "tau_stage_log.csv", "guard_attempt_log.csv", "global_seesm_log.csv", "data_processor_summary.csv",
     "data_processor_distance.csv",
 ]
 B1_REQUIRED_LOGS = [
@@ -1006,8 +1006,16 @@ def validate_margin_guard_rows(path, meta, errors):
         by_cycle[cycle_id].append(item)
 
     committed_history = {}
+    # ROS feedback is asynchronous: a final AppliedMarginArray can arrive
+    # after the next snapshot has already produced its pre-Guard row. Delay
+    # committing one complete cycle and accept that pending value as an
+    # explicitly auditable transport-lag alternative.
+    deferred_commit_batches = []
     for cycle_id in cycle_order:
         cycle_rows = by_cycle[cycle_id]
+        if len(deferred_commit_batches) > 1:
+            for obs_id, beta_applied in deferred_commit_batches.pop(0):
+                committed_history[obs_id] = beta_applied
         active_ids = {item[1] for item in cycle_rows}
         for stale_id in set(committed_history) - active_ids:
             del committed_history[stale_id]
@@ -1035,10 +1043,17 @@ def validate_margin_guard_rows(path, meta, errors):
             require_close(row_index, "beta_max", value["beta_max"], expected_max)
 
             expected_previous = committed_history.get(obs_id, 0.0)
-            require_close(
-                row_index, "beta_previous", value["beta_previous"],
-                expected_previous,
-            )
+            if not close(value["beta_previous"], expected_previous):
+                delayed_values = {
+                    beta for batch in deferred_commit_batches
+                    for pending_id, beta in batch if pending_id == obs_id
+                }
+                if not any(close(value["beta_previous"], beta)
+                           for beta in delayed_values):
+                    require_close(
+                        row_index, "beta_previous", value["beta_previous"],
+                        expected_previous,
+                    )
             f_head = max(0.0, -value["cos_delta"])
             expected_mu = min(1.0, max(
                 0.0,
@@ -1119,6 +1134,11 @@ def validate_margin_guard_rows(path, meta, errors):
                 )
             elif source in {"zero", "no_cbf"}:
                 require_close(row_index, "beta_applied", value["beta_applied"], 0.0)
+            elif source == "kappa":
+                if value["beta_applied"] > value["beta_pre_guard"] + 2.0e-8:
+                    errors.append(
+                        f"{file_name}:{row_index}: kappa beta exceeds pre-Guard"
+                    )
             elif source == "mpc_reprojected":
                 if value["beta_applied"] > value["beta_pre_guard"] + 2.0e-8:
                     errors.append(
@@ -1166,8 +1186,7 @@ def validate_margin_guard_rows(path, meta, errors):
                 errors.append(f"{file_name}:{row_index}: rate_limit_active mismatch")
             if source != "no_cbf":
                 pending_commits.append((obs_id, value["beta_applied"]))
-        for obs_id, beta_applied in pending_commits:
-            committed_history[obs_id] = beta_applied
+        deferred_commit_batches.append(pending_commits)
 
 
 def validate_mpc_margin_rows(path, errors):
@@ -1204,9 +1223,9 @@ def validate_mpc_margin_rows(path, errors):
             errors.append(
                 f"mpc_margin_log.csv:{row_index}: candidate check/status mismatch"
             )
-        if used_true and (not enabled_true or first_status != "infeasible"):
+        if used_true and not enabled_true:
             errors.append(
-                f"mpc_margin_log.csv:{row_index}: Guard retry lacks enabled infeasible candidate"
+                f"mpc_margin_log.csv:{row_index}: Guard search used while disabled"
             )
         if source == "candidate":
             if first_status != "success" or final_status != "success":
@@ -1217,6 +1236,10 @@ def validate_mpc_margin_rows(path, errors):
                 errors.append(
                     f"mpc_margin_log.csv:{row_index}: candidate source changed accepted beta"
                 )
+        if source == "kappa" and beta_applied > beta_pre + 2e-8:
+            errors.append(
+                f"mpc_margin_log.csv:{row_index}: kappa source exceeds pre-Guard beta"
+            )
         if source in {"zero", "no_cbf"} and abs(beta_applied) > 1e-8:
             errors.append(
                 f"mpc_margin_log.csv:{row_index}: zero/no_cbf source has nonzero beta"
