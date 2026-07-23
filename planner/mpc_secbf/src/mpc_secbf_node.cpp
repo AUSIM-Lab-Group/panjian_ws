@@ -173,9 +173,6 @@ public:
         N_ = N;
         Ts_ = Ts;
         mpc_feasibility_guard_enabled_ = mpc_feasibility_guard_enabled;
-        qf_scale_ = qf_scale;
-        delta_u_weight_ = delta_u_weight;
-        delta_u_max_ = delta_u_max;
         guard_kappa_ = guard_kappa;
         guard_max_backtracks_ = static_cast<std::size_t>(guard_max_backtracks);
         guard_time_budget_ms_ = guard_time_budget_ms;
