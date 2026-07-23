@@ -24,6 +24,7 @@
 #include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
 #include "semantic_guard/guard_backtracking.hpp"
+#include "semantic_guard/safety_recurrence.hpp"
 #include "semantic_guard/planar_velocity.hpp"
 #include "semantic_guard/typed_margin_contract.hpp"
 
@@ -49,6 +50,17 @@ struct TypedMarginCycle {
     bool enforce_available_margin_bound = true;
 };
 
+struct PendingSafetyRecurrence {
+    uint64_t obstacle_cycle_id = 0;
+    double h_eesm_t = 0.0;
+    double beta_t = 0.0;
+    double h_eesm_pred_next = 0.0;
+    double epsilon_t = 0.0;
+    bool cbf_executed = false;
+    bool backup_used = false;
+    bool baseline_infeasible = false;
+};
+
 class MpcSecbfNode {
 public:
     MpcSecbfNode(ros::NodeHandle& nh) : nh_(nh) {
@@ -56,6 +68,7 @@ public:
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         double epsilon_max, slack_weight;
         double qf_scale, delta_u_weight, delta_u_max;
+        double safety_delta_bar, safety_delta_beta_bar;
         int N;
         int max_cbf_obstacles;
         bool mpc_feasibility_guard_enabled;
@@ -115,16 +128,26 @@ public:
         nh_.param("mpc/qf_scale", qf_scale, 1.1);
         nh_.param("mpc/delta_u_weight", delta_u_weight, 0.02);
         nh_.param("mpc/delta_u_max", delta_u_max, 0.4);
+        nh_.param("mpc/safety_delta_bar", safety_delta_bar, 0.10);
+        nh_.param("mpc/safety_delta_beta_bar", safety_delta_beta_bar, 0.30);
         if (!std::isfinite(qf_scale) || qf_scale <= 0.0 ||
             !std::isfinite(delta_u_weight) || delta_u_weight < 0.0 ||
             !std::isfinite(delta_u_max) || delta_u_max <= 0.0) {
             throw std::invalid_argument("invalid Teacher-v1 Qf/Delta-u parameters");
+        }
+        if (!std::isfinite(safety_delta_bar) || safety_delta_bar < 0.0 ||
+            !std::isfinite(safety_delta_beta_bar) || safety_delta_beta_bar < 0.0) {
+            throw std::invalid_argument("invalid Teacher-v1 safety recurrence bounds");
         }
         // Retain the validated runtime values for the planner and margin CSV
         // audit rows; do not let custom launch overrides appear as defaults.
         qf_scale_ = qf_scale;
         delta_u_weight_ = delta_u_weight;
         delta_u_max_ = delta_u_max;
+        gamma_ = gamma;
+        epsilon_max_runtime_ = epsilon_max;
+        safety_delta_bar_ = safety_delta_bar;
+        safety_delta_beta_bar_ = safety_delta_beta_bar;
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
         nh_.param("mpc/guard_kappa", guard_kappa, 0.5);
@@ -161,11 +184,13 @@ public:
         std::string mpc_margin_log_path;
         std::string tau_stage_log_path;
         std::string guard_attempt_log_path;
+        std::string safety_recurrence_log_path;
         nh_.param<std::string>("planner_log_path", planner_log_path, "");
         nh_.param<std::string>("timing_log_path", timing_log_path, "");
         nh_.param<std::string>("mpc_margin_log_path", mpc_margin_log_path, "");
         nh_.param<std::string>("tau_stage_log_path", tau_stage_log_path, "");
         nh_.param<std::string>("guard_attempt_log_path", guard_attempt_log_path, "");
+        nh_.param<std::string>("safety_recurrence_log_path", safety_recurrence_log_path, "");
 
         std::vector<double> Q = {1.0, 1.0, 0.05};
         std::vector<double> R = {0.1, 0.05};
@@ -210,6 +235,11 @@ public:
                 "t,obstacle_cycle_id,attempt_index,obstacle_id,obstacle_order,q,kappa,"
                 "candidate_beta,accepted_beta,candidate_beta_vector,accepted_beta_vector,"
                 "solver_success,solver_status,slack_max,solve_time_ms,reject_reason\n");
+        openCsv(safety_recurrence_csv_, safety_recurrence_log_path,
+                "time,obstacle_cycle_id,obs_id,H_t,h_eesm_t,beta_t,h_eesm_pred_next,H_pred_next,"
+                "h_eesm_next,beta_next,H_next,epsilon_t,epsilon_max,delta,delta_bar,"
+                "delta_beta_plus,delta_beta_bar,recursion_rhs,one_step_residual,bar_w,"
+                "asymptotic_bound,cbf_executed,backup_used,baseline_infeasible,theorem1_applicable,exclusion_reason\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
@@ -246,6 +276,7 @@ public:
         if (mpc_margin_csv_.is_open()) mpc_margin_csv_.close();
         if (tau_stage_csv_.is_open()) tau_stage_csv_.close();
         if (guard_attempt_csv_.is_open()) guard_attempt_csv_.close();
+        if (safety_recurrence_csv_.is_open()) safety_recurrence_csv_.close();
     }
 
 private:
@@ -800,6 +831,7 @@ private:
                           first_attempt_status, final_status, mpc_guard_used);
         publishAcceptedMargins(final_beta_values, accepted_beta_source);
         writeTauStageCsv(accepted_beta_source);
+        writeSafetyRecurrenceCsv(final_beta_values, accepted_beta_source);
 
         // Extract first control
         if (solver_.predict_u.size() >= 2) {
@@ -956,6 +988,79 @@ private:
                            << tau.reason << "\n";
         }
         tau_stage_csv_.flush();
+    }
+
+    void writeSafetyRecurrenceCsv(const std::vector<double>& final_beta_values,
+                                  const std::string& accepted_beta_source) {
+        struct StagePair { double h0 = 0.0; double h1 = 0.0; bool has0 = false; bool has1 = false; };
+        std::map<uint32_t, StagePair> current;
+        for (const MpcTauStageAudit& audit : solver_.last_tau_stage_audit) {
+            if (audit.obstacle_index < 0 ||
+                static_cast<size_t>(audit.obstacle_index) >= obstacle_ids_.size()) continue;
+            StagePair& pair = current[obstacle_ids_[audit.obstacle_index]];
+            if (audit.stage == 0) { pair.h0 = audit.h_eesm; pair.has0 = true; }
+            if (audit.stage == 1) { pair.h1 = audit.h_eesm; pair.has1 = true; }
+        }
+        if (safety_recurrence_csv_.is_open()) {
+            for (const auto& previous : pending_safety_) {
+                const auto now = current.find(previous.first);
+                const auto id_it = std::find(obstacle_ids_.begin(), obstacle_ids_.end(), previous.first);
+                if (now == current.end() || !now->second.has0 || id_it == obstacle_ids_.end()) continue;
+                const size_t index = static_cast<size_t>(std::distance(obstacle_ids_.begin(), id_it));
+                semantic_guard::SafetyRecurrenceInput input;
+                input.gamma = gamma_;
+                input.h_eesm_t = previous.second.h_eesm_t;
+                input.beta_t = previous.second.beta_t;
+                input.h_eesm_pred_next = previous.second.h_eesm_pred_next;
+                input.h_eesm_next = now->second.h0;
+                input.beta_next = index < final_beta_values.size() ? final_beta_values[index] : 0.0;
+                input.epsilon_t = previous.second.epsilon_t;
+                input.epsilon_max = epsilon_max_runtime_;
+                input.delta_bar = safety_delta_bar_;
+                input.delta_beta_bar = safety_delta_beta_bar_;
+                input.cbf_executed = previous.second.cbf_executed && accepted_beta_source != "no_cbf";
+                input.backup_used = previous.second.backup_used || accepted_beta_source == "no_cbf";
+                input.baseline_infeasible = previous.second.baseline_infeasible;
+                const auto audit = semantic_guard::auditSafetyRecurrence(input);
+                std::string exclusion_reason;
+                if (!audit.finite) exclusion_reason = "nonfinite_or_invalid_contract";
+                else if (!input.cbf_executed) exclusion_reason = "cbf_not_executed";
+                else if (input.backup_used) exclusion_reason = "backup_or_no_cbf";
+                else if (input.baseline_infeasible) exclusion_reason = "baseline_infeasible";
+                else if (audit.delta > safety_delta_bar_ + 1e-12) exclusion_reason = "delta_bound_exceeded";
+                else if (audit.delta_beta_plus > safety_delta_beta_bar_ + 1e-12) exclusion_reason = "delta_beta_bound_exceeded";
+                safety_recurrence_csv_ << std::fixed << std::setprecision(9)
+                    << ros::Time::now().toSec() << "," << previous.second.obstacle_cycle_id << ","
+                    << previous.first << "," << audit.H_t << "," << input.h_eesm_t << "," << input.beta_t << ","
+                    << input.h_eesm_pred_next << "," << audit.H_pred_next << "," << input.h_eesm_next << ","
+                    << input.beta_next << "," << audit.H_next << "," << input.epsilon_t << "," << input.epsilon_max << ","
+                    << audit.delta << "," << input.delta_bar << "," << audit.delta_beta_plus << ","
+                    << input.delta_beta_bar << "," << audit.recursion_rhs << "," << audit.one_step_residual << ","
+                    << audit.bar_w << "," << audit.asymptotic_bound << "," << input.cbf_executed << ","
+                    << input.backup_used << "," << input.baseline_infeasible << ","
+                    << audit.theorem1_applicable << "," << exclusion_reason << "\n";
+            }
+            safety_recurrence_csv_.flush();
+        }
+        std::map<uint32_t, PendingSafetyRecurrence> next;
+        const bool executed = accepted_beta_source != "no_cbf" && accepted_beta_source != "none";
+        for (const auto& item : current) {
+            if (!item.second.has0 || !item.second.has1) continue;
+            const auto id_it = std::find(obstacle_ids_.begin(), obstacle_ids_.end(), item.first);
+            if (id_it == obstacle_ids_.end()) continue;
+            const size_t index = static_cast<size_t>(std::distance(obstacle_ids_.begin(), id_it));
+            PendingSafetyRecurrence pending;
+            pending.obstacle_cycle_id = active_obstacle_cycle_id_;
+            pending.h_eesm_t = item.second.h0;
+            pending.beta_t = index < final_beta_values.size() ? final_beta_values[index] : 0.0;
+            pending.h_eesm_pred_next = item.second.h1;
+            pending.epsilon_t = solver_.last_slack_max;
+            pending.cbf_executed = executed;
+            pending.backup_used = accepted_beta_source == "no_cbf";
+            pending.baseline_infeasible = accepted_beta_source == "none";
+            next[item.first] = pending;
+        }
+        pending_safety_.swap(next);
     }
 
     void writeMpcMarginCsv(const std::vector<double>& final_beta_values,
@@ -1138,8 +1243,13 @@ private:
     double delta_u_weight_ = 0.02;
     double delta_u_max_ = 0.4;
     bool dynamic_tau_enabled_ = false;
+    double gamma_ = 0.35;
+    double epsilon_max_runtime_ = 0.05;
+    double safety_delta_bar_ = 0.10;
+    double safety_delta_beta_bar_ = 0.30;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
-    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_, guard_attempt_csv_;
+    std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_, guard_attempt_csv_, safety_recurrence_csv_;
+    std::map<uint32_t, PendingSafetyRecurrence> pending_safety_;
     double guard_kappa_ = 0.5;
     std::size_t guard_max_backtracks_ = 6;
     double guard_time_budget_ms_ = 500.0;

@@ -50,6 +50,14 @@ OPTIONAL_FILE_FIELDS = {
         "accepted_source", "margin_age_ms",
         "primitive_rejected", "shot_rejected", "reason", "global_replan_ms",
     },
+    "safety_recurrence_log.csv": {
+        "time", "obstacle_cycle_id", "obs_id", "H_t", "h_eesm_t", "beta_t",
+        "h_eesm_pred_next", "H_pred_next", "h_eesm_next", "beta_next", "H_next",
+        "epsilon_t", "epsilon_max", "delta", "delta_bar", "delta_beta_plus",
+        "delta_beta_bar", "recursion_rhs", "one_step_residual", "bar_w",
+        "asymptotic_bound", "cbf_executed", "backup_used", "baseline_infeasible",
+        "theorem1_applicable", "exclusion_reason",
+    },
 }
 
 TAU_FIELDS = frozenset({"tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"})
@@ -104,7 +112,7 @@ TEACHER_REQUIRED_LOGS = [
     "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
     "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv", "event_log.csv",
     "tau_stage_log.csv", "guard_attempt_log.csv", "global_seesm_log.csv", "data_processor_summary.csv",
-    "data_processor_distance.csv",
+    "data_processor_distance.csv", "safety_recurrence_log.csv",
 ]
 B1_REQUIRED_LOGS = [
     "robot_log.csv", "obstacle_log.csv", "event_log.csv",
@@ -360,6 +368,48 @@ def validate_t3_objective_metadata(meta, baseline_id, errors):
             errors.append(f"metadata T3 {field} mismatch or invalid")
 
 
+def validate_safety_recurrence_metadata(meta, baseline_id, errors):
+    """Validate the finite telemetry bounds used to classify Theorem-1 rows."""
+    if baseline_id == "B1_ACBF_fixed":
+        return
+    contract = meta.get("safety_recurrence_contract")
+    if not isinstance(contract, dict):
+        errors.append("metadata safety_recurrence_contract must be a mapping")
+        return
+    if contract.get("version") != "teacher_v1_theorem1_telemetry_001":
+        errors.append("metadata safety_recurrence_contract.version mismatch")
+    if contract.get("log") != "safety_recurrence_log.csv":
+        errors.append("metadata safety_recurrence_contract.log mismatch")
+    expected_policy = (
+        "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+        "epsilon_t<=epsilon_max and delta<=delta_bar and "
+        "delta_beta_plus<=delta_beta_bar"
+    )
+    if contract.get("theorem1_applicable_policy") != expected_policy:
+        errors.append(
+            "metadata safety_recurrence_contract.theorem1_applicable_policy mismatch"
+        )
+    for field, top_field, lower, strict in (
+        ("gamma", "gamma", 0.0, True),
+        ("epsilon_max", "epsilon_max", 0.0, False),
+        ("delta_bar", "safety_delta_bar", 0.0, False),
+        ("delta_beta_bar", "safety_delta_beta_bar", 0.0, False),
+    ):
+        try:
+            top_value = float(meta[top_field])
+            contract_value = float(contract[field])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"metadata safety recurrence {field} must be numeric")
+            continue
+        invalid = top_value <= lower if strict else top_value < lower
+        if (not math.isfinite(top_value) or invalid or
+                not math.isfinite(contract_value) or
+                abs(top_value - contract_value) > 1.0e-12):
+            errors.append(
+                f"metadata safety recurrence {field} mismatch or invalid"
+            )
+
+
 def validate_teacher_metadata(run_dir, errors):
     meta_path = run_dir / "meta.yaml"
     canonical_path = run_dir / "run_meta.yaml"
@@ -399,6 +449,7 @@ def validate_teacher_metadata(run_dir, errors):
     baseline_id = str(meta.get("baseline_id", ""))
     validate_semantic_contract_metadata(meta, baseline_id, errors)
     validate_t3_objective_metadata(meta, baseline_id, errors)
+    validate_safety_recurrence_metadata(meta, baseline_id, errors)
     profile = expected_log_profile(baseline_id)
     if meta.get("log_profile") != profile:
         errors.append(
@@ -1283,6 +1334,73 @@ def validate_mpc_margin_rows(path, errors):
             )
 
 
+def validate_safety_recurrence_rows(path, errors):
+    """Validate finite, typed Theorem-1 telemetry without overclaiming a proof."""
+    numeric_fields = (
+        "time", "obstacle_cycle_id", "obs_id", "H_t", "h_eesm_t", "beta_t",
+        "h_eesm_pred_next", "H_pred_next", "h_eesm_next", "beta_next", "H_next",
+        "epsilon_t", "epsilon_max", "delta", "delta_bar", "delta_beta_plus",
+        "delta_beta_bar", "recursion_rhs", "one_step_residual", "bar_w",
+        "asymptotic_bound",
+    )
+    previous_cycle = 0
+    for row_index, row in enumerate(read_rows(path), start=2):
+        values = {}
+        for field in numeric_fields:
+            try:
+                value = float(row[field])
+            except (KeyError, TypeError, ValueError):
+                errors.append(
+                    f"safety_recurrence_log.csv:{row_index}: invalid numeric field {field}"
+                )
+                continue
+            if not math.isfinite(value):
+                errors.append(
+                    f"safety_recurrence_log.csv:{row_index}: non-finite field {field}"
+                )
+            values[field] = value
+        try:
+            cycle_id = int(str(row.get("obstacle_cycle_id", "")).strip())
+            obs_id = int(str(row.get("obs_id", "")).strip())
+            if cycle_id <= 0 or obs_id < 0:
+                errors.append(
+                    f"safety_recurrence_log.csv:{row_index}: cycle/id out of range"
+                )
+            if cycle_id < previous_cycle:
+                errors.append(
+                    f"safety_recurrence_log.csv:{row_index}: obstacle cycles are not monotonic"
+                )
+            previous_cycle = max(previous_cycle, cycle_id)
+        except ValueError:
+            errors.append(
+                f"safety_recurrence_log.csv:{row_index}: invalid typed cycle/id"
+            )
+        for field in (
+            "cbf_executed", "backup_used", "baseline_infeasible",
+            "theorem1_applicable",
+        ):
+            value = str(row.get(field, "")).strip().lower()
+            if value not in BOOL_VALUES:
+                errors.append(
+                    f"safety_recurrence_log.csv:{row_index}: invalid {field} {value!r}"
+                )
+        if values.get("epsilon_t", 0.0) < -2.0e-8 or values.get("epsilon_max", 0.0) < -2.0e-8:
+            errors.append(
+                f"safety_recurrence_log.csv:{row_index}: epsilon must be nonnegative"
+            )
+        if values.get("delta", 0.0) < -2.0e-8 or values.get("delta_beta_plus", 0.0) < -2.0e-8:
+            errors.append(
+                f"safety_recurrence_log.csv:{row_index}: recurrence increments must be nonnegative"
+            )
+        applicable = str(row.get("theorem1_applicable", "")).strip().lower() in {
+            "1", "true", "yes",
+        }
+        if applicable and str(row.get("exclusion_reason", "")).strip():
+            errors.append(
+                f"safety_recurrence_log.csv:{row_index}: applicable row has exclusion_reason"
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check Phase 5 CSV field contract")
     parser.add_argument(
@@ -1395,6 +1513,9 @@ def main():
                     errors.append(f"meta.yaml: {exc}")
                     global_enabled = None
                 validate_global_seesm_activity(path, global_enabled, errors)
+        elif file_name == "safety_recurrence_log.csv":
+            if args.require_teacher_meta:
+                validate_safety_recurrence_rows(path, errors)
 
     teacher_mode = dynamic_contract["mode"] in TEACHER_TAU_MODES
     tau_stage_path = args.run_dir / "tau_stage_log.csv"

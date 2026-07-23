@@ -36,6 +36,7 @@ REQUIRED_TRIAL_LOGS = (
     "event_log.csv",
     "tau_stage_log.csv",
     "guard_attempt_log.csv",
+    "safety_recurrence_log.csv",
     "global_seesm_log.csv",
     "data_processor_summary.csv",
     "data_processor_distance.csv",
@@ -53,7 +54,8 @@ LOG_PROFILES = {
         "required_data_rows": (
             "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
             "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
-            "event_log.csv", "tau_stage_log.csv", "data_processor_summary.csv",
+            "event_log.csv", "tau_stage_log.csv", "safety_recurrence_log.csv",
+            "data_processor_summary.csv",
             "data_processor_distance.csv",
         ),
         "teacher_formula_applicable": True,
@@ -63,7 +65,7 @@ LOG_PROFILES = {
         "required_data_rows": (
             "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
             "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
-            "event_log.csv", "data_processor_summary.csv",
+            "event_log.csv", "safety_recurrence_log.csv", "data_processor_summary.csv",
             "data_processor_distance.csv",
         ),
         "teacher_formula_applicable": False,
@@ -375,10 +377,13 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "mpc_feasibility_guard_enabled": "true",
     "fixed_beta": 0.4,
     "epsilon_max": 0.05,
+    "gamma": 0.35,
     "slack_weight": 1000.0,
     "qf_scale": 1.1,
     "delta_u_weight": 0.02,
     "delta_u_max": 0.4,
+    "safety_delta_bar": 0.10,
+    "safety_delta_beta_bar": 0.30,
     "max_cbf_obstacles": 6,
     "guard_h_min": 0.10,
     "delta_beta_positive": 0.30,
@@ -1343,11 +1348,14 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "enable_guard_fallback": switches["enable_guard_fallback"],
         "mpc_feasibility_guard_enabled": switches["mpc_feasibility_guard_enabled"],
         "fixed_beta": switches["fixed_beta"],
+        "gamma": switches["gamma"],
         "epsilon_max": switches["epsilon_max"],
         "slack_weight": switches["slack_weight"],
         "qf_scale": switches["qf_scale"],
         "delta_u_weight": switches["delta_u_weight"],
         "delta_u_max": switches["delta_u_max"],
+        "safety_delta_bar": switches["safety_delta_bar"],
+        "safety_delta_beta_bar": switches["safety_delta_beta_bar"],
         "mpc_objective_contract": {
             "version": "teacher_v1_t3_objective_001",
             "qf_scale": float(switches["qf_scale"]),
@@ -1355,6 +1363,19 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
             "delta_u_max": float(switches["delta_u_max"]),
             "first_input_reference": "[cur_state.vx,0]",
             "delta_u_constraint": "[-delta_u_max,delta_u_max]",
+        },
+        "safety_recurrence_contract": {
+            "version": "teacher_v1_theorem1_telemetry_001",
+            "gamma": float(switches["gamma"]),
+            "epsilon_max": float(switches["epsilon_max"]),
+            "delta_bar": float(switches["safety_delta_bar"]),
+            "delta_beta_bar": float(switches["safety_delta_beta_bar"]),
+            "log": "safety_recurrence_log.csv",
+            "theorem1_applicable_policy": (
+                "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+                "epsilon_t<=epsilon_max and delta<=delta_bar and "
+                "delta_beta_plus<=delta_beta_bar"
+            ),
         },
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
         "cbf_metric": switches["cbf_metric"],
@@ -1659,6 +1680,45 @@ def validate_t3_objective_metadata(meta: dict, baseline_id: str,
             errors.append(f"T3 {field} mismatch or invalid")
 
 
+def validate_safety_recurrence_metadata(meta: dict, baseline_id: str,
+                                        errors: list) -> None:
+    """Keep Theorem-1 telemetry bounds and applicability policy provenance-visible."""
+    if baseline_id == "B1_ACBF_fixed":
+        return
+    contract = meta.get("safety_recurrence_contract")
+    if not isinstance(contract, dict):
+        errors.append("safety_recurrence_contract must be a mapping")
+        return
+    if contract.get("version") != "teacher_v1_theorem1_telemetry_001":
+        errors.append("safety_recurrence_contract.version mismatch")
+    if contract.get("log") != "safety_recurrence_log.csv":
+        errors.append("safety_recurrence_contract.log mismatch")
+    expected_policy = (
+        "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+        "epsilon_t<=epsilon_max and delta<=delta_bar and "
+        "delta_beta_plus<=delta_beta_bar"
+    )
+    if contract.get("theorem1_applicable_policy") != expected_policy:
+        errors.append("safety_recurrence_contract.theorem1_applicable_policy mismatch")
+    for field, top_field, lower, strict in (
+        ("gamma", "gamma", 0.0, True),
+        ("epsilon_max", "epsilon_max", 0.0, False),
+        ("delta_bar", "safety_delta_bar", 0.0, False),
+        ("delta_beta_bar", "safety_delta_beta_bar", 0.0, False),
+    ):
+        try:
+            top_value = float(meta[top_field])
+            contract_value = float(contract[field])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"safety recurrence {field} must be numeric")
+            continue
+        invalid = top_value <= lower if strict else top_value < lower
+        if (not math.isfinite(top_value) or invalid or
+                not math.isfinite(contract_value) or
+                abs(top_value - contract_value) > 1.0e-12):
+            errors.append(f"safety recurrence {field} mismatch or invalid")
+
+
 def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
     errors = []
     run_dir = Path(run_dir)
@@ -1719,6 +1779,7 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
 
     validate_semantic_margin_metadata(meta, baseline_id, errors)
     validate_t3_objective_metadata(meta, baseline_id, errors)
+    validate_safety_recurrence_metadata(meta, baseline_id, errors)
 
     # T3 objective values are provenance-bearing parameters, not comments.
     objective = meta.get("mpc_objective_contract")
@@ -2340,6 +2401,8 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"qf_scale:={switches['qf_scale']}",
             f"delta_u_weight:={switches['delta_u_weight']}",
             f"delta_u_max:={switches['delta_u_max']}",
+            f"safety_delta_bar:={switches['safety_delta_bar']}",
+            f"safety_delta_beta_bar:={switches['safety_delta_beta_bar']}",
             f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
             f"cbf_metric:={switches['cbf_metric']}",
             f"front_adsm:={switches['front_adsm']}",

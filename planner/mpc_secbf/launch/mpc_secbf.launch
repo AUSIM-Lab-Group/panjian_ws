@@ -11,6 +11,8 @@
   <arg name="qf_scale" default="1.1"/>
   <arg name="delta_u_weight" default="0.02"/>
   <arg name="delta_u_max" default="0.4"/>
+  <arg name="safety_delta_bar" default="0.10"/>
+  <arg name="safety_delta_beta_bar" default="0.30"/>
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
@@ -47,6 +49,7 @@
   <arg name="mpc_margin_log_path" default=""/>
   <arg name="tau_stage_log_path" default=""/>
   <arg name="guard_attempt_log_path" default=""/>
+  <arg name="safety_recurrence_log_path" default=""/>
 
   <node name="mpc_secbf_node" pkg="mpc_secbf" type="mpc_secbf_node" output="screen">
     <param name="mpc/mpc_frequency" value="$(arg mpc_frequency)"/>
@@ -63,6 +66,8 @@
     <param name="mpc/qf_scale" value="$(arg qf_scale)" type="double"/>
     <param name="mpc/delta_u_weight" value="$(arg delta_u_weight)" type="double"/>
     <param name="mpc/delta_u_max" value="$(arg delta_u_max)" type="double"/>
+    <param name="mpc/safety_delta_bar" value="$(arg safety_delta_bar)" type="double"/>
+    <param name="mpc/safety_delta_beta_bar" value="$(arg safety_delta_beta_bar)" type="double"/>
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
@@ -90,6 +95,7 @@
     <param name="mpc_margin_log_path" value="$(arg mpc_margin_log_path)"/>
     <param name="tau_stage_log_path" value="$(arg tau_stage_log_path)"/>
     <param name="guard_attempt_log_path" value="$(arg guard_attempt_log_path)"/>
+    <param name="safety_recurrence_log_path" value="$(arg safety_recurrence_log_path)"/>
 
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <remap from="/global_path" to="$(arg global_path_topic)"/>
