@@ -88,6 +88,26 @@ public:
     std::vector<MpcTauStageAudit> last_tau_stage_audit;
 
 private:
+    // Teacher-v1 production path: keep one parameterized CasADi graph and
+    // update its measured/reference/obstacle values per cycle.  The previous
+    // rebuild-per-call path remains available for legacy and diagnostic modes.
+    bool solveTeacherParameterized(Eigen::VectorXd* cur_state,
+                                   Eigen::MatrixXd* goal_state,
+                                   Eigen::MatrixXd* obs_matrix,
+                                   const std::vector<double>& beta_list);
+    bool solveRebuilding(Eigen::VectorXd* cur_state,
+                         Eigen::MatrixXd* goal_state,
+                         Eigen::MatrixXd* obs_matrix,
+                         const std::vector<double>& beta_list);
+    void initTeacherParameterizedProblem();
+    casadi::MX h_cbf_symbolic(const casadi::MX& curpos,
+                              const casadi::MX& obs_x,
+                              const casadi::MX& obs_y,
+                              const casadi::MX& obs_radius,
+                              const casadi::MX& obs_vx,
+                              const casadi::MX& obs_vy,
+                              const casadi::MX& beta_i);
+
     // legacy_gate receives a numeric stage tau frozen from the measured state.
     // Teacher modes ignore that value and evaluate TCA symbolically from the
     // predicted robot state at this stage.
@@ -142,6 +162,14 @@ private:
     casadi::Function kine_equation_;
     casadi::MX X_k_, U_k_;
     std::unique_ptr<casadi::OptiSol> solution_;
+
+    // Cached Teacher-v1 NLP and its cycle-varying parameters.
+    std::unique_ptr<casadi::Opti> teacher_opti_;
+    casadi::MX teacher_X_, teacher_U_, teacher_epsilon_;
+    casadi::MX teacher_p_x0_, teacher_p_xref_, teacher_p_obs_;
+    casadi::MX teacher_p_beta_, teacher_p_cbf_mask_, teacher_p_side_mask_;
+    casadi::MX teacher_side_cost_;
+    bool teacher_parameterized_ready_ = false;
 
     // State
     Eigen::VectorXd* cur_state_ptr_ = nullptr;
