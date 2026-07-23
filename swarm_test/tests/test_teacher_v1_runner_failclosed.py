@@ -312,6 +312,21 @@ def test_meta_contract_rejects_mutated_t3_objective_parameters(
     assert any("delta_u_max" in error for error in errors)
 
 
+def test_csv_checker_rejects_mutated_t3_objective_metadata(tmp_path, runner):
+    run_dir = tmp_path / "checker_t3_objective"
+    meta_path = write_meta(runner, run_dir)
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+    meta["mpc_objective_contract"]["delta_u_weight"] = -0.1
+    payload = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
+    (run_dir / "run_meta.yaml").write_text(payload, encoding="utf-8")
+    (run_dir / "meta.yaml").write_text(payload, encoding="utf-8")
+
+    checker = load_checker()
+    errors = []
+    checker.validate_teacher_metadata(run_dir, errors)
+    assert any("T3 delta_u_weight" in error for error in errors)
+
+
 def test_beta_max_is_a_distinct_provisional_table_and_launch_parameter(
     tmp_path, runner
 ):
