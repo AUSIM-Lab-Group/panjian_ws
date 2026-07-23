@@ -517,14 +517,40 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
         last_timing.solution_extract_ms = elapsedMs(extract_start);
         last_timing.success = true;
         last_timing.total_ms = elapsedMs(total_start);
+
+        // A cached graph is an optimization experiment, never a safety
+        // authority.  Reject a cached solution that already violates the
+        // evaluated Teacher look-ahead barrier and rerun the legacy rebuild
+        // path with a clean warm start.  This keeps the diagnostic switch
+        // fail-closed when a parameterized graph is numerically ill-conditioned
+        // or when an active-set slot mapping is not yet equivalent.
+        bool cached_safety_violation = false;
+        for (const MpcTauStageAudit& audit : last_tau_stage_audit) {
+            if (!std::isfinite(audit.h_eesm) || audit.h_eesm < -1e-9) {
+                cached_safety_violation = true;
+                break;
+            }
+        }
+        if (cached_safety_violation) {
+            ROS_WARN_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Rejecting cached Teacher graph solution with nonpositive h_EESM; falling back to rebuild");
+            predict_x.clear();
+            predict_u.clear();
+            return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);
+        }
         return true;
     } catch (const casadi::CasadiException& e) {
         std::cerr << "\033[31m[MPC-SECBF] Infeasible (cached Teacher graph): \033[0m"
                   << e.what() << std::endl;
         last_timing.ipopt_solve_ms = elapsedMs(solve_start);
         last_timing.total_ms = elapsedMs(total_start);
+        predict_x.clear();
+        predict_u.clear();
         rotateSolution();
-        return false;
+        // Never expose a failed cached solve to the Guard as if it were the
+        // production result.  Rebuild the exact Teacher-v1 problem instead.
+        return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);
     }
 }
 
