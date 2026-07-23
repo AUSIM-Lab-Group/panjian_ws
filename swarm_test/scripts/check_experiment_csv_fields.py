@@ -1334,7 +1334,7 @@ def validate_mpc_margin_rows(path, errors):
             )
 
 
-def validate_safety_recurrence_rows(path, errors):
+def validate_safety_recurrence_rows(path, meta, errors):
     """Validate finite, typed Theorem-1 telemetry without overclaiming a proof."""
     numeric_fields = (
         "time", "obstacle_cycle_id", "obs_id", "H_t", "h_eesm_t", "beta_t",
@@ -1344,6 +1344,14 @@ def validate_safety_recurrence_rows(path, errors):
         "asymptotic_bound",
     )
     previous_cycle = 0
+    try:
+        gamma = float(meta["gamma"])
+        expected_epsilon_max = float(meta["epsilon_max"])
+        expected_delta_bar = float(meta["safety_delta_bar"])
+        expected_delta_beta_bar = float(meta["safety_delta_beta_bar"])
+    except (KeyError, TypeError, ValueError):
+        errors.append("safety_recurrence_log.csv: metadata bounds are not numeric")
+        gamma = expected_epsilon_max = expected_delta_bar = expected_delta_beta_bar = math.nan
     for row_index, row in enumerate(read_rows(path), start=2):
         values = {}
         for field in numeric_fields:
@@ -1384,6 +1392,39 @@ def validate_safety_recurrence_rows(path, errors):
                 errors.append(
                     f"safety_recurrence_log.csv:{row_index}: invalid {field} {value!r}"
                 )
+        if len(values) == len(numeric_fields):
+            tolerance = 5.0e-8
+            expected_values = {
+                "H_t": values["h_eesm_t"] - values["beta_t"],
+                "H_pred_next": values["h_eesm_pred_next"] - values["beta_t"],
+                "H_next": values["h_eesm_next"] - values["beta_next"],
+                "delta": abs(values["h_eesm_next"] - values["h_eesm_pred_next"]),
+                "delta_beta_plus": max(values["beta_next"] - values["beta_t"], 0.0),
+            }
+            expected_values["recursion_rhs"] = (
+                (1.0 - gamma) * expected_values["H_t"] - values["epsilon_t"]
+                - expected_values["delta_beta_plus"] - expected_values["delta"]
+            )
+            expected_values["one_step_residual"] = (
+                expected_values["H_next"] - expected_values["recursion_rhs"]
+            )
+            expected_values["bar_w"] = (
+                expected_epsilon_max + expected_delta_beta_bar + expected_delta_bar
+            )
+            expected_values["asymptotic_bound"] = (
+                -expected_values["bar_w"] / gamma
+                if math.isfinite(gamma) and gamma > 0.0 else math.nan
+            )
+            expected_values.update({
+                "epsilon_max": expected_epsilon_max,
+                "delta_bar": expected_delta_bar,
+                "delta_beta_bar": expected_delta_beta_bar,
+            })
+            for field, expected in expected_values.items():
+                if not math.isfinite(expected) or abs(values[field] - expected) > tolerance:
+                    errors.append(
+                        f"safety_recurrence_log.csv:{row_index}: {field} does not match recomputed telemetry"
+                    )
         if values.get("epsilon_t", 0.0) < -2.0e-8 or values.get("epsilon_max", 0.0) < -2.0e-8:
             errors.append(
                 f"safety_recurrence_log.csv:{row_index}: epsilon must be nonnegative"
@@ -1395,6 +1436,19 @@ def validate_safety_recurrence_rows(path, errors):
         applicable = str(row.get("theorem1_applicable", "")).strip().lower() in {
             "1", "true", "yes",
         }
+        cbf_executed = str(row.get("cbf_executed", "")).strip().lower() in {"1", "true", "yes"}
+        backup_used = str(row.get("backup_used", "")).strip().lower() in {"1", "true", "yes"}
+        baseline_infeasible = str(row.get("baseline_infeasible", "")).strip().lower() in {"1", "true", "yes"}
+        expected_applicable = (
+            cbf_executed and not backup_used and not baseline_infeasible and
+            values.get("epsilon_t", math.inf) <= values.get("epsilon_max", -math.inf) + 1.0e-12 and
+            values.get("delta", math.inf) <= values.get("delta_bar", -math.inf) + 1.0e-12 and
+            values.get("delta_beta_plus", math.inf) <= values.get("delta_beta_bar", -math.inf) + 1.0e-12
+        )
+        if applicable != expected_applicable:
+            errors.append(
+                f"safety_recurrence_log.csv:{row_index}: theorem1_applicable mismatch"
+            )
         if applicable and str(row.get("exclusion_reason", "")).strip():
             errors.append(
                 f"safety_recurrence_log.csv:{row_index}: applicable row has exclusion_reason"
@@ -1515,7 +1569,7 @@ def main():
                 validate_global_seesm_activity(path, global_enabled, errors)
         elif file_name == "safety_recurrence_log.csv":
             if args.require_teacher_meta:
-                validate_safety_recurrence_rows(path, errors)
+                validate_safety_recurrence_rows(path, teacher_meta, errors)
 
     teacher_mode = dynamic_contract["mode"] in TEACHER_TAU_MODES
     tau_stage_path = args.run_dir / "tau_stage_log.csv"

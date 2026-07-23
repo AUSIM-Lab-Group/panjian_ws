@@ -1027,6 +1027,7 @@ private:
                 else if (!input.cbf_executed) exclusion_reason = "cbf_not_executed";
                 else if (input.backup_used) exclusion_reason = "backup_or_no_cbf";
                 else if (input.baseline_infeasible) exclusion_reason = "baseline_infeasible";
+                else if (input.epsilon_t > input.epsilon_max + 1e-12) exclusion_reason = "epsilon_bound_exceeded";
                 else if (audit.delta > safety_delta_bar_ + 1e-12) exclusion_reason = "delta_bound_exceeded";
                 else if (audit.delta_beta_plus > safety_delta_beta_bar_ + 1e-12) exclusion_reason = "delta_beta_bound_exceeded";
                 safety_recurrence_csv_ << std::fixed << std::setprecision(9)
