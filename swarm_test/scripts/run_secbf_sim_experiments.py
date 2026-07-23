@@ -403,6 +403,10 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "guard_kappa": 0.5,
     "guard_max_backtracks": 6,
     "guard_time_budget_ms": 500.0,
+    # Opt-in diagnostic only.  The formal/default path keeps the teacher's
+    # sequential q=0..Q search; enabling this probes q=0 first and then uses
+    # binary search over the finite monotone candidate set after failure.
+    "guard_binary_search": "false",
     "side_preference_enabled": "true",
     "side_weight": 0.05,
     "side_epsilon_n": 1e-3,
@@ -1191,6 +1195,12 @@ def typed_cycle_contract(baseline_id: str, switches: dict,
             "kappa": float(switches["guard_kappa"]),
             "max_backtracks_q": int(switches["guard_max_backtracks"]),
             "time_budget_ms": float(switches["guard_time_budget_ms"]),
+            "binary_search_enabled": bool_switch(switches["guard_binary_search"]),
+            "search_mode": (
+                "q0_then_binary_diagnostic"
+                if bool_switch(switches["guard_binary_search"])
+                else "sequential_q0_to_qmax"
+            ),
             "risk_proxy": "beta_tilde_descending_then_obstacle_id",
             "multi_obstacle_policy": "accepted_components_fixed_unprocessed_components_zero",
         },
@@ -1382,6 +1392,7 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
         "active_set_distance_m": switches["active_set_distance_m"],
         "graph_cache_enabled": switches["graph_cache_enabled"],
+        "guard_binary_search": ros_bool(switches["guard_binary_search"]),
         "cbf_metric": switches["cbf_metric"],
         "front_adsm": switches["front_adsm"],
         "global_seesm_enable": switches["global_seesm_enable"],
@@ -2399,6 +2410,7 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"guard_kappa:={switches['guard_kappa']}",
             f"guard_max_backtracks:={switches['guard_max_backtracks']}",
             f"guard_time_budget_ms:={switches['guard_time_budget_ms']}",
+            f"guard_binary_search:={ros_bool(switches['guard_binary_search'])}",
             f"fixed_beta:={switches['fixed_beta']}",
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",

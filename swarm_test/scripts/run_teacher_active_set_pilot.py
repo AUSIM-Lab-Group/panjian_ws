@@ -17,6 +17,11 @@ def main() -> int:
     parser.add_argument("--active-set-max", type=int, default=None)
     parser.add_argument("--active-set-distance", type=float, default=None)
     parser.add_argument("--graph-cache", action="store_true")
+    parser.add_argument(
+        "--guard-binary-search",
+        action="store_true",
+        help="enable the opt-in q0-then-binary Guard diagnostic",
+    )
     known, remaining = parser.parse_known_args()
     if known.active_set_max is not None and known.active_set_max < 1:
         parser.error("--active-set-max must be positive")
@@ -33,6 +38,8 @@ def main() -> int:
             switches["active_set_distance_m"] = known.active_set_distance
         if known.graph_cache:
             switches["graph_cache_enabled"] = "true"
+        if known.guard_binary_search:
+            switches["guard_binary_search"] = "true"
         return switches
 
     runner.scenario_switches = overridden_switches

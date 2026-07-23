@@ -94,6 +94,7 @@ public:
         bool mpc_feasibility_guard_enabled;
         double guard_kappa, guard_time_budget_ms;
         int guard_max_backtracks;
+        bool guard_binary_search;
         bool side_preference_enabled;
         double side_weight, side_epsilon_n, side_sign, side_min_obstacle_speed, side_activation_distance;
         int side_horizon;
@@ -175,6 +176,7 @@ public:
         nh_.param("mpc/guard_kappa", guard_kappa, 0.5);
         nh_.param("mpc/guard_max_backtracks", guard_max_backtracks, 6);
         nh_.param("mpc/guard_time_budget_ms", guard_time_budget_ms, 500.0);
+        nh_.param("mpc/guard_binary_search", guard_binary_search, false);
         if (!std::isfinite(guard_kappa) || guard_kappa <= 0.0 || guard_kappa > 1.0 ||
             guard_max_backtracks < 1 || !std::isfinite(guard_time_budget_ms) ||
             guard_time_budget_ms <= 0.0) {
@@ -223,6 +225,10 @@ public:
         guard_kappa_ = guard_kappa;
         guard_max_backtracks_ = static_cast<std::size_t>(guard_max_backtracks);
         guard_time_budget_ms_ = guard_time_budget_ms;
+        guard_binary_search_ = guard_binary_search;
+        ROS_INFO_STREAM("Teacher-v1 Guard finite search mode: "
+                        << (guard_binary_search_ ? "q0_then_binary_diagnostic" :
+                            "sequential_q0_to_qmax"));
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
@@ -685,8 +691,7 @@ private:
         }
         for (size_t order_position = 0; order_position < order.size(); ++order_position) {
             const size_t index = order[order_position];
-            bool component_accepted = false;
-            for (size_t q = 0; q <= guard_max_backtracks_; ++q) {
+            auto attempt_at_q = [&](size_t q, std::vector<double>* successful_trial) -> bool {
                 const double elapsed_ms = (ros::Time::now() - search_start).toSec() * 1000.0;
                 if (elapsed_ms > guard_time_budget_ms_) {
                     *status = "guard_budget_exceeded";
@@ -713,12 +718,71 @@ private:
                                   *accepted, ok, ok ? "feasible" : "infeasible",
                                   ok ? "" : (q == guard_max_backtracks_ ? "zero_failed" : "retry_kappa"),
                                   attempt_timing);
-                if (ok) {
-                    *accepted = std::move(trial);
-                    component_accepted = true;
-                    if (q > 0) *source = "kappa";
-                    break;
+                if (ok && successful_trial) {
+                    *successful_trial = std::move(trial);
                 }
+                return ok;
+            };
+
+            bool component_accepted = false;
+            size_t accepted_q = 0;
+            std::vector<double> accepted_trial;
+            if (!guard_binary_search_) {
+                for (size_t q = 0; q <= guard_max_backtracks_; ++q) {
+                    const bool ok = attempt_at_q(q, &accepted_trial);
+                    if (*status == "guard_budget_exceeded" ||
+                        *status == "guard_invalid_candidate") {
+                        return false;
+                    }
+                    if (ok) {
+                        *accepted = std::move(accepted_trial);
+                        component_accepted = true;
+                        accepted_q = q;
+                        break;
+                    }
+                }
+            } else {
+                // beta_pre_guard*kappa^q is a finite monotone relaxation in q.
+                // Preserve the common q=0 success path, then search only the
+                // remaining candidates after q=0 is infeasible.  This is an
+                // opt-in diagnostic; the default remains the teacher's
+                // sequential maximum-feasible-margin search.
+                const bool q0_ok = attempt_at_q(0, &accepted_trial);
+                if (*status == "guard_budget_exceeded" ||
+                    *status == "guard_invalid_candidate") {
+                    return false;
+                }
+                if (q0_ok) {
+                    *accepted = std::move(accepted_trial);
+                    component_accepted = true;
+                } else {
+                    std::size_t low = 1;
+                    std::size_t high = guard_max_backtracks_;
+                    while (low <= high) {
+                        const std::size_t q = low + (high - low) / 2;
+                        std::vector<double> trial;
+                        const bool ok = attempt_at_q(q, &trial);
+                        if (*status == "guard_budget_exceeded" ||
+                            *status == "guard_invalid_candidate") {
+                            return false;
+                        }
+                        if (ok) {
+                            accepted_trial = std::move(trial);
+                            accepted_q = q;
+                            component_accepted = true;
+                            if (q == 0) break;
+                            high = q - 1;
+                        } else {
+                            low = q + 1;
+                        }
+                    }
+                    if (component_accepted) {
+                        *accepted = std::move(accepted_trial);
+                    }
+                }
+            }
+            if (component_accepted && accepted_q > 0) {
+                *source = "kappa";
             }
             if (!component_accepted) {
                 *status = "baseline_infeasible";
@@ -1322,6 +1386,7 @@ private:
     double guard_kappa_ = 0.5;
     std::size_t guard_max_backtracks_ = 6;
     double guard_time_budget_ms_ = 500.0;
+    bool guard_binary_search_ = false;
 };
 
 int main(int argc, char** argv) {
