@@ -1359,7 +1359,7 @@ def validate_mpc_margin_rows(path, errors):
                     f"mpc_margin_log.csv:{row_index}: candidate source lacks successful final MPC status"
                 )
             if first_status != "success" and not (
-                used_true and first_status == "infeasible"
+                used_true and first_status in {"infeasible", "not_run"}
             ):
                 errors.append(
                     f"mpc_margin_log.csv:{row_index}: candidate source has invalid first MPC status"
