@@ -908,7 +908,10 @@ def test_shared_policy_is_the_numeric_source_of_truth():
 def test_mpc_teacher_tau_is_symbolic_stagewise_and_only_legacy_is_frozen():
     source = read("planner/mpc_secbf/src/mpc_secbf.cpp")
     header = read("planner/mpc_secbf/include/mpc_secbf/mpc_secbf.h")
-    solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solve(")
+    solve = cpp_function_body_raw(source, "bool MPC_SECBF_SOLVE::solveRebuilding(")
+    fast_solve = cpp_function_body_raw(
+        source, "bool MPC_SECBF_SOLVE::solveTeacherParameterized("
+    )
     h_cbf = cpp_function_body_raw(source, "casadi::MX MPC_SECBF_SOLVE::h_cbf(")
 
     assert "const bool freeze_legacy_tau" in solve
@@ -929,6 +932,9 @@ def test_mpc_teacher_tau_is_symbolic_stagewise_and_only_legacy_is_frozen():
     assert "last_tau_stage_audit" in header
     assert "state_sol(0, stage)" in solve
     assert "state_sol(3, stage)" in solve
+    assert "teacher_opti_->set_value" in fast_solve
+    assert "computeDynamicTau(" in fast_solve
+    assert "last_tau_stage_audit" in fast_solve
 
 
 def test_mpc_teacher_symbolic_tau_is_the_production_constraint_path():
