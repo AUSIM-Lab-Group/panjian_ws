@@ -52,6 +52,24 @@ target_link_libraries(mpc_secbf_node
   ${CASADI_TARGET}
 )
 
+# Diagnostic-only replay gate.  It compares a fixed input fixture against the
+# rebuild path and the per-active-count cached graph.  It is not part of the
+# runtime node and does not change Teacher-v1 defaults.
+add_executable(mpc_secbf_cache_equivalence_test
+  test/test_cache_equivalence.cpp
+  src/mpc_secbf.cpp
+)
+add_dependencies(mpc_secbf_cache_equivalence_test
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+  ${semantic_guard_EXPORTED_TARGETS}
+)
+target_link_libraries(mpc_secbf_cache_equivalence_test
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${CASADI_TARGET}
+)
+
 # Set rpath for CasADi
 get_target_property(_casadi_loc ${CASADI_TARGET} IMPORTED_LOCATION_RELEASE)
 if(NOT _casadi_loc)
@@ -60,5 +78,7 @@ endif()
 if(_casadi_loc)
   get_filename_component(_casadi_dir "${_casadi_loc}" DIRECTORY)
   set_property(TARGET mpc_secbf_node APPEND_STRING PROPERTY
+    LINK_FLAGS " -Wl,-rpath,${_casadi_dir}")
+  set_property(TARGET mpc_secbf_cache_equivalence_test APPEND_STRING PROPERTY
     LINK_FLAGS " -Wl,-rpath,${_casadi_dir}")
 endif()

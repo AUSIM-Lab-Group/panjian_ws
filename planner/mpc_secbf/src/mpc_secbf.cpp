@@ -395,7 +395,24 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
     casadi::DM xref_dm = casadi::DM::zeros(3, N_);
     for (int i = 0; i < 3; ++i)
         for (int k = 0; k < N_; ++k) xref_dm(i, k) = (*goal_state)(i, k);
+    // CasADi still differentiates the symbolic h/τ expression when its CBF
+    // mask is zero.  Zero-valued inactive obstacles therefore create the
+    // undefined derivative of sqrt(0) at the robot state.  Use a finite,
+    // distant dummy obstacle for every inactive slot and keep its mask zero;
+    // selected slots are overwritten with the real predictions below.
     casadi::DM obs_dm = casadi::DM::zeros(7, N_ * active_slots);
+    for (int slot = 0; slot < active_slots; ++slot) {
+        for (int k = 0; k < N_; ++k) {
+            const int col = slot * N_ + k;
+            obs_dm(0, col) = 1.0e3;
+            obs_dm(1, col) = 1.0e3;
+            obs_dm(2, col) = 0.0;
+            obs_dm(3, col) = 0.0;
+            obs_dm(4, col) = 0.0;
+            obs_dm(5, col) = 0.0;
+            obs_dm(6, col) = 0.0;
+        }
+    }
     for (int slot = 0; slot < static_cast<int>(selected_obstacle_indices.size()); ++slot) {
         const int obs_idx = selected_obstacle_indices[slot];
         for (int k = 0; k < N_; ++k) {
@@ -404,10 +421,14 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
         }
     }
     casadi::DM beta_dm = casadi::DM::zeros(active_slots, 1);
-    casadi::DM cbf_mask_dm = casadi::DM::ones(active_slots, 1);
+    // An empty active set must reproduce the rebuild path, which has no CBF
+    // rows at all.  Keep every cache slot disabled by default and enable only
+    // the packed slots that correspond to selected obstacles.
+    casadi::DM cbf_mask_dm = casadi::DM::zeros(active_slots, 1);
     casadi::DM side_mask_dm = casadi::DM::zeros(active_slots, 1);
     for (int slot = 0; slot < static_cast<int>(selected_obstacle_indices.size()); ++slot) {
         beta_dm(slot, 0) = beta_list[selected_obstacle_indices[slot]];
+        cbf_mask_dm(slot, 0) = 1.0;
         if (dominant_idx == selected_obstacle_indices[slot]) side_mask_dm(slot, 0) = 1.0;
     }
 
