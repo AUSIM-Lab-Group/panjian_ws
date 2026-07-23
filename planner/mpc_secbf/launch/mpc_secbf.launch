@@ -11,6 +11,7 @@
   <arg name="max_cbf_obstacles" default="6"/>
   <arg name="cbf_metric" default="seesm"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="typed_payload_timeout" default="0.50"/>
   <arg name="side_preference_enabled" default="false"/>
   <arg name="side_weight" default="0.05"/>
   <arg name="side_epsilon_n" default="0.001"/>
@@ -32,8 +33,8 @@
   <arg name="global_path_topic" default="/global_path"/>
   <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="local_path_topic" default="/local_path"/>
-  <arg name="obs_predict_topic" default="/globalFsm_by_adsm/obs_predict_pub"/>
-  <arg name="obs_predict_ids_topic" default="/globalFsm_by_adsm/obs_predict_ids"/>
+  <arg name="obstacle_snapshot_topic" default="/globalFsm_by_adsm/teacher_obstacle_snapshot"/>
+  <arg name="beta_pre_guard_topic" default="/safety_margin/beta_pre_guard"/>
   <arg name="beta_applied_final_topic" default="/safety_margin/beta_applied_final"/>
   <arg name="planner_log_path" default=""/>
   <arg name="timing_log_path" default=""/>
@@ -55,6 +56,7 @@
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <param name="mpc/cbf_metric" value="$(arg cbf_metric)"/>
     <param name="mpc/feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <param name="mpc/typed_payload_timeout" value="$(arg typed_payload_timeout)" type="double"/>
     <param name="mpc/side_preference_enabled" value="$(arg side_preference_enabled)"/>
     <param name="mpc/side_weight" value="$(arg side_weight)"/>
     <param name="mpc/side_epsilon_n" value="$(arg side_epsilon_n)"/>
@@ -79,8 +81,8 @@
     <remap from="/global_path" to="$(arg global_path_topic)"/>
     <remap from="/cmd_vel" to="$(arg cmd_vel_topic)"/>
     <remap from="/local_path" to="$(arg local_path_topic)"/>
-    <remap from="/globalFsm_by_adsm/obs_predict_pub" to="$(arg obs_predict_topic)"/>
-    <remap from="/globalFsm_by_adsm/obs_predict_ids" to="$(arg obs_predict_ids_topic)"/>
+    <remap from="/globalFsm_by_adsm/teacher_obstacle_snapshot" to="$(arg obstacle_snapshot_topic)"/>
+    <remap from="/safety_margin/beta_pre_guard" to="$(arg beta_pre_guard_topic)"/>
     <remap from="/safety_margin/beta_applied_final" to="$(arg beta_applied_final_topic)"/>
   </node>
 </launch>

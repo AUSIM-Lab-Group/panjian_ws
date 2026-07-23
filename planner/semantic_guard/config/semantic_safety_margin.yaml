@@ -2,16 +2,28 @@
 semantic_safety:
   enabled: true
 
-  # 各类别基础安全余量 β̄(c) [meters] — v7 标准值
+  # Teacher-v1 category prior B_bar(c) [m]
   beta_bar:
-    pedestrian: 0.4
-    adult: 0.4
-    child: 0.7
-    child_like: 0.7
-    cyclist: 0.6
-    vehicle: 0.5
-    box: 0.1
-    unknown: 0.4
+    pedestrian: 0.75
+    adult: 0.75
+    child: 1.05
+    child_like: 1.05
+    cyclist: 0.90
+    vehicle: 0.80
+    box: 0.20
+    unknown: 0.75
+
+  # Independent beta_max(c) table. The manuscript omits its values; T2
+  # provisionally freezes them equal to B_bar(c), without conflating the keys.
+  beta_max:
+    pedestrian: 0.75
+    adult: 0.75
+    child: 1.05
+    child_like: 1.05
+    cyclist: 0.90
+    vehicle: 0.80
+    box: 0.20
+    unknown: 0.75
 
   # 上下文调制系数 μ(φ) = clip(bias + w_head*f + w_ttc*t + w_density*d, 0, 1)
   mu_weights:
@@ -20,11 +32,10 @@ semantic_safety:
     ttc: 0.15
     density: 0.1
 
-  # Guard 参数
+  # F06/F07 provisional parameters pending teacher confirmation.
   guard:
-    eta: 0.1              # Guard 余量 η [m]
-    max_delta_beta: 0.3   # 单步最大 β 变化量 Δ̄β [m]
-    tau: 0.2              # Guard 前瞻时间 τ [s]
+    h_min: 0.10
+    delta_beta_positive: 0.30
 
   # 机器人参数
   robot:

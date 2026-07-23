@@ -112,7 +112,9 @@ RUNTIME_NODE_SPECS = {
 
 ALGORITHM_VERSION = "teacher_v1"
 FORMULA_VERSION = "teacher_v1_formula_001"
-LOG_SCHEMA_VERSION = "teacher_v1_log_schema_001"
+LOG_SCHEMA_VERSION = "teacher_v1_log_schema_002"
+SEMANTIC_MARGIN_CONTRACT_VERSION = "teacher_v1_f05_f07_provisional_001"
+TYPED_CYCLE_CONTRACT_VERSION = "teacher_v1_typed_cycle_001"
 DEFAULT_PROTOCOL_ID = "teacher_v1_protocol_001"
 TEACHER_MANUSCRIPT_PATH = Path("/home/lxr20/下载/draft_V7_071.tex")
 TEACHER_MANUSCRIPT_SHA256 = (
@@ -356,6 +358,12 @@ DEFAULT_BETA_BAR = {
     "unknown": 0.75,
 }
 
+# The manuscript does not provide a separate numeric beta_max(c) table.
+# Teacher-v1 therefore keeps a distinct parameter map while provisionally
+# freezing its values equal to B_bar(c); an explicit beta_max override can
+# replace either a baseline or scenario entry without changing B_bar(c).
+DEFAULT_BETA_MAX = dict(DEFAULT_BETA_BAR)
+
 DEFAULT_MU_WEIGHTS = {"bias": 0.6, "heading": 0.2, "ttc": 0.15, "density": 0.1}
 
 DEFAULT_EXPERIMENT_SWITCHES = {
@@ -368,6 +376,8 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "epsilon_max": 0.05,
     "slack_weight": 1000.0,
     "max_cbf_obstacles": 6,
+    "guard_h_min": 0.10,
+    "delta_beta_positive": 0.30,
     "cbf_metric": "seesm",
     "front_adsm": "true",
     "global_seesm_enable": "false",
@@ -917,6 +927,24 @@ def scenario_beta_bar(baseline_id: str, scenario: dict) -> dict:
     return values
 
 
+def baseline_beta_max(baseline_id: str) -> dict:
+    baseline = BASELINES[baseline_id]
+    values = dict(DEFAULT_BETA_MAX)
+    # Until the missing teacher table is resolved, an existing B_bar override
+    # also moves the provisional cap.  A dedicated beta_max mapping wins and
+    # keeps the two roles independently auditable.
+    values.update(baseline.get("beta_bar", {}))
+    values.update(baseline.get("beta_max", {}))
+    return values
+
+
+def scenario_beta_max(baseline_id: str, scenario: dict) -> dict:
+    values = baseline_beta_max(baseline_id)
+    values.update(scenario.get("beta_bar", {}))
+    values.update(scenario.get("beta_max", {}))
+    return values
+
+
 def baseline_mu_weights(baseline_id: str) -> dict:
     baseline = BASELINES[baseline_id]
     values = dict(DEFAULT_MU_WEIGHTS)
@@ -1041,6 +1069,113 @@ def dynamic_tau_contract(switches: dict, beta_source: str) -> dict:
     }
 
 
+def semantic_margin_contract(baseline_id: str, scenario: dict,
+                             switches: dict):
+    if baseline_id == "B1_ACBF_fixed":
+        return None
+    beta_bar = scenario_beta_bar(baseline_id, scenario)
+    beta_max = scenario_beta_max(baseline_id, scenario)
+    weights = scenario_mu_weights(baseline_id, scenario)
+    guard_enabled = bool_switch(BASELINES[baseline_id]["guard_enabled"])
+    semantic_mode = str(switches["semantic_mode"])
+    return {
+        "version": SEMANTIC_MARGIN_CONTRACT_VERSION,
+        "status": "provisional",
+        "applicable": (
+            str(switches["cbf_metric"]) == "seesm" and semantic_mode != "none"
+        ),
+        "formula_ids": ["F05", "F06", "F07"],
+        "phi": {
+            "status": "provisional_missing_teacher_analytic_form",
+            "formula": (
+                "beta_tilde=beta_bar*clip(bias+head_on*f_head+"
+                "ttc*TTC_norm+density*rho_norm,0,1)"
+            ),
+            "weights": {
+                "bias": float(weights["bias"]),
+                "head_on": float(weights["heading"]),
+                "ttc": float(weights["ttc"]),
+                "density": float(weights["density"]),
+            },
+            "multiplier_clip": [0.0, 1.0],
+        },
+        "beta_bar_m": {key: float(value) for key, value in beta_bar.items()},
+        "beta_max_m": {key: float(value) for key, value in beta_max.items()},
+        "beta_max_status": "provisional_separate_table_equal_to_beta_bar_default",
+        "h_min_m": float(switches["guard_h_min"]),
+        "h_min_status": "provisional_mapping_from_teacher_eta_0p10",
+        "delta_beta_positive_m_per_cycle": float(
+            switches["delta_beta_positive"]
+        ),
+        "delta_beta_positive_status": "provisional_component_value",
+        "upper_bound_formula": (
+            "min(beta_max(c),beta_previous+delta_beta_positive,"
+            "max(h_eesm-h_min,0))"
+        ),
+        "pre_guard_formula": "min(beta_tilde,beta_upper_bound)",
+        "enforcement": {
+            "category_bound": guard_enabled,
+            "positive_increment_bound": (
+                guard_enabled and bool_switch(switches["enable_rate_limit"])
+            ),
+            "available_margin_bound": (
+                guard_enabled and
+                bool_switch(switches["enable_available_projection"])
+            ),
+        },
+        "beta_previous_source": (
+            "same_obstacle_id_previous_final_mpc_accepted_feedback"
+        ),
+        "first_seen_beta_previous_m": 0.0,
+        "disappearance_policy": "erase_history_reappearance_is_rebirth_zero",
+        "category_change_policy": (
+            "preserve_same_id_history_apply_current_category_cap"
+        ),
+        "no_cbf_history_policy": "do_not_commit",
+    }
+
+
+def typed_cycle_contract(baseline_id: str, switches: dict,
+                         num_obstacles: int):
+    if baseline_id == "B1_ACBF_fixed":
+        return None
+    return {
+        "version": TYPED_CYCLE_CONTRACT_VERSION,
+        "applicable": str(switches["cbf_metric"]) == "seesm",
+        "transport": "typed_ros_messages",
+        "configured_obstacle_ids": [
+            4000 + index for index in range(num_obstacles)
+        ],
+        "snapshot": {
+            "topic": "/globalFsm_by_adsm/teacher_obstacle_snapshot",
+            "message": "semantic_guard/PredictedObstacleArray",
+            "cycle_field": "cycle_id",
+        },
+        "pre_guard": {
+            "topic": "/safety_margin/beta_pre_guard",
+            "message": "semantic_guard/PreGuardMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+            "policy_fields": [
+                "enforce_category_bound",
+                "enforce_positive_increment_bound",
+                "enforce_available_margin_bound",
+            ],
+        },
+        "accepted_feedback": {
+            "topic": "/safety_margin/beta_applied_final",
+            "message": "semantic_guard/AppliedMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+        },
+        "join_key": ["obstacle_cycle_id", "obstacle_id"],
+        "id_set_policy": "strict_unique_exact_match",
+        "stale_cycle_policy": "reject_nonincreasing_or_unknown_cycle",
+        "accepted_sources": [
+            "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+        ],
+        "history_commit_policy": "accepted_feedback_except_no_cbf",
+    }
+
+
 def point_xy(point: dict, default_x=0.0, default_y=0.0):
     return float(point.get("x", default_x)), float(point.get("y", default_y))
 
@@ -1112,6 +1247,8 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
     log_profile = log_profile_for_baseline(baseline_id)
     profile_contract = LOG_PROFILES[log_profile]
     random_seed = trial["seed"] if trial is not None else 1
+    beta_bar = None if is_legacy_b1 else scenario_beta_bar(baseline_id, scenario)
+    beta_max = None if is_legacy_b1 else scenario_beta_max(baseline_id, scenario)
     meta = {
         "algorithm_version": ALGORITHM_VERSION,
         "formula_version": FORMULA_VERSION,
@@ -1160,14 +1297,30 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "robot_radius": 0.4,
         "obstacle_radius": 0.4,
         "obstacle_count": num_obs,
+        "obstacle_ids": [4000 + index for index in range(num_obs)],
         "obstacle_classes": classes_arg,
         "obstacles": scenario.get("obstacles", []),
         "beta_table": (
             {"legacy_fixed_clearance_m": 0.30}
-            if is_legacy_b1 else scenario_beta_bar(baseline_id, scenario)
+            if is_legacy_b1 else beta_bar
         ),
+        "beta_bar_table": beta_bar,
+        "beta_max_table": beta_max,
         "mu_weights": None if is_legacy_b1 else scenario_mu_weights(baseline_id, scenario),
-        "guard_eta": None if is_legacy_b1 else 0.10,
+        # guard_eta is retained as a compatibility alias; Teacher F06 uses
+        # h_min and the nested contract records the notation ambiguity.
+        "guard_eta": None if is_legacy_b1 else float(switches["guard_h_min"]),
+        "guard_h_min": None if is_legacy_b1 else float(switches["guard_h_min"]),
+        "delta_beta_positive": (
+            None if is_legacy_b1
+            else float(switches["delta_beta_positive"])
+        ),
+        "semantic_margin_contract": semantic_margin_contract(
+            baseline_id, scenario, switches
+        ),
+        "typed_cycle_contract": typed_cycle_contract(
+            baseline_id, switches, num_obs
+        ),
         "guard_enable": False if is_legacy_b1 else baseline["guard_enabled"],
         "semantic_mode": switches["semantic_mode"],
         "enable_rate_limit": switches["enable_rate_limit"],
@@ -1258,6 +1411,189 @@ def load_yaml_mapping(path: Path) -> dict:
     return payload
 
 
+def validate_semantic_margin_metadata(meta: dict, baseline_id: str,
+                                      errors: list) -> None:
+    semantic = meta.get("semantic_margin_contract")
+    typed = meta.get("typed_cycle_contract")
+    if baseline_id == "B1_ACBF_fixed":
+        for field in (
+            "beta_bar_table", "beta_max_table", "guard_h_min",
+            "delta_beta_positive", "semantic_margin_contract",
+            "typed_cycle_contract",
+        ):
+            if meta.get(field) is not None:
+                errors.append(f"{field} must be not applicable for B1_ACBF_fixed")
+        return
+
+    if not isinstance(semantic, dict):
+        errors.append("semantic_margin_contract must be a mapping")
+        semantic = {}
+    if semantic.get("version") != SEMANTIC_MARGIN_CONTRACT_VERSION:
+        errors.append("semantic_margin_contract.version mismatch")
+    if semantic.get("status") != "provisional":
+        errors.append("semantic_margin_contract.status must be provisional")
+    if semantic.get("formula_ids") != ["F05", "F06", "F07"]:
+        errors.append("semantic_margin_contract.formula_ids mismatch")
+    expected_applicable = (
+        meta.get("cbf_metric") == "seesm" and meta.get("semantic_mode") != "none"
+    )
+    if semantic.get("applicable") is not expected_applicable:
+        errors.append("semantic_margin_contract.applicable mismatch")
+
+    beta_bar = semantic.get("beta_bar_m")
+    beta_max = semantic.get("beta_max_m")
+    if not isinstance(beta_bar, dict) or beta_bar != meta.get("beta_bar_table"):
+        errors.append("semantic_margin_contract.beta_bar_m mismatch")
+    if not isinstance(beta_max, dict) or beta_max != meta.get("beta_max_table"):
+        errors.append("semantic_margin_contract.beta_max_m mismatch")
+    if meta.get("beta_table") != meta.get("beta_bar_table"):
+        errors.append("beta_table compatibility alias must equal beta_bar_table")
+    for table_name, table in (("beta_bar_m", beta_bar), ("beta_max_m", beta_max)):
+        if not isinstance(table, dict):
+            continue
+        for category, raw_value in table.items():
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                errors.append(
+                    f"semantic_margin_contract.{table_name}.{category} must be numeric"
+                )
+                continue
+            if not math.isfinite(value) or value < 0.0:
+                errors.append(
+                    f"semantic_margin_contract.{table_name}.{category} "
+                    "must be finite and nonnegative"
+                )
+
+    phi = semantic.get("phi")
+    expected_phi_formula = (
+        "beta_tilde=beta_bar*clip(bias+head_on*f_head+"
+        "ttc*TTC_norm+density*rho_norm,0,1)"
+    )
+    if not isinstance(phi, dict):
+        errors.append("semantic_margin_contract.phi must be a mapping")
+    else:
+        if phi.get("status") != "provisional_missing_teacher_analytic_form":
+            errors.append("semantic_margin_contract.phi.status mismatch")
+        if phi.get("formula") != expected_phi_formula:
+            errors.append("semantic_margin_contract.phi.formula mismatch")
+        if phi.get("multiplier_clip") != [0.0, 1.0]:
+            errors.append("semantic_margin_contract.phi.multiplier_clip mismatch")
+        weights = phi.get("weights")
+        source_weights = meta.get("mu_weights")
+        expected_weights = None
+        if isinstance(source_weights, dict):
+            try:
+                expected_weights = {
+                    "bias": float(source_weights["bias"]),
+                    "head_on": float(source_weights["heading"]),
+                    "ttc": float(source_weights["ttc"]),
+                    "density": float(source_weights["density"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                errors.append("mu_weights must contain finite numeric weights")
+        if weights != expected_weights:
+            errors.append("semantic_margin_contract.phi.weights mismatch")
+
+    for contract_key, top_level_key, strict_positive in (
+        ("h_min_m", "guard_h_min", False),
+        ("delta_beta_positive_m_per_cycle", "delta_beta_positive", True),
+    ):
+        try:
+            value = float(semantic.get(contract_key))
+            top_value = float(meta.get(top_level_key))
+        except (TypeError, ValueError):
+            errors.append(f"semantic_margin_contract.{contract_key} must be numeric")
+            continue
+        invalid = value <= 0.0 if strict_positive else value < 0.0
+        if not math.isfinite(value) or invalid or value != top_value:
+            errors.append(f"semantic_margin_contract.{contract_key} mismatch")
+
+    if semantic.get("upper_bound_formula") != (
+        "min(beta_max(c),beta_previous+delta_beta_positive,"
+        "max(h_eesm-h_min,0))"
+    ):
+        errors.append("semantic_margin_contract.upper_bound_formula mismatch")
+    if semantic.get("pre_guard_formula") != "min(beta_tilde,beta_upper_bound)":
+        errors.append("semantic_margin_contract.pre_guard_formula mismatch")
+    expected_enforcement = None
+    try:
+        guard_enabled = strict_bool_value(meta.get("guard_enable"), "guard_enable")
+        expected_enforcement = {
+            "category_bound": guard_enabled,
+            "positive_increment_bound": guard_enabled and strict_bool_value(
+                meta.get("enable_rate_limit"), "enable_rate_limit"
+            ),
+            "available_margin_bound": guard_enabled and strict_bool_value(
+                meta.get("enable_available_projection"),
+                "enable_available_projection",
+            ),
+        }
+    except (TypeError, ValueError):
+        pass
+    if semantic.get("enforcement") != expected_enforcement:
+        errors.append("semantic_margin_contract.enforcement mismatch")
+    for field, expected in (
+        ("beta_previous_source", "same_obstacle_id_previous_final_mpc_accepted_feedback"),
+        ("first_seen_beta_previous_m", 0.0),
+        ("disappearance_policy", "erase_history_reappearance_is_rebirth_zero"),
+        ("category_change_policy", "preserve_same_id_history_apply_current_category_cap"),
+        ("no_cbf_history_policy", "do_not_commit"),
+    ):
+        if semantic.get(field) != expected:
+            errors.append(f"semantic_margin_contract.{field} mismatch")
+
+    if not isinstance(typed, dict):
+        errors.append("typed_cycle_contract must be a mapping")
+        return
+    if typed.get("version") != TYPED_CYCLE_CONTRACT_VERSION:
+        errors.append("typed_cycle_contract.version mismatch")
+    if typed.get("applicable") is not (meta.get("cbf_metric") == "seesm"):
+        errors.append("typed_cycle_contract.applicable mismatch")
+    if typed.get("transport") != "typed_ros_messages":
+        errors.append("typed_cycle_contract.transport mismatch")
+    if typed.get("configured_obstacle_ids") != meta.get("obstacle_ids"):
+        errors.append("typed_cycle_contract.configured_obstacle_ids mismatch")
+    expected_endpoints = {
+        "snapshot": {
+            "topic": "/globalFsm_by_adsm/teacher_obstacle_snapshot",
+            "message": "semantic_guard/PredictedObstacleArray",
+            "cycle_field": "cycle_id",
+        },
+        "pre_guard": {
+            "topic": "/safety_margin/beta_pre_guard",
+            "message": "semantic_guard/PreGuardMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+            "policy_fields": [
+                "enforce_category_bound",
+                "enforce_positive_increment_bound",
+                "enforce_available_margin_bound",
+            ],
+        },
+        "accepted_feedback": {
+            "topic": "/safety_margin/beta_applied_final",
+            "message": "semantic_guard/AppliedMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+        },
+    }
+    for endpoint, expected_endpoint in expected_endpoints.items():
+        value = typed.get(endpoint)
+        if not isinstance(value, dict) or value != expected_endpoint:
+            errors.append(f"typed_cycle_contract.{endpoint} mismatch")
+    if typed.get("join_key") != ["obstacle_cycle_id", "obstacle_id"]:
+        errors.append("typed_cycle_contract.join_key mismatch")
+    if typed.get("id_set_policy") != "strict_unique_exact_match":
+        errors.append("typed_cycle_contract.id_set_policy mismatch")
+    if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
+        errors.append("typed_cycle_contract.stale_cycle_policy mismatch")
+    if typed.get("accepted_sources") != [
+        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+    ]:
+        errors.append("typed_cycle_contract.accepted_sources mismatch")
+    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
+        errors.append("typed_cycle_contract.history_commit_policy mismatch")
+
+
 def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
     errors = []
     run_dir = Path(run_dir)
@@ -1315,6 +1651,8 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
         ]
         if meta.get("teacher_formula_applicable") is not expected_formula_applicable:
             errors.append("teacher_formula_applicable does not match log profile")
+
+    validate_semantic_margin_metadata(meta, baseline_id, errors)
 
     def require_meta_bool(field, expected):
         try:
@@ -1836,6 +2174,12 @@ def obstacle_classes(obstacles: list) -> str:
     return "[" + ",".join(classes) + "]"
 
 
+def ground_truth_obstacle_ids(num_obstacles: int) -> str:
+    if num_obstacles < 0:
+        raise ValueError("num_obstacles must be nonnegative")
+    return "[" + ",".join(str(4000 + index) for index in range(num_obstacles)) + "]"
+
+
 def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_params: Path,
                    classes_arg: str, num_obs: int, scenario: dict):
     baseline = BASELINES[baseline_id]
@@ -1843,8 +2187,10 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
     goal_x, goal_y = scenario_goal_xy(scenario)
     map_cfg = scenario.get("map", {})
     beta_bar = scenario_beta_bar(baseline_id, scenario)
+    beta_max = scenario_beta_max(baseline_id, scenario)
     mu_weights = scenario_mu_weights(baseline_id, scenario)
     switches = scenario_switches(baseline_id, scenario)
+    obstacle_ids_arg = ground_truth_obstacle_ids(num_obs)
     reference_path = is_reference_path_scene(scenario)
     use_reference_waypoints = uses_reference_waypoints(scenario)
     reference_waypoints = generate_waypoints(scenario["reference_path"]) if reference_path else None
@@ -1919,6 +2265,7 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"dynamic_tau_max_tau:={switches['dynamic_tau_max_tau']}",
             f"output_dir:={run_dir}",
             f"obstacle_classes:={classes_arg}",
+            f"obstacle_ids:={obstacle_ids_arg}",
             f"map_size_x:={map_cfg.get('x', 50.0)}",
             f"map_size_y:={map_cfg.get('y', 50.0)}",
             f"map_size_z:={map_cfg.get('z', 3.0)}",
@@ -1935,6 +2282,16 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"beta_bar_cyclist:={beta_bar['cyclist']}",
             f"beta_bar_vehicle:={beta_bar['vehicle']}",
             f"beta_bar_unknown:={beta_bar['unknown']}",
+            f"beta_max_box:={beta_max['box']}",
+            f"beta_max_adult:={beta_max['adult']}",
+            f"beta_max_pedestrian:={beta_max['pedestrian']}",
+            f"beta_max_child:={beta_max['child']}",
+            f"beta_max_child_like:={beta_max['child_like']}",
+            f"beta_max_cyclist:={beta_max['cyclist']}",
+            f"beta_max_vehicle:={beta_max['vehicle']}",
+            f"beta_max_unknown:={beta_max['unknown']}",
+            f"guard_h_min:={switches['guard_h_min']}",
+            f"delta_beta_positive:={switches['delta_beta_positive']}",
             f"mu_bias:={mu_weights['bias']}",
             f"mu_heading:={mu_weights['heading']}",
             f"mu_ttc:={mu_weights['ttc']}",

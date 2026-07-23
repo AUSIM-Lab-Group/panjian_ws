@@ -2,6 +2,7 @@
   <arg name="config_file" default="$(find semantic_guard)/config/semantic_safety_margin.yaml"/>
   <arg name="log_path" default=""/>
   <arg name="pre_step" default="20"/>
+  <arg name="step_time" default="0.2"/>
   <arg name="guard_enabled" default="true"/>
   <arg name="semantic_mode" default="full"/>
   <arg name="enable_rate_limit" default="true"/>
@@ -20,14 +21,25 @@
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="obstacle_classes" default="[pedestrian, pedestrian, child, vehicle, box, pedestrian, cyclist]"/>
-  <arg name="beta_bar_box" default="0.1"/>
-  <arg name="beta_bar_adult" default="0.4"/>
-  <arg name="beta_bar_pedestrian" default="0.4"/>
-  <arg name="beta_bar_child" default="0.7"/>
-  <arg name="beta_bar_child_like" default="0.7"/>
-  <arg name="beta_bar_cyclist" default="0.6"/>
-  <arg name="beta_bar_vehicle" default="0.5"/>
-  <arg name="beta_bar_unknown" default="0.4"/>
+  <arg name="obstacle_ids" default="[4000,4001,4002,4003,4004,4005,4006]"/>
+  <arg name="beta_bar_box" default="0.20"/>
+  <arg name="beta_bar_adult" default="0.75"/>
+  <arg name="beta_bar_pedestrian" default="0.75"/>
+  <arg name="beta_bar_child" default="1.05"/>
+  <arg name="beta_bar_child_like" default="1.05"/>
+  <arg name="beta_bar_cyclist" default="0.90"/>
+  <arg name="beta_bar_vehicle" default="0.80"/>
+  <arg name="beta_bar_unknown" default="0.75"/>
+  <arg name="beta_max_box" default="$(arg beta_bar_box)"/>
+  <arg name="beta_max_adult" default="$(arg beta_bar_adult)"/>
+  <arg name="beta_max_pedestrian" default="$(arg beta_bar_pedestrian)"/>
+  <arg name="beta_max_child" default="$(arg beta_bar_child)"/>
+  <arg name="beta_max_child_like" default="$(arg beta_bar_child_like)"/>
+  <arg name="beta_max_cyclist" default="$(arg beta_bar_cyclist)"/>
+  <arg name="beta_max_vehicle" default="$(arg beta_bar_vehicle)"/>
+  <arg name="beta_max_unknown" default="$(arg beta_bar_unknown)"/>
+  <arg name="guard_h_min" default="0.10"/>
+  <arg name="delta_beta_positive" default="0.30"/>
   <arg name="mu_bias" default="0.6"/>
   <arg name="mu_heading" default="0.2"/>
   <arg name="mu_ttc" default="0.15"/>
@@ -37,11 +49,14 @@
     <rosparam file="$(arg config_file)" subst_value="true"/>
     <param name="log_path" value="$(arg log_path)"/>
     <param name="mpc/pre_step" value="$(arg pre_step)"/>
+    <param name="mpc/step_time" value="$(arg step_time)" type="double"/>
     <param name="guard/enabled" value="$(arg guard_enabled)"/>
     <param name="semantic_mode" value="$(arg semantic_mode)"/>
     <param name="guard/enable_rate_limit" value="$(arg enable_rate_limit)"/>
     <param name="guard/enable_available_projection" value="$(arg enable_available_projection)"/>
     <param name="guard/enable_guard_fallback" value="$(arg enable_guard_fallback)"/>
+    <param name="guard/h_min" value="$(arg guard_h_min)" type="double"/>
+    <param name="guard/delta_beta_positive" value="$(arg delta_beta_positive)" type="double"/>
     <param name="fixed_beta" value="$(arg fixed_beta)"/>
     <param name="dynamic_tau_enabled" value="$(arg dynamic_tau_enabled)"/>
     <param name="dynamic_tau/mode" value="$(arg dynamic_tau_mode)"/>
@@ -61,11 +76,20 @@
     <param name="beta_bar/cyclist" value="$(arg beta_bar_cyclist)"/>
     <param name="beta_bar/vehicle" value="$(arg beta_bar_vehicle)"/>
     <param name="beta_bar/unknown" value="$(arg beta_bar_unknown)"/>
+    <param name="beta_max/box" value="$(arg beta_max_box)"/>
+    <param name="beta_max/adult" value="$(arg beta_max_adult)"/>
+    <param name="beta_max/pedestrian" value="$(arg beta_max_pedestrian)"/>
+    <param name="beta_max/child" value="$(arg beta_max_child)"/>
+    <param name="beta_max/child_like" value="$(arg beta_max_child_like)"/>
+    <param name="beta_max/cyclist" value="$(arg beta_max_cyclist)"/>
+    <param name="beta_max/vehicle" value="$(arg beta_max_vehicle)"/>
+    <param name="beta_max/unknown" value="$(arg beta_max_unknown)"/>
     <param name="mu_weights/bias" value="$(arg mu_bias)"/>
     <param name="mu_weights/heading" value="$(arg mu_heading)"/>
     <param name="mu_weights/ttc" value="$(arg mu_ttc)"/>
     <param name="mu_weights/density" value="$(arg mu_density)"/>
     <remap from="/Odometry" to="$(arg odom_topic)"/>
     <rosparam param="obstacle_classes" subst_value="true">$(arg obstacle_classes)</rosparam>
+    <rosparam param="obstacle_ids" subst_value="true">$(arg obstacle_ids)</rosparam>
   </node>
 </launch>

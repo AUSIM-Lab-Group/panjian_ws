@@ -3,23 +3,49 @@
 #include <nav_msgs/Path.h>
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/PoseStamped.h>
-#include <std_msgs/Float32MultiArray.h>
-#include <std_msgs/UInt32MultiArray.h>
 #include <Eigen/Dense>
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <map>
 #include <mutex>
 #include <string>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "mpc_secbf/mpc_secbf.h"
 #include "semantic_guard/AppliedMarginArray.h"
+#include "semantic_guard/PreGuardMarginArray.h"
+#include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
 #include "semantic_guard/planar_velocity.hpp"
-#include "semantic_fusion/SemanticObstacleArray.h"
+#include "semantic_guard/typed_margin_contract.hpp"
+
+struct TypedObstacleCycle {
+    ros::Time receipt_time;
+    ros::Time source_time;
+    std::vector<uint32_t> obstacle_ids;
+    Eigen::MatrixXd obstacle_matrix;
+};
+
+struct TypedMarginCycle {
+    ros::Time receipt_time;
+    std::vector<uint32_t> obstacle_ids;
+    std::vector<double> beta_max;
+    std::vector<double> beta_previous;
+    std::vector<double> beta_tilde;
+    std::vector<double> available_margin;
+    std::vector<double> positive_increment_bound;
+    std::vector<double> beta_upper_bound;
+    std::vector<double> beta_pre_guard;
+    bool enforce_category_bound = true;
+    bool enforce_positive_increment_bound = true;
+    bool enforce_available_margin_bound = true;
+};
 
 class MpcSecbfNode {
 public:
@@ -83,6 +109,11 @@ public:
         nh_.param("mpc/slack_weight", slack_weight, 1000.0);
         nh_.param("mpc/max_cbf_obstacles", max_cbf_obstacles, 6);
         nh_.param("mpc/feasibility_guard_enabled", mpc_feasibility_guard_enabled, true);
+        nh_.param("mpc/typed_payload_timeout", typed_payload_timeout_sec_, 0.50);
+        if (!std::isfinite(typed_payload_timeout_sec_) ||
+            typed_payload_timeout_sec_ <= 0.0) {
+            throw std::invalid_argument("mpc/typed_payload_timeout must be positive");
+        }
         nh_.param("mpc/side_preference_enabled", side_preference_enabled, false);
         nh_.param("mpc/side_weight", side_weight, 0.05);
         nh_.param("mpc/side_epsilon_n", side_epsilon_n, 1e-3);
@@ -126,7 +157,7 @@ public:
         side_weight_ = side_weight;
 
         openCsv(planner_csv_, planner_log_path,
-                "t,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
+                "t,obstacle_cycle_id,mpc_status,first_attempt_status,final_status,accepted_beta_source,"
                 "cmd_v,cmd_w,ref_x,ref_y,tracking_error,obs_count,constrained_obs_count,beta_count,used_fallback,"
                 "mpc_feasibility_guard_enabled,candidate_feasibility_checked,mpc_feasibility_guard_used,"
                 "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
@@ -136,20 +167,23 @@ public:
         openCsv(timing_csv_, timing_log_path,
                 "t,mpc_secbf_ms,total_loop_time_ms\n");
         openCsv(mpc_margin_csv_, mpc_margin_log_path,
-                "t,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
+                "t,obstacle_cycle_id,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
                 "first_attempt_status,final_status,mpc_feasibility_guard_enabled,"
                 "candidate_feasibility_checked,mpc_feasibility_guard_used\n");
         openCsv(tau_stage_csv_, tau_stage_log_path,
-                "t,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
+                "t,obstacle_cycle_id,accepted_beta_source,obs_id,obs_index,stage,tau_mode,lx,ly,vrel_x,vrel_y,"
                 "tca_raw,tca_clipped,tau,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
                 "R_base,beta,h_eesm,h_seesm,tau_valid,tau_reason\n");
 
         // Subscribers
         sub_odom_ = nh_.subscribe("/Odometry", 1, &MpcSecbfNode::odomCb, this);
         sub_path_ = nh_.subscribe("/global_path", 10, &MpcSecbfNode::pathCb, this);
-        sub_beta_ = nh_.subscribe("/safety_margin/beta", 10, &MpcSecbfNode::betaCb, this);
-        sub_obs_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_pub", 100, &MpcSecbfNode::obsCb, this);
-        sub_obs_ids_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_ids", 100, &MpcSecbfNode::obsIdsCb, this);
+        sub_pre_guard_ = nh_.subscribe(
+            "/safety_margin/beta_pre_guard", 40,
+            &MpcSecbfNode::preGuardCb, this);
+        sub_obstacle_snapshot_ = nh_.subscribe(
+            "/globalFsm_by_adsm/teacher_obstacle_snapshot", 40,
+            &MpcSecbfNode::obstacleSnapshotCb, this);
 
         // Publishers
         pub_cmd_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
@@ -223,50 +257,267 @@ private:
             global_path_(1, i) = msg->poses[i].pose.position.y;
             global_path_(2, i) = 0.0;  // yaw computed later
         }
-        has_path_ = true;
+        has_path_ = n > 0;
     }
 
-    void betaCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
-        std::lock_guard<std::mutex> lock(beta_mutex_);
-        const bool finite_payload = std::all_of(
-            msg->data.begin(), msg->data.end(), [](float value) {
-                return std::isfinite(static_cast<double>(value));
-            });
-        if (!finite_payload) {
-            beta_list_.clear();
-            beta_payload_valid_ = false;
-            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting non-finite beta payload");
+    static bool finiteVector(const std::vector<double>& values) {
+        return std::all_of(values.begin(), values.end(), [](double value) {
+            return std::isfinite(value);
+        });
+    }
+
+    static bool nonnegativeFiniteVector(const std::vector<double>& values) {
+        return std::all_of(values.begin(), values.end(), [](double value) {
+            return std::isfinite(value) && value >= 0.0;
+        });
+    }
+
+    static bool nearlyEqual(double lhs, double rhs, double tolerance = 1e-8) {
+        return std::abs(lhs - rhs) <=
+            tolerance * std::max(1.0, std::max(std::abs(lhs), std::abs(rhs)));
+    }
+
+    void obstacleSnapshotCb(
+        const semantic_guard::PredictedObstacleArrayConstPtr& msg) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        const size_t obstacle_count = msg->obstacle_ids.size();
+        const size_t expected_values =
+            obstacle_count * static_cast<size_t>(7 * std::max(N_, 0));
+        if (msg->cycle_id == 0 ||
+            msg->cycle_id <= last_obstacle_message_cycle_id_ ||
+            msg->header.stamp.isZero() || msg->header.frame_id != "world" ||
+            msg->horizon_steps != static_cast<uint32_t>(N_) ||
+            !std::isfinite(msg->prediction_step_sec) ||
+            msg->prediction_step_sec <= 0.0 ||
+            std::abs(msg->prediction_step_sec - Ts_) > 1e-6 ||
+            msg->state_data.size() != expected_values ||
+            !semantic_guard::hasUniqueObstacleIds(msg->obstacle_ids) ||
+            !finiteVector(msg->state_data)) {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Rejecting malformed/stale typed obstacle cycle=%lu",
+                static_cast<unsigned long>(msg->cycle_id));
             return;
         }
-        beta_list_.assign(msg->data.begin(), msg->data.end());
-        beta_payload_valid_ = true;
+        for (size_t obstacle_index = 0;
+             obstacle_index < obstacle_count; ++obstacle_index) {
+            for (int stage = 0; stage < N_; ++stage) {
+                const size_t offset =
+                    7 * (obstacle_index * static_cast<size_t>(N_) +
+                         static_cast<size_t>(stage));
+                if (msg->state_data[offset + 2] < 0.0 ||
+                    msg->state_data[offset + 3] < 0.0) {
+                    ROS_ERROR_THROTTLE(
+                        1.0,
+                        "[MPC-SECBF] Rejecting negative obstacle radius cycle=%lu",
+                        static_cast<unsigned long>(msg->cycle_id));
+                    return;
+                }
+            }
+        }
+
+        TypedObstacleCycle payload;
+        payload.receipt_time = ros::Time::now();
+        payload.source_time = msg->header.stamp;
+        payload.obstacle_ids = msg->obstacle_ids;
+        payload.obstacle_matrix.resize(
+            7, static_cast<Eigen::Index>(obstacle_count *
+                                         static_cast<size_t>(N_)));
+        for (Eigen::Index column = 0;
+             column < payload.obstacle_matrix.cols(); ++column) {
+            for (Eigen::Index row = 0; row < 7; ++row) {
+                payload.obstacle_matrix(row, column) =
+                    msg->state_data[static_cast<size_t>(7 * column + row)];
+            }
+        }
+        last_obstacle_message_cycle_id_ = msg->cycle_id;
+        pending_obstacle_cycles_[msg->cycle_id] = std::move(payload);
+        tryActivateTypedCycleLocked(msg->cycle_id);
+        prunePendingCyclesLocked();
     }
 
-    void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
-        std::lock_guard<std::mutex> lock(obs_mutex_);
-        const bool finite_payload = std::all_of(
-            msg->data.begin(), msg->data.end(), [](float value) {
-                return std::isfinite(static_cast<double>(value));
-            });
-        if (N_ <= 0 || msg->data.size() % (7 * N_) != 0 || !finite_payload) {
-            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting invalid obstacle payload size=%zu finite=%s for N=%d",
-                               msg->data.size(), finite_payload ? "true" : "false", N_);
-            obs_matrix_.resize(7, 0);
-            obs_payload_valid_ = false;
+    void preGuardCb(
+        const semantic_guard::PreGuardMarginArrayConstPtr& msg) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        const size_t count = msg->obstacle_ids.size();
+        const bool matching_counts =
+            msg->semantic_classes.size() == count &&
+            msg->beta_bar.size() == count &&
+            msg->beta_max.size() == count &&
+            msg->beta_previous.size() == count &&
+            msg->mu.size() == count && msg->beta_tilde.size() == count &&
+            msg->available_margin.size() == count &&
+            msg->positive_increment_bound.size() == count &&
+            msg->beta_upper_bound.size() == count &&
+            msg->beta_pre_guard.size() == count;
+        const bool finite_nonnegative =
+            nonnegativeFiniteVector(msg->beta_bar) &&
+            nonnegativeFiniteVector(msg->beta_max) &&
+            nonnegativeFiniteVector(msg->beta_previous) &&
+            nonnegativeFiniteVector(msg->mu) &&
+            nonnegativeFiniteVector(msg->beta_tilde) &&
+            nonnegativeFiniteVector(msg->available_margin) &&
+            nonnegativeFiniteVector(msg->positive_increment_bound) &&
+            nonnegativeFiniteVector(msg->beta_upper_bound) &&
+            nonnegativeFiniteVector(msg->beta_pre_guard);
+        if (msg->obstacle_cycle_id == 0 ||
+            msg->obstacle_cycle_id <= last_margin_message_cycle_id_ ||
+            !matching_counts || !finite_nonnegative ||
+            !semantic_guard::hasUniqueObstacleIds(msg->obstacle_ids)) {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Rejecting malformed/stale pre-Guard cycle=%lu",
+                static_cast<unsigned long>(msg->obstacle_cycle_id));
             return;
         }
-        int obs_cols = msg->data.size() / 7;
-        obs_matrix_.resize(7, obs_cols);
-        for (int i = 0; i < obs_cols; i++) {
-            for (int j = 0; j < 7; j++)
-                obs_matrix_(j, i) = msg->data[7 * i + j];
+        for (size_t index = 0; index < count; ++index) {
+            double expected_upper = std::numeric_limits<double>::infinity();
+            bool any_bound = false;
+            if (msg->enforce_category_bound) {
+                expected_upper = std::min(expected_upper,
+                                          msg->beta_max[index]);
+                any_bound = true;
+            }
+            if (msg->enforce_positive_increment_bound) {
+                expected_upper = std::min(
+                    expected_upper,
+                    msg->positive_increment_bound[index]);
+                any_bound = true;
+            }
+            if (msg->enforce_available_margin_bound) {
+                expected_upper = std::min(expected_upper,
+                                          msg->available_margin[index]);
+                any_bound = true;
+            }
+            if (!any_bound) expected_upper = msg->beta_tilde[index];
+            const double expected_pre =
+                std::min(msg->beta_tilde[index], expected_upper);
+            const double inferred_positive_increment =
+                msg->positive_increment_bound[index] -
+                msg->beta_previous[index];
+            if (msg->semantic_classes[index].empty() ||
+                msg->mu[index] > 1.0 + 1e-9 ||
+                inferred_positive_increment <= 0.0 ||
+                !nearlyEqual(msg->beta_upper_bound[index],
+                             expected_upper) ||
+                !nearlyEqual(msg->beta_pre_guard[index], expected_pre)) {
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "[MPC-SECBF] Rejecting F06/F07-inconsistent pre-Guard cycle=%lu",
+                    static_cast<unsigned long>(msg->obstacle_cycle_id));
+                return;
+            }
         }
-        obs_payload_valid_ = true;
+
+        TypedMarginCycle payload;
+        payload.receipt_time = ros::Time::now();
+        payload.obstacle_ids = msg->obstacle_ids;
+        payload.beta_max = msg->beta_max;
+        payload.beta_previous = msg->beta_previous;
+        payload.beta_tilde = msg->beta_tilde;
+        payload.available_margin = msg->available_margin;
+        payload.positive_increment_bound = msg->positive_increment_bound;
+        payload.beta_upper_bound = msg->beta_upper_bound;
+        payload.beta_pre_guard = msg->beta_pre_guard;
+        payload.enforce_category_bound = msg->enforce_category_bound;
+        payload.enforce_positive_increment_bound =
+            msg->enforce_positive_increment_bound;
+        payload.enforce_available_margin_bound =
+            msg->enforce_available_margin_bound;
+        last_margin_message_cycle_id_ = msg->obstacle_cycle_id;
+        pending_margin_cycles_[msg->obstacle_cycle_id] = std::move(payload);
+        tryActivateTypedCycleLocked(msg->obstacle_cycle_id);
+        prunePendingCyclesLocked();
     }
 
-    void obsIdsCb(const std_msgs::UInt32MultiArrayConstPtr& msg) {
-        std::lock_guard<std::mutex> lock(obs_mutex_);
-        obstacle_ids_ = msg->data;
+    void tryActivateTypedCycleLocked(uint64_t cycle_id) {
+        if (cycle_id <= active_obstacle_cycle_id_) return;
+        auto obstacle_it = pending_obstacle_cycles_.find(cycle_id);
+        auto margin_it = pending_margin_cycles_.find(cycle_id);
+        if (obstacle_it == pending_obstacle_cycles_.end() ||
+            margin_it == pending_margin_cycles_.end()) {
+            return;
+        }
+
+        std::vector<double> reordered_beta;
+        std::vector<double> reordered_beta_max;
+        std::vector<double> reordered_beta_previous;
+        std::vector<double> reordered_beta_tilde;
+        std::vector<double> reordered_available_margin;
+        std::vector<double> reordered_positive_increment_bound;
+        std::vector<double> reordered_beta_upper_bound;
+        std::string join_reason;
+        const auto reorder = [&](const std::vector<double>& values,
+                                 std::vector<double>* output) {
+            return semantic_guard::reorderValuesByObstacleId(
+                margin_it->second.obstacle_ids, values,
+                obstacle_it->second.obstacle_ids, output, &join_reason);
+        };
+        if (!reorder(margin_it->second.beta_pre_guard, &reordered_beta) ||
+            !reorder(margin_it->second.beta_max, &reordered_beta_max) ||
+            !reorder(margin_it->second.beta_previous,
+                     &reordered_beta_previous) ||
+            !reorder(margin_it->second.beta_tilde,
+                     &reordered_beta_tilde) ||
+            !reorder(margin_it->second.available_margin,
+                     &reordered_available_margin) ||
+            !reorder(margin_it->second.positive_increment_bound,
+                     &reordered_positive_increment_bound) ||
+            !reorder(margin_it->second.beta_upper_bound,
+                     &reordered_beta_upper_bound)) {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Rejecting typed cycle=%lu ID join: %s",
+                static_cast<unsigned long>(cycle_id), join_reason.c_str());
+            pending_obstacle_cycles_.erase(obstacle_it);
+            pending_margin_cycles_.erase(margin_it);
+            return;
+        }
+
+        obstacle_ids_ = obstacle_it->second.obstacle_ids;
+        obs_matrix_ = obstacle_it->second.obstacle_matrix;
+        beta_list_ = std::move(reordered_beta);
+        beta_max_list_ = std::move(reordered_beta_max);
+        beta_previous_list_ = std::move(reordered_beta_previous);
+        beta_tilde_list_ = std::move(reordered_beta_tilde);
+        available_margin_list_ = std::move(reordered_available_margin);
+        positive_increment_bound_list_ =
+            std::move(reordered_positive_increment_bound);
+        beta_upper_bound_list_ = std::move(reordered_beta_upper_bound);
+        active_enforce_category_bound_ =
+            margin_it->second.enforce_category_bound;
+        active_enforce_positive_increment_bound_ =
+            margin_it->second.enforce_positive_increment_bound;
+        active_enforce_available_margin_bound_ =
+            margin_it->second.enforce_available_margin_bound;
+        active_obstacle_cycle_id_ = cycle_id;
+        active_cycle_receipt_time_ = obstacle_it->second.source_time;
+        if (obstacle_it->second.receipt_time < active_cycle_receipt_time_) {
+            active_cycle_receipt_time_ = obstacle_it->second.receipt_time;
+        }
+        if (margin_it->second.receipt_time < active_cycle_receipt_time_) {
+            active_cycle_receipt_time_ = margin_it->second.receipt_time;
+        }
+        typed_payload_valid_ = true;
+        semantic_guard::retainAcceptedMarginsForActiveIds(
+            obstacle_ids_, &accepted_beta_by_id_);
+
+        pending_obstacle_cycles_.erase(
+            pending_obstacle_cycles_.begin(),
+            pending_obstacle_cycles_.upper_bound(cycle_id));
+        pending_margin_cycles_.erase(
+            pending_margin_cycles_.begin(),
+            pending_margin_cycles_.upper_bound(cycle_id));
+    }
+
+    void prunePendingCyclesLocked() {
+        constexpr size_t kMaximumPendingCycles = 64;
+        while (pending_obstacle_cycles_.size() > kMaximumPendingCycles) {
+            pending_obstacle_cycles_.erase(pending_obstacle_cycles_.begin());
+        }
+        while (pending_margin_cycles_.size() > kMaximumPendingCycles) {
+            pending_margin_cycles_.erase(pending_margin_cycles_.begin());
+        }
     }
 
     void cmdCb(const ros::TimerEvent&) {
@@ -276,12 +527,21 @@ private:
     void replanCb(const ros::TimerEvent&) {
         std::lock_guard<std::mutex> lock_o(odom_mutex_);
         std::lock_guard<std::mutex> lock_p(path_mutex_);
-        std::lock_guard<std::mutex> lock_b(beta_mutex_);
-        std::lock_guard<std::mutex> lock_obs(obs_mutex_);
+        std::lock_guard<std::mutex> lock_data(data_mutex_);
 
         if (!has_odom_ || !has_path_) return;
-        if (!obs_payload_valid_ || !beta_payload_valid_ || !cur_state_.allFinite()) {
-            ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting cycle with invalid finite payload");
+        const double payload_age = active_cycle_receipt_time_.isZero()
+            ? std::numeric_limits<double>::infinity()
+            : (ros::Time::now() - active_cycle_receipt_time_).toSec();
+        if (!typed_payload_valid_ || active_obstacle_cycle_id_ == 0 ||
+            !std::isfinite(payload_age) || payload_age < 0.0 ||
+            payload_age > typed_payload_timeout_sec_ ||
+            !cur_state_.allFinite()) {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Rejecting absent/invalid/stale typed payload age=%.3f cycle=%lu",
+                payload_age,
+                static_cast<unsigned long>(active_obstacle_cycle_id_));
             cmd_vel_.linear.x = 0.0;
             cmd_vel_.angular.z = 0.0;
             solver_.resetAuditMetrics();
@@ -289,7 +549,8 @@ private:
                             false, false, 0.0);
             return;
         }
-        if (!validateObstacleContractLocked()) {
+        if (!validateObstacleContractLocked() ||
+            !validateTypedMarginContractLocked()) {
             ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Rejecting cycle because obstacle payload and IDs do not match");
             cmd_vel_.linear.x = 0.0;
             cmd_vel_.angular.z = 0.0;
@@ -298,10 +559,27 @@ private:
                             false, false, 0.0);
             return;
         }
+        if (active_obstacle_cycle_id_ == last_processed_cycle_id_) return;
+        last_processed_cycle_id_ = active_obstacle_cycle_id_;
 
-        if (accepted_beta_ids_ != obstacle_ids_) {
-            accepted_beta_list_.clear();
-            accepted_beta_ids_.clear();
+        bool candidate_reprojected = false;
+        if (active_enforce_positive_increment_bound_) {
+            for (size_t index = 0; index < obstacle_ids_.size(); ++index) {
+                const auto accepted_it =
+                    accepted_beta_by_id_.find(obstacle_ids_[index]);
+                const double accepted_previous =
+                    accepted_it == accepted_beta_by_id_.end()
+                        ? 0.0 : accepted_it->second;
+                const double delta_positive =
+                    positive_increment_bound_list_[index] -
+                    beta_previous_list_[index];
+                const double current_positive_bound =
+                    accepted_previous + delta_positive;
+                if (beta_list_[index] > current_positive_bound + 1e-9) {
+                    beta_list_[index] = current_positive_bound;
+                    candidate_reprojected = true;
+                }
+            }
         }
 
         // Choose goal states from global path
@@ -314,7 +592,8 @@ private:
         std::string mpc_status = "success";
         std::string first_attempt_status = "not_run";
         std::string final_status = "not_run";
-        std::string accepted_beta_source = "candidate";
+        std::string accepted_beta_source = candidate_reprojected
+            ? "mpc_reprojected" : "candidate";
         bool used_fallback = false;
         bool mpc_guard_used = false;
         bool success = false;
@@ -331,17 +610,21 @@ private:
         if (!success) {
             if (mpc_feasibility_guard_enabled_) {
                 mpc_guard_used = true;
+                std::vector<double> previous_beta_values;
                 const bool previous_beta_matches =
-                    !accepted_beta_list_.empty() &&
-                    accepted_beta_ids_ == obstacle_ids_ &&
-                    validateBetaCountLocked(accepted_beta_list_, "previous");
+                    semantic_guard::acceptedMarginsForIds(
+                        obstacle_ids_, accepted_beta_by_id_,
+                        &previous_beta_values) &&
+                    validateBetaCountLocked(previous_beta_values, "previous");
                 if (previous_beta_matches) {
-                    success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, accepted_beta_list_);
+                    success = solver_.solve(&cur_state_, &goal_state_,
+                                            &obs_matrix_,
+                                            previous_beta_values);
                     if (success) {
                         mpc_status = "guard_previous";
                         final_status = "success";
                         accepted_beta_source = "previous";
-                        final_beta_values = accepted_beta_list_;
+                        final_beta_values = previous_beta_values;
                     }
                 }
 
@@ -352,17 +635,9 @@ private:
                         mpc_status = "guard_zero";
                         final_status = "success";
                         accepted_beta_source = "zero";
-                        accepted_beta_list_ = zero_beta;
-                        accepted_beta_ids_ = obstacle_ids_;
                         final_beta_values = zero_beta;
                     }
                 }
-            }
-
-            if (success && accepted_beta_source == "previous") {
-                // Keep the previous accepted beta list unchanged.
-            } else if (success && accepted_beta_source == "zero") {
-                // accepted_beta_list_ was set above.
             }
         }
 
@@ -387,14 +662,22 @@ private:
                 final_status = "success";
                 accepted_beta_source = "no_cbf";
                 final_beta_values.assign(obstacle_ids_.size(), 0.0);
-                accepted_beta_list_.clear();
-                accepted_beta_ids_.clear();
                 ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
-        } else if (accepted_beta_source == "candidate") {
-            accepted_beta_list_ = beta_list_;
-            accepted_beta_ids_ = obstacle_ids_;
+        } else if (accepted_beta_source == "candidate" ||
+                   accepted_beta_source == "mpc_reprojected") {
             final_beta_values = beta_list_;
+        }
+
+        if (accepted_beta_source != "no_cbf" &&
+            !semantic_guard::storeAcceptedMargins(
+                obstacle_ids_, final_beta_values, &accepted_beta_by_id_)) {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "[MPC-SECBF] Refusing to store invalid accepted-margin history");
+            cmd_vel_.linear.x = 0.0;
+            cmd_vel_.angular.z = 0.0;
+            return;
         }
 
         writeMpcMarginCsv(final_beta_values, accepted_beta_source,
@@ -457,6 +740,7 @@ private:
         }
         if (planner_csv_.is_open()) {
             planner_csv_ << t << ","
+                         << active_obstacle_cycle_id_ << ","
                          << mpc_status << ","
                          << first_attempt_status << ","
                          << final_status << ","
@@ -526,6 +810,7 @@ private:
             }
             const semantic_guard::DynamicTauResult& tau = audit.tau_result;
             tau_stage_csv_ << t << ","
+                           << active_obstacle_cycle_id_ << ","
                            << accepted_beta_source << ","
                            << obstacle_ids_[audit.obstacle_index] << ","
                            << audit.obstacle_index << ","
@@ -570,6 +855,7 @@ private:
             first_attempt_status == "success" || first_attempt_status == "infeasible";
         for (size_t i = 0; i < obstacle_ids_.size(); ++i) {
             mpc_margin_csv_ << t << ","
+                            << active_obstacle_cycle_id_ << ","
                             << obstacle_ids_[i] << ","
                             << beta_list_[i] << ","
                             << final_beta_values[i] << ","
@@ -587,6 +873,17 @@ private:
         if (obs_matrix_.cols() == 0 && obstacle_ids_.empty()) return true;
         if (N_ <= 0 || obs_matrix_.cols() % N_ != 0) return false;
         return static_cast<size_t>(obs_matrix_.cols() / N_) == obstacle_ids_.size();
+    }
+
+    bool validateTypedMarginContractLocked() const {
+        const size_t count = obstacle_ids_.size();
+        return beta_list_.size() == count &&
+               beta_max_list_.size() == count &&
+               beta_previous_list_.size() == count &&
+               beta_tilde_list_.size() == count &&
+               available_margin_list_.size() == count &&
+               positive_increment_bound_list_.size() == count &&
+               beta_upper_bound_list_.size() == count;
     }
 
     bool validateBetaCountLocked(const std::vector<double>& beta,
@@ -612,6 +909,7 @@ private:
 
         semantic_guard::AppliedMarginArray out;
         out.header.stamp = ros::Time::now();
+        out.obstacle_cycle_id = active_obstacle_cycle_id_;
         out.obstacle_ids = obstacle_ids_;
         out.beta_applied.assign(beta.begin(), beta.end());
         out.accepted_sources.assign(beta.size(), source);
@@ -672,7 +970,7 @@ private:
     }
 
     ros::NodeHandle nh_;
-    ros::Subscriber sub_odom_, sub_path_, sub_beta_, sub_obs_, sub_obs_ids_;
+    ros::Subscriber sub_odom_, sub_path_, sub_pre_guard_, sub_obstacle_snapshot_;
     ros::Publisher pub_cmd_, pub_local_path_, pub_beta_applied_final_;
     ros::Timer timer_replan_, timer_cmd_;
 
@@ -681,22 +979,37 @@ private:
     double Ts_;
     double robot_radius_ = 0.4;
 
-    std::mutex odom_mutex_, path_mutex_, beta_mutex_, obs_mutex_;
+    std::mutex odom_mutex_, path_mutex_, data_mutex_;
     Eigen::VectorXd cur_state_;
     Eigen::MatrixXd global_path_;
     Eigen::MatrixXd goal_state_;
     Eigen::MatrixXd obs_matrix_;
     std::vector<uint32_t> obstacle_ids_;
     std::vector<double> beta_list_;
-    std::vector<double> accepted_beta_list_;
-    std::vector<uint32_t> accepted_beta_ids_;
+    std::vector<double> beta_max_list_;
+    std::vector<double> beta_previous_list_;
+    std::vector<double> beta_tilde_list_;
+    std::vector<double> available_margin_list_;
+    std::vector<double> positive_increment_bound_list_;
+    std::vector<double> beta_upper_bound_list_;
+    std::map<uint32_t, double> accepted_beta_by_id_;
+    std::map<uint64_t, TypedObstacleCycle> pending_obstacle_cycles_;
+    std::map<uint64_t, TypedMarginCycle> pending_margin_cycles_;
+    uint64_t last_obstacle_message_cycle_id_ = 0;
+    uint64_t last_margin_message_cycle_id_ = 0;
+    uint64_t active_obstacle_cycle_id_ = 0;
+    uint64_t last_processed_cycle_id_ = 0;
+    ros::Time active_cycle_receipt_time_;
     geometry_msgs::Twist cmd_vel_;
     bool has_odom_, has_path_;
     bool mpc_feasibility_guard_enabled_;
     bool side_preference_enabled_ = false;
     double side_weight_ = 0.2;
-    bool obs_payload_valid_ = true;
-    bool beta_payload_valid_ = true;
+    bool typed_payload_valid_ = false;
+    bool active_enforce_category_bound_ = true;
+    bool active_enforce_positive_increment_bound_ = true;
+    bool active_enforce_available_margin_bound_ = true;
+    double typed_payload_timeout_sec_ = 0.50;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
     std::ofstream planner_csv_, timing_csv_, mpc_margin_csv_, tau_stage_csv_;

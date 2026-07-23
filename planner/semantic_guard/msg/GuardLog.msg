@@ -1,7 +1,10 @@
 std_msgs/Header header
+uint64 obstacle_cycle_id
 uint32[] obstacle_ids
 float64[] beta_requested
+float64[] beta_pre_guard
 float64[] beta_applied
 float64[] h_ee_values
 bool[] guard_passed
+string[] accepted_sources
 uint32 total_rollbacks

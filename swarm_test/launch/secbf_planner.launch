@@ -24,6 +24,7 @@
   <arg name="baseline_id" default="B3_SECBF_with_guard"/>
   <arg name="guard_enabled" default="true"/>
   <arg name="mpc_feasibility_guard_enabled" default="true"/>
+  <arg name="typed_payload_timeout" default="0.50"/>
   <arg name="side_preference_enabled" default="false"/>
   <arg name="side_weight" default="0.05"/>
   <arg name="side_epsilon_n" default="0.001"/>
@@ -52,14 +53,25 @@
   <arg name="cbf_metric" default="seesm"/>
   <arg name="output_dir" default="$(find swarm_test)/output/secbf_runs/manual"/>
   <arg name="obstacle_classes" default="[child_like]"/>
-  <arg name="beta_bar_box" default="0.1"/>
-  <arg name="beta_bar_adult" default="0.4"/>
-  <arg name="beta_bar_pedestrian" default="0.4"/>
-  <arg name="beta_bar_child" default="0.7"/>
-  <arg name="beta_bar_child_like" default="0.7"/>
-  <arg name="beta_bar_cyclist" default="0.6"/>
-  <arg name="beta_bar_vehicle" default="0.5"/>
-  <arg name="beta_bar_unknown" default="0.4"/>
+  <arg name="obstacle_ids" default="[4000]"/>
+  <arg name="beta_bar_box" default="0.20"/>
+  <arg name="beta_bar_adult" default="0.75"/>
+  <arg name="beta_bar_pedestrian" default="0.75"/>
+  <arg name="beta_bar_child" default="1.05"/>
+  <arg name="beta_bar_child_like" default="1.05"/>
+  <arg name="beta_bar_cyclist" default="0.90"/>
+  <arg name="beta_bar_vehicle" default="0.80"/>
+  <arg name="beta_bar_unknown" default="0.75"/>
+  <arg name="beta_max_box" default="$(arg beta_bar_box)"/>
+  <arg name="beta_max_adult" default="$(arg beta_bar_adult)"/>
+  <arg name="beta_max_pedestrian" default="$(arg beta_bar_pedestrian)"/>
+  <arg name="beta_max_child" default="$(arg beta_bar_child)"/>
+  <arg name="beta_max_child_like" default="$(arg beta_bar_child_like)"/>
+  <arg name="beta_max_cyclist" default="$(arg beta_bar_cyclist)"/>
+  <arg name="beta_max_vehicle" default="$(arg beta_bar_vehicle)"/>
+  <arg name="beta_max_unknown" default="$(arg beta_bar_unknown)"/>
+  <arg name="guard_h_min" default="0.10"/>
+  <arg name="delta_beta_positive" default="0.30"/>
   <arg name="mu_bias" default="0.6"/>
   <arg name="mu_heading" default="0.2"/>
   <arg name="mu_ttc" default="0.15"/>
@@ -124,6 +136,7 @@
   <include file="$(find semantic_guard)/launch/beta_ground_truth.launch">
     <arg name="log_path" value="$(arg output_dir)/margin_guard_log.csv"/>
     <arg name="pre_step" value="$(arg pre_step)"/>
+    <arg name="step_time" value="$(arg step_time)"/>
     <arg name="guard_enabled" value="$(arg guard_enabled)"/>
     <arg name="semantic_mode" value="$(arg semantic_mode)"/>
     <arg name="enable_rate_limit" value="$(arg enable_rate_limit)"/>
@@ -142,6 +155,7 @@
     <arg name="baseline_id" value="$(arg baseline_id)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="obstacle_classes" value="$(arg obstacle_classes)"/>
+    <arg name="obstacle_ids" value="$(arg obstacle_ids)"/>
     <arg name="beta_bar_box" value="$(arg beta_bar_box)"/>
     <arg name="beta_bar_adult" value="$(arg beta_bar_adult)"/>
     <arg name="beta_bar_pedestrian" value="$(arg beta_bar_pedestrian)"/>
@@ -150,6 +164,16 @@
     <arg name="beta_bar_cyclist" value="$(arg beta_bar_cyclist)"/>
     <arg name="beta_bar_vehicle" value="$(arg beta_bar_vehicle)"/>
     <arg name="beta_bar_unknown" value="$(arg beta_bar_unknown)"/>
+    <arg name="beta_max_box" value="$(arg beta_max_box)"/>
+    <arg name="beta_max_adult" value="$(arg beta_max_adult)"/>
+    <arg name="beta_max_pedestrian" value="$(arg beta_max_pedestrian)"/>
+    <arg name="beta_max_child" value="$(arg beta_max_child)"/>
+    <arg name="beta_max_child_like" value="$(arg beta_max_child_like)"/>
+    <arg name="beta_max_cyclist" value="$(arg beta_max_cyclist)"/>
+    <arg name="beta_max_vehicle" value="$(arg beta_max_vehicle)"/>
+    <arg name="beta_max_unknown" value="$(arg beta_max_unknown)"/>
+    <arg name="guard_h_min" value="$(arg guard_h_min)"/>
+    <arg name="delta_beta_positive" value="$(arg delta_beta_positive)"/>
     <arg name="mu_bias" value="$(arg mu_bias)"/>
     <arg name="mu_heading" value="$(arg mu_heading)"/>
     <arg name="mu_ttc" value="$(arg mu_ttc)"/>
@@ -170,6 +194,7 @@
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
     <arg name="cbf_metric" value="$(arg cbf_metric)"/>
     <arg name="mpc_feasibility_guard_enabled" value="$(arg mpc_feasibility_guard_enabled)"/>
+    <arg name="typed_payload_timeout" value="$(arg typed_payload_timeout)"/>
     <arg name="side_preference_enabled" value="$(arg side_preference_enabled)"/>
     <arg name="side_weight" value="$(arg side_weight)"/>
     <arg name="side_epsilon_n" value="$(arg side_epsilon_n)"/>
@@ -187,7 +212,8 @@
     <arg name="dynamic_tau_max_tau" value="$(arg dynamic_tau_max_tau)"/>
     <arg name="odom_topic" value="/robot1/odom"/>
     <arg name="cmd_vel_topic" value="/cmd_vel1"/>
-    <arg name="obs_predict_topic" value="/globalFsm_by_adsm/obs_predict_pub"/>
+    <arg name="obstacle_snapshot_topic" value="/globalFsm_by_adsm/teacher_obstacle_snapshot"/>
+    <arg name="beta_pre_guard_topic" value="/safety_margin/beta_pre_guard"/>
     <arg name="planner_log_path" value="$(arg output_dir)/planner_log.csv"/>
     <arg name="timing_log_path" value="$(arg output_dir)/timing_log.csv"/>
     <arg name="mpc_margin_log_path" value="$(arg output_dir)/mpc_margin_log.csv"/>

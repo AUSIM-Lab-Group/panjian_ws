@@ -22,6 +22,7 @@
 #include <std_msgs/UInt32MultiArray.h>
 #include "dynamic_simulator/DynTraj.h"            // 动态障碍物预测轨迹消息类型
 #include "semantic_guard/AppliedMarginArray.h"
+#include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
 
 // 障碍物轨迹类型结构体
@@ -65,6 +66,10 @@ public:
     nh.param("obs_manager/use_GroundTruth", is_use_GroundTruth, true);
     nh.param("obs_manager/pre_step", pre_step, 25);
     nh.param("obs_manager/step_time", step_time, 0.1);
+    nh.param("obs_manager/teacher_snapshot_period", teacher_snapshot_period_, 0.05);
+    if (!std::isfinite(teacher_snapshot_period_) || teacher_snapshot_period_ <= 0.0) {
+      throw std::invalid_argument("obs_manager/teacher_snapshot_period must be positive");
+    }
     nh.param("search/global_seesm_enable", global_seesm_enable_, false);
     nh.param("search/global_seesm_tau", tau_global_, 0.20);
     nh.param("search/global_seesm_margin_timeout", global_seesm_margin_timeout_, 0.50);
@@ -100,6 +105,12 @@ public:
 
     dcbfTraj_pub = nh.advertise<std_msgs::Float32MultiArray>("obs_predict_pub", 100, true);
     obsId_pub = nh.advertise<std_msgs::UInt32MultiArray>("obs_predict_ids", 100, true);
+    teacher_snapshot_pub_ =
+        nh.advertise<semantic_guard::PredictedObstacleArray>(
+            "teacher_obstacle_snapshot", 20, true);
+    teacher_snapshot_timer_ = nh.createTimer(
+        ros::Duration(teacher_snapshot_period_),
+        &Obs_Manager::publishTeacherObstacleSnapshot, this);
 
     // The experiment contract requires every declared CSV artifact to exist.
     // Keep an auditable header-only log when global SEESM is disabled; data rows
@@ -390,11 +401,15 @@ private:
   ros::Subscriber obsTraj_sub, predicted_Traj_sub, applied_margin_sub_;
 
   ros::Publisher obsTraj_pub, dcbfTraj_pub, tebTraj_pub, obsId_pub;
+  ros::Publisher teacher_snapshot_pub_;
 
-  ros::Timer show_timer;
+  ros::Timer show_timer, teacher_snapshot_timer_;
 
   int pre_step;
   double step_time;
+  double teacher_snapshot_period_ = 0.05;
+  uint64_t teacher_snapshot_cycle_id_ = 0;
+  uint64_t last_applied_margin_cycle_id_ = 0;
   double tau_global_ = 0.20;
   semantic_guard::DynamicTauParams dynamic_tau_params_;
   std::string dynamic_tau_mode_name_ = "teacher_tca";
@@ -419,6 +434,22 @@ private:
                         obstacle_count, msg->beta_applied.size(), msg->accepted_sources.size());
       return;
     }
+    if (msg->obstacle_cycle_id == 0) {
+      ROS_WARN_THROTTLE(
+          1.0,
+          "[global_seesm] ignore applied margin message: zero obstacle cycle");
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(applied_margin_mutex_);
+    if (msg->obstacle_cycle_id <= last_applied_margin_cycle_id_) {
+      ROS_WARN_THROTTLE(
+          1.0,
+          "[global_seesm] ignore stale applied margin cycle=%lu last=%lu",
+          static_cast<unsigned long>(msg->obstacle_cycle_id),
+          static_cast<unsigned long>(last_applied_margin_cycle_id_));
+      return;
+    }
 
     const ros::Time receipt_time = ros::Time::now();
     const ros::Time message_stamp = msg->header.stamp.isZero() ? receipt_time : msg->header.stamp;
@@ -440,6 +471,13 @@ private:
                           obstacle_id);
         return;
       }
+      if (msg->accepted_sources[i].empty()) {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "[global_seesm] ignore applied margin message: empty source for obstacle id=%u",
+            obstacle_id);
+        return;
+      }
 
       applied_margin_cache_entry entry;
       entry.beta_applied = beta;
@@ -449,7 +487,7 @@ private:
       validated_cache[static_cast<int>(obstacle_id)] = entry;
     }
 
-    std::lock_guard<std::mutex> lock(applied_margin_mutex_);
+    last_applied_margin_cycle_id_ = msg->obstacle_cycle_id;
     applied_margin_cache_.swap(validated_cache);
   }
 
@@ -711,6 +749,52 @@ private:
     // 可以添加一个符号标志
     obsId_pub.publish(obs_ids_msg);
     dcbfTraj_pub.publish(acbf_msgs);
+  }
+
+  void publishTeacherObstacleSnapshot(const ros::TimerEvent&)
+  {
+    semantic_guard::PredictedObstacleArray snapshot;
+    snapshot.header.stamp = ros::Time::now();
+    snapshot.header.frame_id = "world";
+    snapshot.cycle_id = ++teacher_snapshot_cycle_id_;
+    snapshot.horizon_steps = static_cast<uint32_t>(std::max(pre_step, 0));
+    snapshot.prediction_step_sec = step_time;
+
+    const auto active_obstacles = collectActiveObstacles(snapshot.header.stamp);
+    snapshot.obstacle_ids.reserve(active_obstacles.size());
+    for (const obstacle_traj* obstacle : active_obstacles) {
+      if (obstacle->Id_ < 0) {
+        ROS_ERROR_THROTTLE(
+            1.0, "[teacher_snapshot] refusing negative obstacle ID=%d",
+            obstacle->Id_);
+        return;
+      }
+      snapshot.obstacle_ids.push_back(static_cast<uint32_t>(obstacle->Id_));
+    }
+
+    const size_t horizon = static_cast<size_t>(snapshot.horizon_steps);
+    snapshot.state_data.resize(7 * horizon * active_obstacles.size());
+    for (size_t stage = 0; stage < horizon; ++stage) {
+      const ros::Time prediction_time =
+          snapshot.header.stamp + ros::Duration(stage * step_time);
+      for (size_t obstacle_index = 0;
+           obstacle_index < active_obstacles.size(); ++obstacle_index) {
+        Eigen::Vector4d position_velocity;
+        double radius = 0.0;
+        computeObstacleStateAt(*active_obstacles[obstacle_index], prediction_time,
+                               position_velocity, radius);
+        const size_t offset =
+            7 * horizon * obstacle_index + 7 * stage;
+        snapshot.state_data[offset + 0] = position_velocity.x();
+        snapshot.state_data[offset + 1] = position_velocity.y();
+        snapshot.state_data[offset + 2] = radius;
+        snapshot.state_data[offset + 3] = radius;
+        snapshot.state_data[offset + 4] = 0.0;
+        snapshot.state_data[offset + 5] = position_velocity.z();
+        snapshot.state_data[offset + 6] = position_velocity.w();
+      }
+    }
+    teacher_snapshot_pub_.publish(snapshot);
   }
 
   // void pub_TEB_traj() {

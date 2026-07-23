@@ -147,6 +147,56 @@ def write_meta(runner, run_dir, baseline="SEESM_Ours", seed=17):
     )
 
 
+def valid_margin_row(cycle_id=1, beta_previous=0.0, source="candidate"):
+    beta_bar = 0.75
+    beta_max = 0.75
+    ttc_norm = 0.5
+    cos_delta = -1.0
+    rho_norm = 0.4
+    mu = 0.6 + 0.2 + 0.15 * ttc_norm + 0.1 * rho_norm
+    beta_requested = beta_bar * mu
+    available = 0.8
+    positive = beta_previous + 0.3
+    upper = min(beta_max, positive, available, beta_requested)
+    beta_pre = min(beta_requested, upper)
+    if source == "candidate":
+        beta_applied = beta_pre
+    elif source == "previous":
+        beta_applied = beta_previous
+    else:
+        beta_applied = 0.0
+    h_eesm = 0.9
+    return {
+        "time": str(cycle_id * 0.1),
+        "obstacle_cycle_id": str(cycle_id),
+        "obs_id": "4000",
+        "class": "adult",
+        "beta_bar": str(beta_bar),
+        "beta_max": str(beta_max),
+        "mu": str(mu),
+        "beta_requested": str(beta_requested),
+        "beta_previous": str(beta_previous),
+        "beta_pre_guard": str(beta_pre),
+        "beta_applied": str(beta_applied),
+        "available_margin": str(available),
+        "positive_increment_bound": str(positive),
+        "guard_upper_bound": str(upper),
+        "guard_passed": "1" if source == "candidate" else "0",
+        "accepted_source": source,
+        "semantic_mode": "full",
+        "delta_beta": str(max(0.0, beta_applied - beta_previous)),
+        "rate_limit_active": "1" if positive < min(beta_max, available, beta_requested) else "0",
+        "projection_active": "1" if beta_pre != beta_requested else "0",
+        "ttc_norm": str(ttc_norm),
+        "cos_delta": str(cos_delta),
+        "rho_norm": str(rho_norm),
+        "h_ee": str(h_eesm),
+        "h_see": str(h_eesm - beta_applied),
+        "h_eesm": str(h_eesm),
+        "h_seesm": str(h_eesm - beta_applied),
+    }
+
+
 def test_output_root_rejects_prefix_and_symlink_escape(tmp_path, monkeypatch, runner):
     allowed = tmp_path / "teacher_outputs"
     allowed.mkdir()
@@ -172,7 +222,7 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
     meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
     assert meta["algorithm_version"] == "teacher_v1"
     assert meta["formula_version"] == "teacher_v1_formula_001"
-    assert meta["log_schema_version"] == "teacher_v1_log_schema_001"
+    assert meta["log_schema_version"] == "teacher_v1_log_schema_002"
     assert meta["protocol_id"] == "teacher_v1_gate_test"
     assert meta["log_profile"] == "teacher_seesm_v1"
     assert meta["run_state"] == "running"
@@ -183,6 +233,132 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
     assert "h_ee" not in meta["dynamic_tau"]
     assert "data_processor_summary.csv" in meta["required_logs"]
     assert "data_processor_distance.csv" in meta["required_logs"]
+    semantic = meta["semantic_margin_contract"]
+    assert semantic["version"] == "teacher_v1_f05_f07_provisional_001"
+    assert semantic["status"] == "provisional"
+    assert semantic["formula_ids"] == ["F05", "F06", "F07"]
+    assert semantic["phi"]["weights"] == {
+        "bias": 0.6, "head_on": 0.2, "ttc": 0.15, "density": 0.1,
+    }
+    assert semantic["beta_bar_m"] == meta["beta_bar_table"]
+    assert semantic["beta_max_m"] == meta["beta_max_table"]
+    assert semantic["h_min_m"] == pytest.approx(0.10)
+    assert semantic["delta_beta_positive_m_per_cycle"] == pytest.approx(0.30)
+    assert semantic["beta_previous_source"].endswith("accepted_feedback")
+    typed = meta["typed_cycle_contract"]
+    assert typed["version"] == "teacher_v1_typed_cycle_001"
+    assert typed["configured_obstacle_ids"] == [4000]
+    assert typed["join_key"] == ["obstacle_cycle_id", "obstacle_id"]
+    assert typed["pre_guard"]["policy_fields"] == [
+        "enforce_category_bound", "enforce_positive_increment_bound",
+        "enforce_available_margin_bound",
+    ]
+    assert typed["accepted_sources"] == [
+        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+    ]
+
+
+def test_beta_max_is_a_distinct_provisional_table_and_launch_parameter(
+    tmp_path, runner
+):
+    custom = scenario()
+    custom["beta_bar"] = {"adult": 0.61}
+    custom["beta_max"] = {"adult": 0.72}
+    run_dir = tmp_path / "distinct_beta_tables"
+    run_dir.mkdir()
+    meta_path = runner.write_run_meta(
+        run_dir, "head_on_context_bl", "SEESM_Ours", custom,
+        "[adult]", 1, 5,
+    )
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+    assert meta["beta_bar_table"]["adult"] == pytest.approx(0.61)
+    assert meta["beta_max_table"]["adult"] == pytest.approx(0.72)
+
+    planner, _ = runner.build_commands(
+        "head_on_context_bl", "SEESM_Ours", run_dir,
+        run_dir / "obstacles_param.yaml", "[adult]", 1, custom,
+    )
+    launch_args = {
+        token.split(":=", 1)[0]: token.split(":=", 1)[1]
+        for token in planner if ":=" in token
+    }
+    assert float(launch_args["beta_bar_adult"]) == pytest.approx(0.61)
+    assert float(launch_args["beta_max_adult"]) == pytest.approx(0.72)
+
+
+def test_meta_contract_rejects_mutated_semantic_or_typed_contract(
+    tmp_path, monkeypatch, runner
+):
+    allowed = tmp_path / "allowed"
+    run_dir = allowed / "trial"
+    monkeypatch.setattr(runner, "TEACHER_OUTPUT_ROOT", allowed)
+    write_meta(runner, run_dir)
+    meta = yaml.safe_load((run_dir / "run_meta.yaml").read_text(encoding="utf-8"))
+    meta["semantic_margin_contract"]["delta_beta_positive_m_per_cycle"] = -1.0
+    meta["typed_cycle_contract"]["join_key"] = ["array_index"]
+    payload = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
+    (run_dir / "run_meta.yaml").write_text(payload, encoding="utf-8")
+    (run_dir / "meta.yaml").write_text(payload, encoding="utf-8")
+
+    passed, errors = runner.validate_run_meta_contract(
+        run_dir, strict_provenance=True
+    )
+    assert not passed
+    assert any("delta_beta_positive_m_per_cycle" in error for error in errors)
+    assert any("typed_cycle_contract.join_key" in error for error in errors)
+
+
+def test_checker_recomputes_f05_f07_and_typed_history(tmp_path, runner):
+    checker = load_checker()
+    run_dir = tmp_path / "margin_audit"
+    meta_path = write_meta(runner, run_dir)
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+    rows = [
+        valid_margin_row(cycle_id=1, beta_previous=0.0),
+        valid_margin_row(cycle_id=2, beta_previous=0.3),
+    ]
+    fields = list(rows[0])
+    log_path = run_dir / "margin_guard_log.csv"
+    with log_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    errors = []
+    checker.validate_margin_guard_rows(log_path, meta, errors)
+    assert not errors
+
+    rows[1]["beta_previous"] = "0.29"
+    rows[1]["positive_increment_bound"] = "0.59"
+    with log_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    errors = []
+    checker.validate_margin_guard_rows(log_path, meta, errors)
+    assert any("beta_previous" in error for error in errors)
+
+
+def test_checker_rejects_duplicate_cycle_id_and_unknown_accept_source(
+    tmp_path, runner
+):
+    checker = load_checker()
+    run_dir = tmp_path / "typed_cycle_audit"
+    meta_path = write_meta(runner, run_dir)
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+    first = valid_margin_row()
+    duplicate = dict(first)
+    duplicate["accepted_source"] = "array_position_fallback"
+    log_path = run_dir / "margin_guard_log.csv"
+    with log_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(first))
+        writer.writeheader()
+        writer.writerows([first, duplicate])
+
+    errors = []
+    checker.validate_margin_guard_rows(log_path, meta, errors)
+    assert any("duplicate cycle/obstacle" in error for error in errors)
+    assert any("unknown accepted_source" in error for error in errors)
 
 
 def test_per_trial_repository_state_is_rechecked(monkeypatch, runner):

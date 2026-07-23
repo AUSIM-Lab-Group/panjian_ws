@@ -1,6 +1,4 @@
 #include <ros/ros.h>
-#include <std_msgs/Float32MultiArray.h>
-#include <std_msgs/UInt32MultiArray.h>
 #include <nav_msgs/Odometry.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <Eigen/Dense>
@@ -13,10 +11,49 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <set>
+#include <unordered_set>
 
+#include "semantic_guard/AppliedMarginArray.h"
 #include "semantic_guard/GuardLog.h"
+#include "semantic_guard/PreGuardMarginArray.h"
+#include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
 #include "semantic_guard/planar_velocity.hpp"
+#include "semantic_guard/semantic_margin_update.hpp"
+
+struct GroundTruthMarginAudit {
+    uint32_t obstacle_id = 0;
+    uint64_t birth_cycle = 0;
+    std::string semantic_class;
+    double beta_bar = 0.0;
+    double beta_max = 0.0;
+    double mu = 0.0;
+    double beta_tilde = 0.0;
+    double beta_previous = 0.0;
+    double available_margin = 0.0;
+    double positive_increment_bound = 0.0;
+    double beta_upper_bound = 0.0;
+    double beta_pre = 0.0;
+    bool rate_limit_active = false;
+    bool projection_active = false;
+    double d_i = 0.0;
+    double rel_v_norm = 0.0;
+    double ttc = std::numeric_limits<double>::infinity();
+    double ttc_norm = 0.0;
+    double inv_ttc = 0.0;
+    double cos_delta = 0.0;
+    double density_norm = 0.0;
+    double h_phys = 0.0;
+    double h_eesm = 0.0;
+    double r_base = 0.0;
+    semantic_guard::DynamicTauResult tau_result;
+};
+
+struct GroundTruthMarginCycle {
+    std::vector<uint32_t> obstacle_ids;
+    std::vector<GroundTruthMarginAudit> audits;
+};
 
 /**
  * Ground Truth β Publisher
@@ -30,14 +67,22 @@ class BetaGroundTruthNode {
 public:
     BetaGroundTruthNode(ros::NodeHandle& nh) : nh_(nh) {
         // Load beta_bar
-        nh_.param("beta_bar/pedestrian", beta_bar_["pedestrian"], 0.4);
-        nh_.param("beta_bar/adult",      beta_bar_["adult"],      0.4);
-        nh_.param("beta_bar/child",      beta_bar_["child"],      0.7);
-        nh_.param("beta_bar/child_like", beta_bar_["child_like"], 0.7);
-        nh_.param("beta_bar/cyclist",    beta_bar_["cyclist"],    0.6);
-        nh_.param("beta_bar/vehicle",    beta_bar_["vehicle"],    0.5);
-        nh_.param("beta_bar/box",        beta_bar_["box"],        0.1);
-        nh_.param("beta_bar/unknown",    beta_bar_["unknown"],    0.4);
+        nh_.param("beta_bar/pedestrian", beta_bar_["pedestrian"], 0.75);
+        nh_.param("beta_bar/adult",      beta_bar_["adult"],      0.75);
+        nh_.param("beta_bar/child",      beta_bar_["child"],      1.05);
+        nh_.param("beta_bar/child_like", beta_bar_["child_like"], 1.05);
+        nh_.param("beta_bar/cyclist",    beta_bar_["cyclist"],    0.90);
+        nh_.param("beta_bar/vehicle",    beta_bar_["vehicle"],    0.80);
+        nh_.param("beta_bar/box",        beta_bar_["box"],        0.20);
+        nh_.param("beta_bar/unknown",    beta_bar_["unknown"],    0.75);
+
+        // beta_max(c) is intentionally independent from B_bar(c). Teacher-v1
+        // provisionally freezes equal numeric values until the missing table in
+        // the manuscript is resolved.
+        for (const auto& entry : beta_bar_) {
+            nh_.param("beta_max/" + entry.first,
+                      beta_max_[entry.first], entry.second);
+        }
 
         // Load mu weights
         nh_.param("mu_weights/bias",    w_bias_,    0.6);
@@ -46,9 +91,9 @@ public:
         nh_.param("mu_weights/density", w_density_, 0.1);
 
         // Guard params
-        nh_.param("guard/enabled",        guard_enabled_,   true);
-        nh_.param("guard/eta",            eta_,            0.1);
-        nh_.param("guard/max_delta_beta", max_delta_beta_, 0.3);
+        nh_.param("guard/enabled", guard_enabled_, true);
+        nh_.param("guard/h_min", h_min_, 0.10);
+        nh_.param("guard/delta_beta_positive", delta_beta_positive_, 0.30);
         nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, true);
         nh_.param<std::string>("dynamic_tau/mode", dynamic_tau_mode_name_, "teacher_tca");
         if (!semantic_guard::parseDynamicTauMode(dynamic_tau_mode_name_,
@@ -65,22 +110,54 @@ public:
         nh_.param("dynamic_tau/min_distance", dynamic_tau_params_.min_distance, 1e-6);
         nh_.param("dynamic_tau/max_tau", dynamic_tau_params_.max_tau, 2.0);
         validateDynamicTauConfig();
-        nh_.param("guard/tau",            tau_,            0.20);
         nh_.param<std::string>("semantic_mode", semantic_mode_, "full");
         nh_.param("guard/enable_rate_limit", enable_rate_limit_, true);
         nh_.param("guard/enable_available_projection", enable_available_projection_, true);
         nh_.param("guard/enable_guard_fallback", enable_guard_fallback_, true);
         nh_.param("fixed_beta", fixed_beta_, 0.4);
         nh_.param("robot/radius",         robot_radius_,   0.4);
+        if (!std::isfinite(h_min_) || h_min_ < 0.0 ||
+            !std::isfinite(delta_beta_positive_) ||
+            delta_beta_positive_ <= 0.0) {
+            throw std::invalid_argument("invalid Teacher semantic-margin parameters");
+        }
 
         // Ground truth obstacle classes (from scenario config)
         // Format: list of class names, one per obstacle in order
         std::vector<std::string> default_classes = {"pedestrian", "pedestrian", "pedestrian",
                                                      "pedestrian", "pedestrian", "pedestrian", "pedestrian"};
         nh_.param("obstacle_classes", obstacle_classes_, default_classes);
+        std::vector<int> configured_obstacle_ids;
+        if (!nh_.getParam("obstacle_ids", configured_obstacle_ids)) {
+            configured_obstacle_ids.reserve(obstacle_classes_.size());
+            for (size_t index = 0; index < obstacle_classes_.size(); ++index) {
+                configured_obstacle_ids.push_back(4000 + static_cast<int>(index));
+            }
+        }
+        if (configured_obstacle_ids.size() != obstacle_classes_.size()) {
+            throw std::invalid_argument(
+                "obstacle_ids and obstacle_classes must have equal length");
+        }
+        std::set<uint32_t> unique_configured_ids;
+        for (size_t index = 0; index < configured_obstacle_ids.size(); ++index) {
+            if (configured_obstacle_ids[index] < 0) {
+                throw std::invalid_argument("obstacle_ids must be nonnegative");
+            }
+            const uint32_t obstacle_id =
+                static_cast<uint32_t>(configured_obstacle_ids[index]);
+            if (!unique_configured_ids.insert(obstacle_id).second) {
+                throw std::invalid_argument("obstacle_ids must be unique");
+            }
+            class_by_id_[obstacle_id] = obstacle_classes_[index];
+        }
 
         // MPC params for obs_matrix parsing
         nh_.param("mpc/pre_step", N_, 20);
+        nh_.param("mpc/step_time", prediction_step_sec_, 0.2);
+        if (N_ <= 0 || !std::isfinite(prediction_step_sec_) ||
+            prediction_step_sec_ <= 0.0) {
+            throw std::invalid_argument("invalid typed obstacle horizon config");
+        }
 
         // CSV logging
         std::string log_path;
@@ -89,8 +166,8 @@ public:
             csv_file_.open(log_path, std::ios::out);
             if (csv_file_.is_open()) {
                 csv_file_ << std::fixed << std::setprecision(9);
-                csv_file_ << "time,obs_id,class,beta_bar,mu,beta_requested,beta_pre_guard,beta_applied,"
-                          << "guard_upper_bound,guard_passed,guard_status,"
+                csv_file_ << "time,obstacle_cycle_id,obs_id,class,beta_bar,beta_max,mu,beta_requested,beta_previous,beta_pre_guard,beta_applied,"
+                          << "available_margin,positive_increment_bound,guard_upper_bound,guard_passed,guard_status,accepted_source,"
                           << "semantic_mode,delta_beta,rate_limit_active,projection_active,"
                           << "d_i,rel_v_norm,ttc,ttc_norm,inv_ttc,cos_delta,rho_i,rho_norm,group_flag,"
                           << "h_ee,h_see,R_base,R_sem,tau,tau_mode,delta_tau,"
@@ -102,26 +179,34 @@ public:
         }
 
         // Subscribers
-        sub_obs_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_pub", 10, &BetaGroundTruthNode::obsCb, this);
-        sub_obs_ids_ = nh_.subscribe("/globalFsm_by_adsm/obs_predict_ids", 10, &BetaGroundTruthNode::obsIdsCb, this);
+        sub_snapshot_ = nh_.subscribe(
+            "/globalFsm_by_adsm/teacher_obstacle_snapshot", 20,
+            &BetaGroundTruthNode::snapshotCb, this);
         sub_odom_ = nh_.subscribe("/Odometry", 1, &BetaGroundTruthNode::odomCb, this);
+        sub_applied_ = nh_.subscribe(
+            "/safety_margin/beta_applied_final", 20,
+            &BetaGroundTruthNode::appliedMarginCb, this);
 
         // Publishers
-        pub_beta_ = nh_.advertise<std_msgs::Float32MultiArray>("/safety_margin/beta", 10);
+        pub_pre_guard_ = nh_.advertise<semantic_guard::PreGuardMarginArray>(
+            "/safety_margin/beta_pre_guard", 20);
         pub_guard_log_ = nh_.advertise<semantic_guard::GuardLog>("/safety_margin/guard_log", 10);
         pub_vis_ = nh_.advertise<visualization_msgs::MarkerArray>("/safety_margin/vis_obstacles", 10);
 
         total_rollbacks_ = 0;
         has_odom_ = false;
 
-        ROS_INFO("BetaGroundTruthNode initialized with %zu obstacle classes, guard_enabled=%s, semantic_mode=%s, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e",
+        ROS_INFO("BetaGroundTruthNode initialized with %zu typed obstacle IDs, guard_enabled=%s, semantic_mode=%s, dynamic_tau=%s, tau_mode=%s, delta_tau=%.3e",
                  obstacle_classes_.size(), guard_enabled_ ? "true" : "false", semantic_mode_.c_str(),
                  dynamic_tau_enabled_ ? "true" : "false",
                  semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode),
                  dynamic_tau_params_.delta_tau);
         for (size_t i = 0; i < obstacle_classes_.size(); i++) {
-            ROS_INFO("  obs[%zu] = %s, beta_bar = %.2f", i, obstacle_classes_[i].c_str(),
-                     beta_bar_[obstacle_classes_[i]]);
+            ROS_INFO("  obs_id=%u class=%s beta_bar=%.2f beta_max=%.2f",
+                     static_cast<unsigned int>(configured_obstacle_ids[i]),
+                     obstacle_classes_[i].c_str(),
+                     beta_bar_[obstacle_classes_[i]],
+                     beta_max_[obstacle_classes_[i]]);
         }
     }
 
@@ -160,10 +245,6 @@ private:
         }
     }
 
-    void obsIdsCb(const std_msgs::UInt32MultiArrayConstPtr& msg) {
-        obstacle_ids_ = msg->data;
-    }
-
     void odomCb(const nav_msgs::OdometryConstPtr& msg) {
         robot_pos_ << msg->pose.pose.position.x,
                       msg->pose.pose.position.y;
@@ -185,44 +266,130 @@ private:
         has_odom_ = true;
     }
 
-    void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg) {
+    bool hasUniqueIds(const std::vector<uint32_t>& ids) const {
+        std::unordered_set<uint32_t> seen;
+        seen.reserve(ids.size());
+        for (uint32_t id : ids) {
+            if (!seen.insert(id).second) return false;
+        }
+        return true;
+    }
+
+    void updateActiveIds(const std::vector<uint32_t>& ids,
+                         uint64_t current_cycle) {
+        std::unordered_set<uint32_t> next(ids.begin(), ids.end());
+        for (auto it = beta_prev_.begin(); it != beta_prev_.end();) {
+            if (next.count(it->first) == 0) {
+                it = beta_prev_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = active_birth_cycle_.begin();
+             it != active_birth_cycle_.end();) {
+            if (next.count(it->first) == 0) {
+                it = active_birth_cycle_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (uint32_t id : ids) {
+            if (active_ids_.count(id) == 0) {
+                active_birth_cycle_[id] = current_cycle;
+            }
+        }
+        active_ids_.swap(next);
+    }
+
+    void snapshotCb(
+        const semantic_guard::PredictedObstacleArrayConstPtr& msg) {
+        if (msg->cycle_id == 0 || msg->cycle_id <= last_snapshot_cycle_id_) {
+            ROS_ERROR_THROTTLE(
+                1.0, "[beta_ground_truth] reject stale/zero obstacle cycle=%lu",
+                static_cast<unsigned long>(msg->cycle_id));
+            return;
+        }
+        if (N_ <= 0 || msg->horizon_steps != static_cast<uint32_t>(N_) ||
+            msg->header.stamp.isZero() || msg->header.frame_id != "world" ||
+            !std::isfinite(msg->prediction_step_sec) ||
+            msg->prediction_step_sec <= 0.0 ||
+            std::abs(msg->prediction_step_sec - prediction_step_sec_) > 1e-6 ||
+            msg->state_data.size() !=
+                msg->obstacle_ids.size() * static_cast<size_t>(7 * N_) ||
+            !hasUniqueIds(msg->obstacle_ids) ||
+            !std::all_of(msg->state_data.begin(), msg->state_data.end(),
+                         [](double value) { return std::isfinite(value); })) {
+            ROS_ERROR_THROTTLE(
+                1.0, "[beta_ground_truth] reject malformed typed obstacle cycle=%lu",
+                static_cast<unsigned long>(msg->cycle_id));
+            return;
+        }
+        for (uint32_t obstacle_id : msg->obstacle_ids) {
+            if (class_by_id_.count(obstacle_id) == 0) {
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "[beta_ground_truth] reject unconfigured obstacle ID=%u",
+                    obstacle_id);
+                return;
+            }
+        }
+        for (size_t obstacle_index = 0;
+             obstacle_index < msg->obstacle_ids.size(); ++obstacle_index) {
+            for (int stage = 0; stage < N_; ++stage) {
+                const size_t offset =
+                    7 * (obstacle_index * static_cast<size_t>(N_) +
+                         static_cast<size_t>(stage));
+                if (msg->state_data[offset + 2] < 0.0 ||
+                    msg->state_data[offset + 3] < 0.0) {
+                    ROS_ERROR_THROTTLE(
+                        1.0,
+                        "[beta_ground_truth] reject negative radius in typed cycle=%lu",
+                        static_cast<unsigned long>(msg->cycle_id));
+                    return;
+                }
+            }
+        }
+
+        last_snapshot_cycle_id_ = msg->cycle_id;
+        updateActiveIds(msg->obstacle_ids, msg->cycle_id);
         if (!has_odom_) return;
 
-        // Parse obstacle count from message
-        int total_floats = msg->data.size();
-        if (N_ <= 0 || total_floats % (7 * N_) != 0) {
-            ROS_ERROR_THROTTLE(1.0, "[beta_ground_truth] Invalid obstacle payload size=%d for N=%d",
-                               total_floats, N_);
-            return;
-        }
-        int obs_num = total_floats / (7 * N_);
-        if (obs_num == 0) return;
-        if (obstacle_ids_.size() != static_cast<size_t>(obs_num)) {
-            ROS_ERROR_THROTTLE(1.0, "[beta_ground_truth] obs/id count mismatch: obs=%d ids=%zu",
-                               obs_num, obstacle_ids_.size());
-            return;
-        }
+        semantic_guard::PreGuardMarginArray beta_msg;
+        beta_msg.header = msg->header;
+        beta_msg.header.stamp = ros::Time::now();
+        beta_msg.obstacle_cycle_id = msg->cycle_id;
+        beta_msg.enforce_category_bound = guard_enabled_;
+        beta_msg.enforce_positive_increment_bound =
+            guard_enabled_ && enable_rate_limit_;
+        beta_msg.enforce_available_margin_bound =
+            guard_enabled_ && enable_available_projection_;
+        GroundTruthMarginCycle cycle;
+        cycle.obstacle_ids = msg->obstacle_ids;
+        cycle.audits.reserve(msg->obstacle_ids.size());
 
-        std_msgs::Float32MultiArray beta_msg;
-        semantic_guard::GuardLog log_msg;
-        log_msg.header.stamp = ros::Time::now();
-
+        const int obs_num = static_cast<int>(msg->obstacle_ids.size());
         for (int idx = 0; idx < obs_num; idx++) {
-            const uint32_t obstacle_id = obstacle_ids_[idx];
+            const uint32_t obstacle_id = msg->obstacle_ids[idx];
             // Get obstacle position (first timestep)
-            double obs_x = msg->data[7 * N_ * idx + 0];
-            double obs_y = msg->data[7 * N_ * idx + 1];
-            double obs_r = msg->data[7 * N_ * idx + 2];
-            double obs_vx = msg->data[7 * N_ * idx + 5];
-            double obs_vy = msg->data[7 * N_ * idx + 6];
+            const size_t offset = static_cast<size_t>(7 * N_ * idx);
+            double obs_x = msg->state_data[offset + 0];
+            double obs_y = msg->state_data[offset + 1];
+            double obs_r = msg->state_data[offset + 2];
+            double obs_vx = msg->state_data[offset + 5];
+            double obs_vy = msg->state_data[offset + 6];
+            if (obs_r < 0.0) {
+                ROS_ERROR_THROTTLE(
+                    1.0, "[beta_ground_truth] reject negative obstacle radius");
+                return;
+            }
 
             Eigen::Vector2d obs_pos(obs_x, obs_y);
             Eigen::Vector2d obs_vel(obs_vx, obs_vy);
 
             // Get semantic class
-            std::string cls = (idx < (int)obstacle_classes_.size()) ?
-                              obstacle_classes_[idx] : "unknown";
+            const std::string cls = class_by_id_.at(obstacle_id);
             double beta_bar_val = beta_bar_.count(cls) ? beta_bar_[cls] : beta_bar_["unknown"];
+            double beta_max_val = beta_max_.count(cls) ? beta_max_[cls] : beta_max_["unknown"];
 
             // Compute context features
             // Teacher convention: l=p_robot-p_obstacle and
@@ -253,10 +420,23 @@ private:
 
             double density_norm = std::min(1.0, (obs_num - 1) / 5.0);
 
-            // Compute μ and β̂
-            double mu = std::max(0.0, std::min(1.0,
-                w_bias_ + w_head_ * f_head + w_ttc_ * ttc_norm + w_density_ * density_norm));
-            double beta_hat = computeRequestedBeta(beta_bar_val, mu);
+            semantic_guard::SemanticContextWeights context_weights;
+            context_weights.bias = w_bias_;
+            context_weights.head_on = w_head_;
+            context_weights.ttc_norm = w_ttc_;
+            context_weights.density_norm = w_density_;
+            const auto phi = semantic_guard::computeProvisionalTeacherPhi(
+                beta_bar_val, f_head, ttc_norm, density_norm,
+                context_weights);
+            if (!phi.valid) {
+                ROS_ERROR_THROTTLE(
+                    1.0, "[beta_ground_truth] provisional Phi is invalid: %s",
+                    phi.reason.c_str());
+                return;
+            }
+            const double mu = phi.mu;
+            const double beta_hat = computeRequestedBeta(
+                beta_bar_val, mu, phi.beta_tilde);
 
             // Guard check: β̂ ≤ h_EE - η
             // h_EE = ||p_rel + τ v_rel|| - R_obs - R_robot
@@ -273,116 +453,239 @@ private:
                 tau_result.valid = false;
                 tau_result.reason = "disabled";
             }
-            const bool tau_computed = !dynamic_tau_enabled_ ||
-                                      tau_result.computed;
-            const bool tau_active = std::isfinite(tau_result.tau) &&
-                                    tau_result.tau > 0.0;
             Eigen::Vector2d lookahead_rel_pos = p_rel + tau_result.tau * v_rel;
             double h_phys = p_rel.norm() - obs_r - robot_radius_;
             double h_ee = lookahead_rel_pos.norm() - obs_r - robot_radius_;
-            double guard_upper_bound = std::min(beta_bar_val, std::max(0.0, h_ee - eta_));
-            bool guard_pass = guard_enabled_
-                ? (!enable_available_projection_ || !enable_guard_fallback_ || beta_hat <= guard_upper_bound)
-                : true;
-
-            // Apply rate limiting, projection, and last-value fallback.
             double beta_prev = getPrevBeta(obstacle_id);
-            double beta_before_projection = beta_hat;
-            double beta_final;
-            std::string guard_status;
-            bool rate_limit_active = false;
-            bool projection_active = false;
-            if (!guard_enabled_) {
-                beta_final = beta_hat;
-                guard_status = "disabled";
-            } else if (enable_available_projection_ && enable_guard_fallback_ && guard_upper_bound <= 1e-9) {
-                beta_final = 0.0;
-                total_rollbacks_++;
-                guard_status = "zero";
-            } else if (guard_pass) {
-                double raw_delta = beta_hat - beta_prev;
-                double delta = enable_rate_limit_
-                    ? std::max(-max_delta_beta_, std::min(max_delta_beta_, raw_delta))
-                    : raw_delta;
-                rate_limit_active = std::abs(delta - raw_delta) > 1e-9;
-                double beta_limited = beta_prev + delta;
-                beta_before_projection = clampSemanticBeta(beta_limited, beta_bar_val);
-                beta_final = projectAvailable(beta_before_projection, guard_upper_bound);
-                projection_active = std::abs(beta_final - beta_before_projection) > 1e-9;
-                guard_status = (std::abs(beta_final - beta_hat) > 1e-9 ||
-                                std::abs(delta - raw_delta) > 1e-9) ? "project" : "accept";
-            } else {
-                beta_before_projection = clampSemanticBeta(beta_prev, beta_bar_val);
-                beta_final = projectAvailable(beta_before_projection, guard_upper_bound);
-                projection_active = std::abs(beta_final - beta_before_projection) > 1e-9;
-                total_rollbacks_++;
-                guard_status = enable_guard_fallback_ && beta_final > 1e-9 ? "fallback" : "zero";
+            semantic_guard::SemanticProjectionPolicy policy;
+            policy.enforce_category_bound = guard_enabled_;
+            policy.enforce_positive_increment_bound =
+                guard_enabled_ && enable_rate_limit_;
+            policy.enforce_available_margin_bound =
+                guard_enabled_ && enable_available_projection_;
+            const auto update = semantic_guard::projectTeacherSemanticMargin(
+                beta_hat, beta_max_val, beta_prev, delta_beta_positive_, h_ee,
+                h_min_, policy);
+            if (!update.valid) {
+                ROS_ERROR_THROTTLE(
+                    1.0, "[beta_ground_truth] semantic update is invalid: %s",
+                    update.reason.c_str());
+                return;
             }
-            beta_final = std::max(0.0, beta_final);
-            double delta_beta = std::max(0.0, beta_final - beta_prev);
-            double h_see = h_ee - beta_final;
-            double r_base = obs_r + robot_radius_;
-            double r_sem = r_base + beta_final;
-            beta_prev_[obstacle_id] = beta_final;
 
-            beta_msg.data.push_back(static_cast<float>(beta_final));
+            beta_msg.obstacle_ids.push_back(obstacle_id);
+            beta_msg.semantic_classes.push_back(cls);
+            beta_msg.beta_bar.push_back(beta_bar_val);
+            beta_msg.beta_max.push_back(beta_max_val);
+            beta_msg.beta_previous.push_back(beta_prev);
+            beta_msg.mu.push_back(mu);
+            beta_msg.beta_tilde.push_back(beta_hat);
+            beta_msg.available_margin.push_back(update.available_margin);
+            beta_msg.positive_increment_bound.push_back(
+                update.positive_increment_bound);
+            beta_msg.beta_upper_bound.push_back(update.beta_upper_bound);
+            beta_msg.beta_pre_guard.push_back(update.beta_pre);
 
-            // Log
-            log_msg.obstacle_ids.push_back(obstacle_id);
-            log_msg.beta_requested.push_back(beta_hat);
-            log_msg.beta_applied.push_back(beta_final);
-            log_msg.h_ee_values.push_back(h_ee);
-            log_msg.guard_passed.push_back(guard_pass);
-
-            if (csv_file_.is_open()) {
-                csv_file_ << ros::Time::now().toSec() << ","
-                          << obstacle_id << "," << cls << ","
-                          << beta_bar_val << "," << mu << ","
-                          << beta_hat << "," << beta_before_projection << "," << beta_final << ","
-                          << guard_upper_bound << "," << (guard_pass ? 1 : 0) << ","
-                          << guard_status << ","
-                          << semantic_mode_ << "," << delta_beta << ","
-                          << (rate_limit_active ? 1 : 0) << ","
-                          << (projection_active ? 1 : 0) << ","
-                          << d_i << "," << rel_v_norm << ","
-                          << (std::isfinite(ttc) ? ttc : -1.0) << "," << ttc_norm << "," << inv_ttc << ","
-                          << cos_delta << "," << density_norm << "," << density_norm << ",0,"
-                          << h_ee << "," << h_see << ","
-                          << r_base << "," << r_sem << ","
-                          << tau_result.tau << ","
-                          << semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode) << ","
-                          << dynamic_tau_params_.delta_tau << ","
-                          << tau_result.relative_dot << ","
-                          << tau_result.speed_squared << ","
-                          << tau_result.denominator << ","
-                          << tau_result.t_ca_raw << ","
-                          << tau_result.t_ca_clipped << ","
-                          << tau_result.tau_unclipped << ","
-                          << tau_result.lower_clipped << ","
-                          << tau_result.upper_clipped << ","
-                          << tau_result.ke_scaled << ","
-                          << tau_result.T_i << ","
-                          << tau_result.f_r << "," << tau_result.f_v << ","
-                          << tau_result.f_T << "," << tau_computed << ","
-                          << sanitizeCsvField(tau_result.reason) << ","
-                          << h_phys << "," << h_ee << "," << h_see << ","
-                          << tau_computed << "," << tau_active << "\n";
-            }
+            GroundTruthMarginAudit audit;
+            audit.obstacle_id = obstacle_id;
+            audit.birth_cycle = active_birth_cycle_.at(obstacle_id);
+            audit.semantic_class = cls;
+            audit.beta_bar = beta_bar_val;
+            audit.beta_max = beta_max_val;
+            audit.mu = mu;
+            audit.beta_tilde = beta_hat;
+            audit.beta_previous = beta_prev;
+            audit.available_margin = update.available_margin;
+            audit.positive_increment_bound = update.positive_increment_bound;
+            audit.beta_upper_bound = update.beta_upper_bound;
+            audit.beta_pre = update.beta_pre;
+            audit.rate_limit_active = update.positive_increment_bound_active;
+            audit.projection_active =
+                std::abs(update.beta_pre - beta_hat) > 1e-9;
+            audit.d_i = d_i;
+            audit.rel_v_norm = rel_v_norm;
+            audit.ttc = ttc;
+            audit.ttc_norm = ttc_norm;
+            audit.inv_ttc = inv_ttc;
+            audit.cos_delta = cos_delta;
+            audit.density_norm = density_norm;
+            audit.h_phys = h_phys;
+            audit.h_eesm = h_ee;
+            audit.r_base = obs_r + robot_radius_;
+            audit.tau_result = tau_result;
+            cycle.audits.push_back(audit);
         }
 
-        log_msg.total_rollbacks = total_rollbacks_;
-        pub_beta_.publish(beta_msg);
-        pub_guard_log_.publish(log_msg);
+        pending_cycles_[msg->cycle_id] = cycle;
+        while (pending_cycles_.size() > 64) {
+            pending_cycles_.erase(pending_cycles_.begin());
+        }
+        pub_pre_guard_.publish(beta_msg);
 
         // Publish visualization markers (obstacle spheres + β safety circles)
         publishVisualization(msg);
     }
 
-    void publishVisualization(const std_msgs::Float32MultiArrayConstPtr& msg) {
+    void appliedMarginCb(
+        const semantic_guard::AppliedMarginArrayConstPtr& msg) {
+        if (msg->obstacle_cycle_id == 0 ||
+            msg->obstacle_cycle_id <= last_feedback_cycle_id_) {
+            ROS_ERROR_THROTTLE(
+                1.0, "[beta_ground_truth] reject stale/zero MPC feedback cycle=%lu",
+                static_cast<unsigned long>(msg->obstacle_cycle_id));
+            return;
+        }
+        auto cycle_it = pending_cycles_.find(msg->obstacle_cycle_id);
+        if (cycle_it == pending_cycles_.end()) {
+            ROS_ERROR_THROTTLE(
+                1.0, "[beta_ground_truth] reject feedback for unknown cycle=%lu",
+                static_cast<unsigned long>(msg->obstacle_cycle_id));
+            return;
+        }
+        const GroundTruthMarginCycle& cycle = cycle_it->second;
+        const size_t count = cycle.obstacle_ids.size();
+        if (msg->obstacle_ids != cycle.obstacle_ids ||
+            cycle.audits.size() != count ||
+            msg->beta_applied.size() != count ||
+            msg->accepted_sources.size() != count ||
+            !hasUniqueIds(msg->obstacle_ids)) {
+            ROS_ERROR_THROTTLE(
+                1.0, "[beta_ground_truth] reject feedback ID/count mismatch");
+            return;
+        }
+        for (size_t index = 0; index < count; ++index) {
+            const GroundTruthMarginAudit& audit = cycle.audits[index];
+            const std::string& source = msg->accepted_sources[index];
+            const double applied = msg->beta_applied[index];
+            const bool known_source =
+                source == "candidate" || source == "previous" ||
+                source == "zero" || source == "kappa" ||
+                source == "mpc_reprojected" || source == "no_cbf";
+            const bool source_value_valid =
+                applied <= audit.beta_max + 1e-8 &&
+                ((source == "candidate" &&
+                 std::abs(applied - audit.beta_pre) <= 1e-8) ||
+                (source == "previous" &&
+                 std::abs(applied - audit.beta_previous) <= 1e-8) ||
+                ((source == "zero" || source == "no_cbf") &&
+                 std::abs(applied) <= 1e-8) ||
+                ((source == "kappa" || source == "mpc_reprojected") &&
+                 applied <= audit.beta_pre + 1e-8));
+            if (!std::isfinite(msg->beta_applied[index]) ||
+                msg->beta_applied[index] < 0.0 ||
+                !known_source || !source_value_valid) {
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "[beta_ground_truth] reject invalid feedback payload/source");
+                return;
+            }
+        }
+
+        semantic_guard::GuardLog log_msg;
+        log_msg.header = msg->header;
+        log_msg.obstacle_cycle_id = msg->obstacle_cycle_id;
+        for (size_t index = 0; index < count; ++index) {
+            const GroundTruthMarginAudit& audit = cycle.audits[index];
+            const double beta_applied = msg->beta_applied[index];
+            const std::string& accepted_source = msg->accepted_sources[index];
+            const bool candidate_accepted =
+                accepted_source == "candidate" &&
+                std::abs(beta_applied - audit.beta_pre) <= 1e-8;
+            const auto birth_it = active_birth_cycle_.find(audit.obstacle_id);
+            const bool same_lifecycle =
+                active_ids_.count(audit.obstacle_id) != 0 &&
+                birth_it != active_birth_cycle_.end() &&
+                birth_it->second == audit.birth_cycle;
+            if (accepted_source != "no_cbf" && same_lifecycle) {
+                beta_prev_[audit.obstacle_id] = beta_applied;
+            }
+            if (!candidate_accepted) ++total_rollbacks_;
+
+            log_msg.obstacle_ids.push_back(audit.obstacle_id);
+            log_msg.beta_requested.push_back(audit.beta_tilde);
+            log_msg.beta_pre_guard.push_back(audit.beta_pre);
+            log_msg.beta_applied.push_back(beta_applied);
+            log_msg.h_ee_values.push_back(audit.h_eesm);
+            log_msg.guard_passed.push_back(candidate_accepted);
+            log_msg.accepted_sources.push_back(accepted_source);
+
+            const double delta_beta =
+                std::max(0.0, beta_applied - audit.beta_previous);
+            const double h_seesm = audit.h_eesm - beta_applied;
+            const double r_sem = audit.r_base + beta_applied;
+            std::string guard_status;
+            if (!candidate_accepted) {
+                guard_status = "mpc_" + accepted_source;
+            } else if (audit.projection_active) {
+                guard_status = "pre_guard_clip";
+            } else {
+                guard_status = "accept";
+            }
+            const bool tau_computed = !dynamic_tau_enabled_ ||
+                                      audit.tau_result.computed;
+            const bool tau_active =
+                std::isfinite(audit.tau_result.tau) &&
+                audit.tau_result.tau > 0.0;
+            if (csv_file_.is_open()) {
+                csv_file_ << ros::Time::now().toSec() << ","
+                          << msg->obstacle_cycle_id << ","
+                          << audit.obstacle_id << ","
+                          << audit.semantic_class << ","
+                          << audit.beta_bar << "," << audit.beta_max << ","
+                          << audit.mu << "," << audit.beta_tilde << ","
+                          << audit.beta_previous << "," << audit.beta_pre << ","
+                          << beta_applied << "," << audit.available_margin << ","
+                          << audit.positive_increment_bound << ","
+                          << audit.beta_upper_bound << ","
+                          << (candidate_accepted ? 1 : 0) << ","
+                          << guard_status << ","
+                          << sanitizeCsvField(accepted_source) << ","
+                          << semantic_mode_ << "," << delta_beta << ","
+                          << (audit.rate_limit_active ? 1 : 0) << ","
+                          << (audit.projection_active ? 1 : 0) << ","
+                          << audit.d_i << "," << audit.rel_v_norm << ","
+                          << (std::isfinite(audit.ttc) ? audit.ttc : -1.0) << ","
+                          << audit.ttc_norm << "," << audit.inv_ttc << ","
+                          << audit.cos_delta << "," << audit.density_norm << ","
+                          << audit.density_norm << ",0,"
+                          << audit.h_eesm << "," << h_seesm << ","
+                          << audit.r_base << "," << r_sem << ","
+                          << audit.tau_result.tau << ","
+                          << semantic_guard::dynamicTauModeName(
+                                 dynamic_tau_params_.mode) << ","
+                          << dynamic_tau_params_.delta_tau << ","
+                          << audit.tau_result.relative_dot << ","
+                          << audit.tau_result.speed_squared << ","
+                          << audit.tau_result.denominator << ","
+                          << audit.tau_result.t_ca_raw << ","
+                          << audit.tau_result.t_ca_clipped << ","
+                          << audit.tau_result.tau_unclipped << ","
+                          << audit.tau_result.lower_clipped << ","
+                          << audit.tau_result.upper_clipped << ","
+                          << audit.tau_result.ke_scaled << ","
+                          << audit.tau_result.T_i << ","
+                          << audit.tau_result.f_r << ","
+                          << audit.tau_result.f_v << ","
+                          << audit.tau_result.f_T << "," << tau_computed << ","
+                          << sanitizeCsvField(audit.tau_result.reason) << ","
+                          << audit.h_phys << "," << audit.h_eesm << ","
+                          << h_seesm << "," << tau_computed << ","
+                          << tau_active << "\n";
+            }
+        }
+        if (csv_file_.is_open()) csv_file_.flush();
+        log_msg.total_rollbacks = total_rollbacks_;
+        pub_guard_log_.publish(log_msg);
+        last_feedback_cycle_id_ = msg->obstacle_cycle_id;
+        pending_cycles_.erase(pending_cycles_.begin(),
+                              pending_cycles_.upper_bound(
+                                  msg->obstacle_cycle_id));
+    }
+
+    void publishVisualization(
+        const semantic_guard::PredictedObstacleArrayConstPtr& msg) {
         visualization_msgs::MarkerArray markers;
-        int total_floats = msg->data.size();
-        int obs_num = (N_ > 0) ? (total_floats / (7 * N_)) : 0;
-        if (obstacle_ids_.size() != static_cast<size_t>(obs_num)) return;
+        const int obs_num = static_cast<int>(msg->obstacle_ids.size());
 
         // Color map per class: R, G, B
         auto getColor = [](const std::string& cls) -> std::tuple<float,float,float> {
@@ -397,12 +700,13 @@ private:
         };
 
         for (int idx = 0; idx < obs_num; idx++) {
-            double obs_x = msg->data[7 * N_ * idx + 0];
-            double obs_y = msg->data[7 * N_ * idx + 1];
-            double obs_r = msg->data[7 * N_ * idx + 2];
-            uint32_t obstacle_id = obstacle_ids_[idx];
-            std::string cls = (idx < (int)obstacle_classes_.size()) ?
-                              obstacle_classes_[idx] : "unknown";
+            const size_t offset = static_cast<size_t>(7 * N_ * idx);
+            double obs_x = msg->state_data[offset + 0];
+            double obs_y = msg->state_data[offset + 1];
+            double obs_r = msg->state_data[offset + 2];
+            uint32_t obstacle_id = msg->obstacle_ids[idx];
+            const std::string cls = class_by_id_.count(obstacle_id)
+                ? class_by_id_.at(obstacle_id) : "unknown";
             double beta_i = getPrevBeta(obstacle_id);
 
             auto color = getColor(cls);
@@ -487,36 +791,28 @@ private:
         return 0.0;
     }
 
-    double computeRequestedBeta(double beta_bar_val, double mu) const {
+    double computeRequestedBeta(double beta_bar_val, double mu,
+                                double full_candidate) const {
         if (semantic_mode_ == "none") return 0.0;
         if (semantic_mode_ == "fixed") return fixed_beta_;
         if (semantic_mode_ == "category_only") return beta_bar_val;
         if (semantic_mode_ == "context_only") {
             auto it = beta_bar_.find("unknown");
-            double context_beta_bar = (it != beta_bar_.end()) ? it->second : 0.4;
+            double context_beta_bar = (it != beta_bar_.end()) ? it->second : 0.75;
             return context_beta_bar * mu;
         }
-        return beta_bar_val * mu;
-    }
-
-    double clampSemanticBeta(double beta, double beta_bar_val) const {
-        double upper = semantic_mode_ == "fixed" ? std::max(fixed_beta_, beta_bar_val) : beta_bar_val;
-        if (semantic_mode_ == "none") upper = 0.0;
-        return std::min(std::max(0.0, beta), upper);
-    }
-
-    double projectAvailable(double beta, double guard_upper_bound) const {
-        if (!enable_available_projection_) return beta;
-        return std::min(std::max(0.0, beta), guard_upper_bound);
+        return full_candidate;
     }
 
     ros::NodeHandle nh_;
-    ros::Subscriber sub_obs_, sub_obs_ids_, sub_odom_;
-    ros::Publisher pub_beta_, pub_guard_log_, pub_vis_;
+    ros::Subscriber sub_snapshot_, sub_odom_, sub_applied_;
+    ros::Publisher pub_pre_guard_, pub_guard_log_, pub_vis_;
 
     std::map<std::string, double> beta_bar_;
+    std::map<std::string, double> beta_max_;
     double w_bias_, w_head_, w_ttc_, w_density_;
-    double eta_, max_delta_beta_, tau_, robot_radius_, fixed_beta_;
+    double h_min_, delta_beta_positive_, robot_radius_, fixed_beta_;
+    double prediction_step_sec_ = 0.2;
     bool guard_enabled_, enable_rate_limit_, enable_available_projection_, enable_guard_fallback_;
     bool dynamic_tau_enabled_ = false;
     semantic_guard::DynamicTauParams dynamic_tau_params_;
@@ -525,10 +821,15 @@ private:
     int N_;
 
     std::vector<std::string> obstacle_classes_;
-    std::vector<uint32_t> obstacle_ids_;
+    std::map<uint32_t, std::string> class_by_id_;
+    std::unordered_set<uint32_t> active_ids_;
+    std::map<uint32_t, uint64_t> active_birth_cycle_;
     Eigen::Vector2d robot_pos_, robot_vel_;
     bool has_odom_;
     std::map<uint32_t, double> beta_prev_;
+    std::map<uint64_t, GroundTruthMarginCycle> pending_cycles_;
+    uint64_t last_snapshot_cycle_id_ = 0;
+    uint64_t last_feedback_cycle_id_ = 0;
     uint32_t total_rollbacks_;
     std::ofstream csv_file_;
 

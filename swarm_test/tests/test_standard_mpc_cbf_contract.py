@@ -74,9 +74,10 @@ def test_standard_and_dynamic_kernel_barrier_contracts():
     assert "!obstacle_contract_valid" in node
     assert "resetAuditMetrics" in header and "resetAuditMetrics" in node
     assert "std::isfinite" in node
-    assert "accepted_beta_ids_ == obstacle_ids_" in node
-    assert "accepted_beta_ids_ = obstacle_ids_" in node
-    assert "accepted_beta_list_.clear()" in node
+    assert "accepted_beta_by_id_" in node
+    assert "acceptedMarginsForIds" in node
+    assert "retainAcceptedMarginsForActiveIds" in node
+    assert "obstacle_cycle_id" in node
 
 
 def test_mpc_launch_exposes_seesm_default_metric():

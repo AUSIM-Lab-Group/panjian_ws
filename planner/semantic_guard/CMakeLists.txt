@@ -20,6 +20,8 @@ add_message_files(
   FILES
   GuardLog.msg
   AppliedMarginArray.msg
+  PredictedObstacleArray.msg
+  PreGuardMarginArray.msg
 )
 
 generate_messages(
@@ -57,4 +59,8 @@ target_link_libraries(beta_ground_truth_node
 if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(dynamic_tau_policy_test
     test/test_dynamic_tau_policy.cpp)
+  catkin_add_gtest(semantic_margin_update_test
+    test/test_semantic_margin_update.cpp)
+  catkin_add_gtest(typed_margin_contract_test
+    test/test_typed_margin_contract.cpp)
 endif()

@@ -227,12 +227,17 @@ CHECKER_HEADERS = {
         "t", "id", "class", "x", "y", "radius", "vx", "vy", "d_i", "rel_v", "TTC", "h_EE"
     ],
     "margin_guard_log.csv": [
-        "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
-        "beta_requested", "beta_pre_guard", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "time", "obstacle_cycle_id", "obs_id", "class", "d_i", "rel_v_norm",
+        "ttc", "ttc_norm", "cos_delta", "rho_norm", "mu", "beta_bar",
+        "beta_max", "beta_requested", "beta_previous", "beta_pre_guard",
+        "beta_applied", "available_margin", "positive_increment_bound",
+        "guard_upper_bound", "guard_passed", "accepted_source", "h_ee", "h_see",
+        "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
     ],
     "planner_log.csv": [
-        "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
+        "t", "obstacle_cycle_id", "mpc_status", "first_attempt_status",
+        "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
         "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
         "mpc_feasibility_guard_used",
@@ -242,7 +247,8 @@ CHECKER_HEADERS = {
 }
 TAU_HEADERS = ["tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"]
 TAU_STAGE_HEADERS = [
-    "t", "obs_id", "stage", "tau_mode", "lx", "ly", "vrel_x", "vrel_y",
+    "t", "obstacle_cycle_id", "obs_id", "stage", "tau_mode", "lx", "ly",
+    "vrel_x", "vrel_y",
     "tca_raw", "tca_clipped", "tau", "tau_computed", "tau_active",
     "R_base", "beta", "h_eesm", "h_seesm", "tau_valid", "tau_reason",
 ]
@@ -304,6 +310,7 @@ def teacher_tau_stage_row(
         reason = "teacher_tca_clipped" if tca_raw > max_tau else "teacher_tca_active"
     row = {
         "t": "0.1",
+        "obstacle_cycle_id": "1",
         "obs_id": "7",
         "stage": "0",
         "tau_mode": mode,
@@ -1705,6 +1712,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     planner_row_if = cpp_function_body(mpc, "if (planner_csv_.is_open()) {")
     mpc_columns = (
         ("t", "t"),
+        ("obstacle_cycle_id", "active_obstacle_cycle_id_"),
         ("mpc_status", "mpc_status"),
         ("first_attempt_status", "first_attempt_status"),
         ("final_status", "final_status"),
@@ -1756,7 +1764,7 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     planner_header_end = mpc_constructor_raw.index("openCsv(timing_csv_", planner_header_start)
     planner_header_fields = csv_header_fields(
         mpc_constructor_raw[planner_header_start:planner_header_end],
-        '"t,mpc_status,',
+        '"t,obstacle_cycle_id,mpc_status,',
     )
     assert "if (file.is_open())" in open_csv
     assert "file << header" in open_csv
@@ -1903,16 +1911,67 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     ground_header_if = cpp_function_body(ground_header_raw, "if (csv_file_.is_open()) {")
     ground_callback = cpp_function_body_raw(
         ground_truth,
-        "void obsCb(const std_msgs::Float32MultiArrayConstPtr& msg)",
+        "void appliedMarginCb(",
     )
     ground_row_if = cpp_function_body(ground_callback, "if (csv_file_.is_open()) {")
-    ground_columns = tuple(
-        (
-            field,
-            "obstacle_id" if field == "obs_id" else
-            "density_norm" if field in {"rho_i", "rho_norm"} else expression,
-        )
-        for field, expression in guard_columns
+    ground_columns = (
+        ("time", "ros::Time::now().toSec()"),
+        ("obstacle_cycle_id", "msg->obstacle_cycle_id"),
+        ("obs_id", "audit.obstacle_id"),
+        ("class", "audit.semantic_class"),
+        ("beta_bar", "audit.beta_bar"),
+        ("beta_max", "audit.beta_max"),
+        ("mu", "audit.mu"),
+        ("beta_requested", "audit.beta_tilde"),
+        ("beta_previous", "audit.beta_previous"),
+        ("beta_pre_guard", "audit.beta_pre"),
+        ("beta_applied", "beta_applied"),
+        ("available_margin", "audit.available_margin"),
+        ("positive_increment_bound", "audit.positive_increment_bound"),
+        ("guard_upper_bound", "audit.beta_upper_bound"),
+        ("guard_passed", "(candidate_accepted ? 1 : 0)"),
+        ("guard_status", "guard_status"),
+        ("accepted_source", "sanitizeCsvField(accepted_source)"),
+        ("semantic_mode", "semantic_mode_"),
+        ("delta_beta", "delta_beta"),
+        ("rate_limit_active", "(audit.rate_limit_active ? 1 : 0)"),
+        ("projection_active", "(audit.projection_active ? 1 : 0)"),
+        ("d_i", "audit.d_i"),
+        ("rel_v_norm", "audit.rel_v_norm"),
+        ("ttc", "(std::isfinite(audit.ttc) ? audit.ttc : -1.0)"),
+        ("ttc_norm", "audit.ttc_norm"),
+        ("inv_ttc", "audit.inv_ttc"),
+        ("cos_delta", "audit.cos_delta"),
+        ("rho_i", "audit.density_norm"),
+        ("rho_norm", "audit.density_norm"),
+        ("group_flag", "0"),
+        ("h_ee", "audit.h_eesm"),
+        ("h_see", "h_seesm"),
+        ("R_base", "audit.r_base"),
+        ("R_sem", "r_sem"),
+        ("tau", "audit.tau_result.tau"),
+        ("tau_mode", "semantic_guard::dynamicTauModeName(dynamic_tau_params_.mode)"),
+        ("delta_tau", "dynamic_tau_params_.delta_tau"),
+        ("relative_dot", "audit.tau_result.relative_dot"),
+        ("speed_squared", "audit.tau_result.speed_squared"),
+        ("denominator", "audit.tau_result.denominator"),
+        ("tca_raw", "audit.tau_result.t_ca_raw"),
+        ("tca_clipped", "audit.tau_result.t_ca_clipped"),
+        ("tau_unclipped", "audit.tau_result.tau_unclipped"),
+        ("lower_clipped", "audit.tau_result.lower_clipped"),
+        ("upper_clipped", "audit.tau_result.upper_clipped"),
+        ("ke_scaled", "audit.tau_result.ke_scaled"),
+        ("T_i", "audit.tau_result.T_i"),
+        ("f_r", "audit.tau_result.f_r"),
+        ("f_v", "audit.tau_result.f_v"),
+        ("f_T", "audit.tau_result.f_T"),
+        ("tau_valid", "tau_computed"),
+        ("tau_reason", "sanitizeCsvField(audit.tau_result.reason)"),
+        ("h_phys", "audit.h_phys"),
+        ("h_eesm", "audit.h_eesm"),
+        ("h_seesm", "h_seesm"),
+        ("tau_computed", "tau_computed"),
+        ("tau_active", "tau_active"),
     )
     ground_header_fields = csv_header_fields(ground_header_if_raw, 'csv_file_ << "time,')
     assert "csv_file_" in ground_header_if

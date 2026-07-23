@@ -1,0 +1,16 @@
+std_msgs/Header header
+uint64 obstacle_cycle_id
+bool enforce_category_bound
+bool enforce_positive_increment_bound
+bool enforce_available_margin_bound
+uint32[] obstacle_ids
+string[] semantic_classes
+float64[] beta_bar
+float64[] beta_max
+float64[] beta_previous
+float64[] mu
+float64[] beta_tilde
+float64[] available_margin
+float64[] positive_increment_bound
+float64[] beta_upper_bound
+float64[] beta_pre_guard

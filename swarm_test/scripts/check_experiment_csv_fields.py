@@ -17,12 +17,17 @@ FILE_FIELDS = {
     "robot_log.csv": {"t", "x", "y", "yaw", "v", "w", "cmd_v", "cmd_w"},
     "obstacle_log.csv": {"t", "id", "class", "x", "y", "radius", "vx", "vy", "d_i", "rel_v", "TTC", "h_EE"},
     "margin_guard_log.csv": {
-        "time", "obs_id", "class", "d_i", "rel_v_norm", "ttc", "mu", "beta_bar",
-        "beta_requested", "beta_pre_guard", "beta_applied", "guard_upper_bound", "h_ee", "h_see", "guard_status",
+        "time", "obstacle_cycle_id", "obs_id", "class", "d_i", "rel_v_norm",
+        "ttc", "ttc_norm", "cos_delta", "rho_norm", "mu", "beta_bar",
+        "beta_max", "beta_requested",
+        "beta_previous", "beta_pre_guard", "beta_applied", "available_margin",
+        "positive_increment_bound", "guard_upper_bound", "guard_passed",
+        "accepted_source", "h_ee", "h_see", "guard_status",
         "semantic_mode", "delta_beta", "rate_limit_active", "projection_active",
     },
     "planner_log.csv": {
-        "t", "mpc_status", "first_attempt_status", "final_status", "accepted_beta_source",
+        "t", "obstacle_cycle_id", "mpc_status", "first_attempt_status",
+        "final_status", "accepted_beta_source",
         "cmd_v", "cmd_w", "slack", "slack_sum", "slack_mean", "slack_max",
         "solve_time_ms", "mpc_feasibility_guard_enabled", "candidate_feasibility_checked",
         "mpc_feasibility_guard_used",
@@ -33,7 +38,8 @@ FILE_FIELDS = {
 
 OPTIONAL_FILE_FIELDS = {
     "mpc_margin_log.csv": {
-        "t", "obs_id", "beta_pre_guard", "beta_applied", "accepted_beta_source",
+        "t", "obstacle_cycle_id", "obs_id", "beta_pre_guard", "beta_applied",
+        "accepted_beta_source",
         "first_attempt_status", "final_status", "mpc_feasibility_guard_enabled",
         "candidate_feasibility_checked", "mpc_feasibility_guard_used",
     },
@@ -47,7 +53,8 @@ OPTIONAL_FILE_FIELDS = {
 TAU_FIELDS = frozenset({"tau", "T_i", "f_r", "f_v", "f_T", "tau_valid", "tau_reason"})
 TAU_NUMERIC_FIELDS = ("tau", "T_i", "f_r", "f_v", "f_T")
 TAU_STAGE_FIELDS = frozenset({
-    "t", "obs_id", "stage", "tau_mode", "lx", "ly", "vrel_x", "vrel_y",
+    "t", "obstacle_cycle_id", "obs_id", "stage", "tau_mode", "lx", "ly",
+    "vrel_x", "vrel_y",
     "tca_raw", "tca_clipped", "tau", "tau_active", "beta", "h_eesm",
     "h_seesm", "tau_valid", "tau_reason",
 })
@@ -81,7 +88,9 @@ PREDICTION_SIGN_CONVENTION = "l(t+tau)=l+tau*v_rel"
 
 ALGORITHM_VERSION = "teacher_v1"
 FORMULA_VERSION = "teacher_v1_formula_001"
-LOG_SCHEMA_VERSION = "teacher_v1_log_schema_001"
+LOG_SCHEMA_VERSION = "teacher_v1_log_schema_002"
+SEMANTIC_MARGIN_CONTRACT_VERSION = "teacher_v1_f05_f07_provisional_001"
+TYPED_CYCLE_CONTRACT_VERSION = "teacher_v1_typed_cycle_001"
 TEACHER_MANUSCRIPT_SHA256 = (
     "c4482f2acda626162a830859db1745d12ee3afaf0c8820b47a3dd94b641ebdf5"
 )
@@ -106,10 +115,13 @@ TEACHER_CANONICAL_FILE_FIELDS = {
     },
     "margin_guard_log.csv": {
         "h_phys", "h_eesm", "h_seesm", "tau_computed", "tau_active",
-        "tau_valid", "tca_raw", "tca_clipped",
+        "tau_valid", "tca_raw", "tca_clipped", "obstacle_cycle_id",
+        "beta_max", "beta_previous", "available_margin",
+        "positive_increment_bound", "accepted_source",
     },
     "planner_log.csv": {
-        "tau_computed", "tau_active", "tau_valid", "tca_raw", "tca_clipped",
+        "obstacle_cycle_id", "tau_computed", "tau_active", "tau_valid",
+        "tca_raw", "tca_clipped",
     },
     "global_seesm_log.csv": {
         "h_phys", "h_eesm", "h_seesm", "tau_computed", "tau_active",
@@ -126,7 +138,9 @@ PAPER_FIELDS = {
     "TTC": [("obstacle_log.csv", "TTC"), ("margin_guard_log.csv", "ttc")],
     "r_i/mu": [("margin_guard_log.csv", "mu")],
     "beta_bar": [("margin_guard_log.csv", "beta_bar")],
+    "beta_max": [("margin_guard_log.csv", "beta_max")],
     "beta_hat": [("margin_guard_log.csv", "beta_requested")],
+    "beta_previous": [("margin_guard_log.csv", "beta_previous")],
     "beta_pre_guard": [("mpc_margin_log.csv", "beta_pre_guard"), ("margin_guard_log.csv", "beta_pre_guard")],
     "beta": [("mpc_margin_log.csv", "beta_applied"), ("margin_guard_log.csv", "beta_applied")],
     "delta_beta": [("margin_guard_log.csv", "delta_beta")],
@@ -157,6 +171,157 @@ def read_rows(path):
 
 def expected_log_profile(baseline_id):
     return LOG_PROFILE_BY_BASELINE.get(baseline_id, "teacher_seesm_v1")
+
+
+def validate_semantic_contract_metadata(meta, baseline_id, errors):
+    semantic = meta.get("semantic_margin_contract")
+    typed = meta.get("typed_cycle_contract")
+    if baseline_id == "B1_ACBF_fixed":
+        if semantic is not None or typed is not None:
+            errors.append("metadata B1 semantic/typed contracts must be not applicable")
+        return
+
+    if not isinstance(semantic, dict):
+        errors.append("metadata semantic_margin_contract must be a mapping")
+        semantic = {}
+    if semantic.get("version") != SEMANTIC_MARGIN_CONTRACT_VERSION:
+        errors.append("metadata semantic_margin_contract.version mismatch")
+    if semantic.get("status") != "provisional":
+        errors.append("metadata semantic_margin_contract.status must be provisional")
+    if semantic.get("formula_ids") != ["F05", "F06", "F07"]:
+        errors.append("metadata semantic_margin_contract.formula_ids mismatch")
+    expected_applicable = (
+        meta.get("cbf_metric") == "seesm" and meta.get("semantic_mode") != "none"
+    )
+    if semantic.get("applicable") is not expected_applicable:
+        errors.append("metadata semantic_margin_contract.applicable mismatch")
+
+    beta_bar = semantic.get("beta_bar_m")
+    beta_max = semantic.get("beta_max_m")
+    if not isinstance(beta_bar, dict) or beta_bar != meta.get("beta_bar_table"):
+        errors.append("metadata semantic beta_bar_m/table mismatch")
+    if not isinstance(beta_max, dict) or beta_max != meta.get("beta_max_table"):
+        errors.append("metadata semantic beta_max_m/table mismatch")
+    if meta.get("beta_table") != meta.get("beta_bar_table"):
+        errors.append("metadata beta_table alias must equal beta_bar_table")
+    for name, table in (("beta_bar_m", beta_bar), ("beta_max_m", beta_max)):
+        if not isinstance(table, dict):
+            continue
+        for category, raw_value in table.items():
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                errors.append(f"metadata {name}.{category} must be numeric")
+                continue
+            if not math.isfinite(value) or value < 0.0:
+                errors.append(
+                    f"metadata {name}.{category} must be finite and nonnegative"
+                )
+
+    phi = semantic.get("phi")
+    expected_phi = (
+        "beta_tilde=beta_bar*clip(bias+head_on*f_head+"
+        "ttc*TTC_norm+density*rho_norm,0,1)"
+    )
+    if not isinstance(phi, dict):
+        errors.append("metadata semantic_margin_contract.phi must be a mapping")
+    else:
+        if phi.get("status") != "provisional_missing_teacher_analytic_form":
+            errors.append("metadata semantic phi status mismatch")
+        if phi.get("formula") != expected_phi:
+            errors.append("metadata semantic phi formula mismatch")
+        if phi.get("multiplier_clip") != [0.0, 1.0]:
+            errors.append("metadata semantic phi clip mismatch")
+        weights = phi.get("weights")
+        if not isinstance(weights, dict) or set(weights) != {
+            "bias", "head_on", "ttc", "density",
+        }:
+            errors.append("metadata semantic phi weights mismatch")
+        elif any(
+            not isinstance(value, (int, float)) or not math.isfinite(float(value))
+            for value in weights.values()
+        ):
+            errors.append("metadata semantic phi weights must be finite")
+
+    for contract_key, top_key, strictly_positive in (
+        ("h_min_m", "guard_h_min", False),
+        ("delta_beta_positive_m_per_cycle", "delta_beta_positive", True),
+    ):
+        try:
+            value = float(semantic.get(contract_key))
+            top_value = float(meta.get(top_key))
+        except (TypeError, ValueError):
+            errors.append(f"metadata semantic {contract_key} must be numeric")
+            continue
+        invalid = value <= 0.0 if strictly_positive else value < 0.0
+        if not math.isfinite(value) or invalid or value != top_value:
+            errors.append(f"metadata semantic {contract_key} mismatch")
+
+    if semantic.get("upper_bound_formula") != (
+        "min(beta_max(c),beta_previous+delta_beta_positive,"
+        "max(h_eesm-h_min,0))"
+    ):
+        errors.append("metadata semantic upper-bound formula mismatch")
+    if semantic.get("pre_guard_formula") != "min(beta_tilde,beta_upper_bound)":
+        errors.append("metadata semantic pre-guard formula mismatch")
+    for field, expected in (
+        ("beta_previous_source", "same_obstacle_id_previous_final_mpc_accepted_feedback"),
+        ("first_seen_beta_previous_m", 0.0),
+        ("disappearance_policy", "erase_history_reappearance_is_rebirth_zero"),
+        ("category_change_policy", "preserve_same_id_history_apply_current_category_cap"),
+        ("no_cbf_history_policy", "do_not_commit"),
+    ):
+        if semantic.get(field) != expected:
+            errors.append(f"metadata semantic {field} mismatch")
+
+    if not isinstance(typed, dict):
+        errors.append("metadata typed_cycle_contract must be a mapping")
+        return
+    if typed.get("version") != TYPED_CYCLE_CONTRACT_VERSION:
+        errors.append("metadata typed_cycle_contract.version mismatch")
+    if typed.get("transport") != "typed_ros_messages":
+        errors.append("metadata typed_cycle_contract.transport mismatch")
+    if typed.get("applicable") is not (meta.get("cbf_metric") == "seesm"):
+        errors.append("metadata typed_cycle_contract.applicable mismatch")
+    if typed.get("configured_obstacle_ids") != meta.get("obstacle_ids"):
+        errors.append("metadata typed configured_obstacle_ids mismatch")
+    expected_endpoints = {
+        "snapshot": {
+            "topic": "/globalFsm_by_adsm/teacher_obstacle_snapshot",
+            "message": "semantic_guard/PredictedObstacleArray",
+            "cycle_field": "cycle_id",
+        },
+        "pre_guard": {
+            "topic": "/safety_margin/beta_pre_guard",
+            "message": "semantic_guard/PreGuardMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+            "policy_fields": [
+                "enforce_category_bound",
+                "enforce_positive_increment_bound",
+                "enforce_available_margin_bound",
+            ],
+        },
+        "accepted_feedback": {
+            "topic": "/safety_margin/beta_applied_final",
+            "message": "semantic_guard/AppliedMarginArray",
+            "cycle_field": "obstacle_cycle_id",
+        },
+    }
+    for endpoint, expected in expected_endpoints.items():
+        if typed.get(endpoint) != expected:
+            errors.append(f"metadata typed {endpoint} mismatch")
+    if typed.get("join_key") != ["obstacle_cycle_id", "obstacle_id"]:
+        errors.append("metadata typed join_key mismatch")
+    if typed.get("id_set_policy") != "strict_unique_exact_match":
+        errors.append("metadata typed id_set_policy mismatch")
+    if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
+        errors.append("metadata typed stale_cycle_policy mismatch")
+    if typed.get("accepted_sources") != [
+        "candidate", "previous", "zero", "no_cbf", "mpc_reprojected",
+    ]:
+        errors.append("metadata typed accepted_sources mismatch")
+    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
+        errors.append("metadata typed history_commit_policy mismatch")
 
 
 def validate_teacher_metadata(run_dir, errors):
@@ -196,6 +361,7 @@ def validate_teacher_metadata(run_dir, errors):
         errors.append("metadata run_state is invalid")
 
     baseline_id = str(meta.get("baseline_id", ""))
+    validate_semantic_contract_metadata(meta, baseline_id, errors)
     profile = expected_log_profile(baseline_id)
     if meta.get("log_profile") != profile:
         errors.append(
@@ -716,6 +882,294 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
     return header
 
 
+def validate_margin_guard_rows(path, meta, errors):
+    """Recompute the auditable F05--F07 quantities and typed-cycle history."""
+    file_name = "margin_guard_log.csv"
+    rows = read_rows(path)
+    if not rows:
+        return
+    semantic = meta.get("semantic_margin_contract")
+    typed = meta.get("typed_cycle_contract")
+    if not isinstance(semantic, dict) or not isinstance(typed, dict):
+        errors.append(f"{file_name}: missing semantic/typed metadata contract")
+        return
+
+    try:
+        h_min = float(semantic["h_min_m"])
+        delta_positive = float(semantic["delta_beta_positive_m_per_cycle"])
+        weights = semantic["phi"]["weights"]
+        w_bias = float(weights["bias"])
+        w_head = float(weights["head_on"])
+        w_ttc = float(weights["ttc"])
+        w_density = float(weights["density"])
+    except (KeyError, TypeError, ValueError):
+        errors.append(f"{file_name}: invalid semantic metadata parameters")
+        return
+    beta_bar_table = semantic.get("beta_bar_m", {})
+    beta_max_table = semantic.get("beta_max_m", {})
+    enforcement = semantic.get("enforcement", {})
+    enforce_category = enforcement.get("category_bound") is True
+    enforce_positive = enforcement.get("positive_increment_bound") is True
+    enforce_available = enforcement.get("available_margin_bound") is True
+    accepted_sources = set(typed.get("accepted_sources", []))
+    configured_ids = set(typed.get("configured_obstacle_ids", []))
+    semantic_mode = str(meta.get("semantic_mode", ""))
+    fixed_beta = meta.get("fixed_beta")
+
+    numeric_fields = (
+        "time", "beta_bar", "beta_max", "mu", "beta_requested",
+        "beta_previous", "beta_pre_guard", "beta_applied",
+        "available_margin", "positive_increment_bound", "guard_upper_bound",
+        "delta_beta", "ttc_norm", "cos_delta", "rho_norm", "h_ee",
+        "h_see", "h_eesm", "h_seesm",
+    )
+    nonnegative_fields = (
+        "beta_bar", "beta_max", "mu", "beta_requested", "beta_previous",
+        "beta_pre_guard", "beta_applied", "available_margin",
+        "positive_increment_bound", "guard_upper_bound", "delta_beta",
+    )
+
+    def close(actual, expected):
+        return math.isclose(actual, expected, rel_tol=2.0e-7, abs_tol=2.0e-8)
+
+    def require_close(row_index, field, actual, expected):
+        if not close(actual, expected):
+            errors.append(
+                f"{file_name}:{row_index}: {field}={actual:.12g} does not "
+                f"match recomputed {expected:.12g}"
+            )
+
+    parsed_rows = []
+    seen_keys = set()
+    previous_cycle = 0
+    for row_index, row in enumerate(rows, start=2):
+        try:
+            cycle_id = int(str(row.get("obstacle_cycle_id", "")).strip())
+            obs_id = int(str(row.get("obs_id", "")).strip())
+        except ValueError:
+            errors.append(f"{file_name}:{row_index}: invalid typed cycle/id")
+            continue
+        if cycle_id <= 0 or obs_id < 0:
+            errors.append(f"{file_name}:{row_index}: cycle/id out of range")
+        if cycle_id < previous_cycle:
+            errors.append(f"{file_name}:{row_index}: obstacle cycles are not monotonic")
+        previous_cycle = max(previous_cycle, cycle_id)
+        key = (cycle_id, obs_id)
+        if key in seen_keys:
+            errors.append(f"{file_name}:{row_index}: duplicate cycle/obstacle key {key}")
+        seen_keys.add(key)
+        if configured_ids and obs_id not in configured_ids:
+            errors.append(
+                f"{file_name}:{row_index}: obs_id {obs_id} is not in typed contract"
+            )
+
+        values = {}
+        for field in numeric_fields:
+            try:
+                value = float(row[field])
+            except (KeyError, TypeError, ValueError):
+                errors.append(f"{file_name}:{row_index}: invalid numeric field {field}")
+                continue
+            if not math.isfinite(value):
+                errors.append(f"{file_name}:{row_index}: non-finite field {field}")
+                continue
+            values[field] = value
+        for field in nonnegative_fields:
+            if field in values and values[field] < -2.0e-8:
+                errors.append(f"{file_name}:{row_index}: negative field {field}")
+        for field in ("ttc_norm", "rho_norm", "mu"):
+            if field in values and not -2.0e-8 <= values[field] <= 1.0 + 2.0e-8:
+                errors.append(f"{file_name}:{row_index}: {field} outside [0,1]")
+        if "cos_delta" in values and not -1.0 - 2.0e-8 <= values["cos_delta"] <= 1.0 + 2.0e-8:
+            errors.append(f"{file_name}:{row_index}: cos_delta outside [-1,1]")
+
+        for field in ("guard_passed", "rate_limit_active", "projection_active"):
+            value = str(row.get(field, "")).strip().lower()
+            if value not in BOOL_VALUES:
+                errors.append(f"{file_name}:{row_index}: invalid {field} {value!r}")
+        source = str(row.get("accepted_source", "")).strip()
+        if source not in accepted_sources:
+            errors.append(
+                f"{file_name}:{row_index}: unknown accepted_source {source!r}"
+            )
+        if str(row.get("semantic_mode", "")).strip() != semantic_mode:
+            errors.append(f"{file_name}:{row_index}: semantic_mode metadata mismatch")
+        parsed_rows.append((cycle_id, obs_id, row_index, row, values, source))
+
+    by_cycle = {}
+    cycle_order = []
+    for item in parsed_rows:
+        cycle_id = item[0]
+        if cycle_id not in by_cycle:
+            by_cycle[cycle_id] = []
+            cycle_order.append(cycle_id)
+        by_cycle[cycle_id].append(item)
+
+    committed_history = {}
+    for cycle_id in cycle_order:
+        cycle_rows = by_cycle[cycle_id]
+        active_ids = {item[1] for item in cycle_rows}
+        for stale_id in set(committed_history) - active_ids:
+            del committed_history[stale_id]
+        cycle_sources = {item[5] for item in cycle_rows}
+        if len(cycle_sources) > 1:
+            errors.append(
+                f"{file_name}: obstacle cycle {cycle_id} has mixed accepted sources"
+            )
+
+        pending_commits = []
+        for _, obs_id, row_index, row, value, source in cycle_rows:
+            if not all(field in value for field in numeric_fields):
+                continue
+            semantic_class = str(row.get("class", "")).strip()
+            try:
+                expected_bar = float(beta_bar_table[semantic_class])
+                expected_max = float(beta_max_table[semantic_class])
+            except (KeyError, TypeError, ValueError):
+                errors.append(
+                    f"{file_name}:{row_index}: class {semantic_class!r} missing "
+                    "from semantic tables"
+                )
+                continue
+            require_close(row_index, "beta_bar", value["beta_bar"], expected_bar)
+            require_close(row_index, "beta_max", value["beta_max"], expected_max)
+
+            expected_previous = committed_history.get(obs_id, 0.0)
+            require_close(
+                row_index, "beta_previous", value["beta_previous"],
+                expected_previous,
+            )
+            f_head = max(0.0, -value["cos_delta"])
+            expected_mu = min(1.0, max(
+                0.0,
+                w_bias + w_head * f_head + w_ttc * value["ttc_norm"] +
+                w_density * value["rho_norm"],
+            ))
+            require_close(row_index, "mu", value["mu"], expected_mu)
+            if semantic_mode == "none":
+                expected_requested = 0.0
+            elif semantic_mode == "fixed":
+                try:
+                    expected_requested = float(fixed_beta)
+                except (TypeError, ValueError):
+                    errors.append(f"{file_name}:{row_index}: invalid fixed_beta metadata")
+                    continue
+            elif semantic_mode == "category_only":
+                expected_requested = value["beta_bar"]
+            elif semantic_mode == "context_only":
+                try:
+                    expected_requested = float(beta_bar_table["unknown"]) * expected_mu
+                except (KeyError, TypeError, ValueError):
+                    errors.append(f"{file_name}:{row_index}: invalid unknown beta_bar")
+                    continue
+            elif semantic_mode == "full":
+                expected_requested = value["beta_bar"] * expected_mu
+            else:
+                errors.append(
+                    f"{file_name}:{row_index}: unknown semantic_mode {semantic_mode!r}"
+                )
+                continue
+            require_close(
+                row_index, "beta_requested", value["beta_requested"],
+                expected_requested,
+            )
+
+            expected_available = max(value["h_eesm"] - h_min, 0.0)
+            expected_positive = value["beta_previous"] + delta_positive
+            expected_upper = math.inf
+            any_bound = False
+            if enforce_category:
+                expected_upper = min(expected_upper, value["beta_max"])
+                any_bound = True
+            if enforce_positive:
+                expected_upper = min(expected_upper, expected_positive)
+                any_bound = True
+            if enforce_available:
+                expected_upper = min(expected_upper, expected_available)
+                any_bound = True
+            if not any_bound:
+                expected_upper = value["beta_requested"]
+            expected_pre = min(value["beta_requested"], expected_upper)
+            require_close(
+                row_index, "available_margin", value["available_margin"],
+                expected_available,
+            )
+            require_close(
+                row_index, "positive_increment_bound",
+                value["positive_increment_bound"], expected_positive,
+            )
+            require_close(
+                row_index, "guard_upper_bound", value["guard_upper_bound"],
+                expected_upper,
+            )
+            require_close(
+                row_index, "beta_pre_guard", value["beta_pre_guard"],
+                expected_pre,
+            )
+
+            if source == "candidate":
+                require_close(
+                    row_index, "beta_applied", value["beta_applied"],
+                    value["beta_pre_guard"],
+                )
+            elif source == "previous":
+                require_close(
+                    row_index, "beta_applied", value["beta_applied"],
+                    value["beta_previous"],
+                )
+            elif source in {"zero", "no_cbf"}:
+                require_close(row_index, "beta_applied", value["beta_applied"], 0.0)
+            elif source == "mpc_reprojected":
+                if value["beta_applied"] > value["beta_pre_guard"] + 2.0e-8:
+                    errors.append(
+                        f"{file_name}:{row_index}: mpc_reprojected beta exceeds pre-Guard"
+                    )
+            expected_delta = max(
+                0.0, value["beta_applied"] - value["beta_previous"]
+            )
+            require_close(row_index, "delta_beta", value["delta_beta"], expected_delta)
+            require_close(row_index, "h_ee", value["h_ee"], value["h_eesm"])
+            require_close(row_index, "h_see", value["h_see"], value["h_seesm"])
+            require_close(
+                row_index, "h_seesm", value["h_seesm"],
+                value["h_eesm"] - value["beta_applied"],
+            )
+
+            guard_passed = str(row.get("guard_passed", "")).strip().lower() in {
+                "1", "true", "yes",
+            }
+            if guard_passed != (source == "candidate"):
+                errors.append(
+                    f"{file_name}:{row_index}: guard_passed/source mismatch"
+                )
+            projection_active = str(
+                row.get("projection_active", "")
+            ).strip().lower() in {"1", "true", "yes"}
+            expected_projection_active = abs(
+                value["beta_pre_guard"] - value["beta_requested"]
+            ) > 1.0e-9
+            if projection_active != expected_projection_active:
+                errors.append(
+                    f"{file_name}:{row_index}: projection_active mismatch"
+                )
+            tolerance = 2.0e-8
+            expected_rate_active = (
+                enforce_positive and
+                (not enforce_category or expected_positive <= value["beta_max"] + tolerance) and
+                (not enforce_available or expected_positive <= expected_available + tolerance) and
+                value["beta_requested"] > expected_positive + tolerance
+            )
+            rate_active = str(
+                row.get("rate_limit_active", "")
+            ).strip().lower() in {"1", "true", "yes"}
+            if rate_active != expected_rate_active:
+                errors.append(f"{file_name}:{row_index}: rate_limit_active mismatch")
+            if source != "no_cbf":
+                pending_commits.append((obs_id, value["beta_applied"]))
+        for obs_id, beta_applied in pending_commits:
+            committed_history[obs_id] = beta_applied
+
+
 def validate_mpc_margin_rows(path, errors):
     rows = read_rows(path)
     for row_index, row in enumerate(rows, start=2):
@@ -823,6 +1277,11 @@ def main():
                 )
         if not missing and file_name in {"margin_guard_log.csv", "planner_log.csv"}:
             validate_tau_file(file_name, path, errors, required=dynamic_enabled)
+        if (
+            args.require_teacher_meta and file_name == "margin_guard_log.csv" and
+            not missing and not canonical_missing
+        ):
+            validate_margin_guard_rows(path, teacher_meta, errors)
         if args.require_teacher_meta and not missing and file_name == "event_log.csv":
             validate_event_log(path, errors)
         if args.require_teacher_meta and not dynamic_enabled:
