@@ -328,7 +328,20 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
     casadi::DM xref_dm = casadi::DM::zeros(3, N_);
     for (int i = 0; i < 3; ++i)
         for (int k = 0; k < N_; ++k) xref_dm(i, k) = (*goal_state)(i, k);
+    // Inactive cached slots must still have finite, non-singular values: a
+    // zero dummy obstacle at the zero robot state would make sqrt(0) produce
+    // an undefined CasADi Jacobian even though its CBF mask is zero.
     casadi::DM obs_dm = casadi::DM::zeros(7, N_ * obstacle_slots);
+    for (int obs_idx = 0; obs_idx < obstacle_slots; ++obs_idx) {
+        for (int k = 0; k < N_; ++k) {
+            const int col = obs_idx * N_ + k;
+            obs_dm(0, col) = 1000.0 + obs_idx;
+            obs_dm(1, col) = 1000.0 + obs_idx;
+            obs_dm(2, col) = 0.0;
+            obs_dm(5, col) = 0.0;
+            obs_dm(6, col) = 0.0;
+        }
+    }
     for (int obs_idx = 0; obs_idx < obs_num; ++obs_idx) {
         for (int k = 0; k < N_; ++k) {
             const Eigen::VectorXd obs = obs_matrix->col(obs_idx * N_ + k);
