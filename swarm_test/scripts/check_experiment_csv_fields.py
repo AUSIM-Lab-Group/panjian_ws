@@ -915,18 +915,27 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
                     if relative_dot >= 0.0
                     else "teacher_tangent"
                 )
+                # The CSV stores relative velocity at finite precision.  If
+                # it serializes to an exact zero vector, the sign of a tiny
+                # internal dot product is unrecoverable; both zero-closing
+                # labels are valid for this degenerate row only.
+                expected_reasons = {expected_reason}
+                if speed_squared <= 1.0e-16 and abs(expected_raw) <= 1.0e-12:
+                    expected_reasons.update({"teacher_receding", "teacher_tangent"})
             elif expected_mode == "teacher_ke_tca":
                 expected_reason = (
                     "teacher_ke_tca_clipped"
                     if expected_tau_unclipped > dynamic_contract["max_tau"]
                     else "teacher_ke_tca_active"
                 )
+                expected_reasons = {expected_reason}
             else:
                 expected_reason = (
                     "teacher_tca_clipped"
                     if expected_raw > dynamic_contract["max_tau"]
                     else "teacher_tca_active"
                 )
+                expected_reasons = {expected_reason}
 
             # tau_valid is computational validity, whereas tau_active says
             # whether the valid formula produced a strictly positive horizon.
@@ -946,10 +955,10 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
                     f"{file_name}:{row_index}: tau_active={tau_active} does not "
                     f"match recomputed active={expected_active}"
                 )
-            if reason != expected_reason:
+            if reason not in expected_reasons:
                 errors.append(
                     f"{file_name}:{row_index}: tau_reason {reason!r} does not "
-                    f"match recomputed {expected_reason!r}"
+                    f"match recomputed {sorted(expected_reasons)!r}"
                 )
         if all(field in numeric_values for field in ("h_eesm", "h_seesm", "beta")):
             residual = abs(
