@@ -55,6 +55,8 @@
   <arg name="qf_scale" default="1.1"/>
   <arg name="delta_u_weight" default="0.02"/>
   <arg name="delta_u_max" default="0.4"/>
+  <arg name="active_set_distance_m" default="8.0"/>
+  <arg name="graph_cache_enabled" default="false"/>
   <arg name="safety_delta_bar" default="0.10"/>
   <arg name="safety_delta_beta_bar" default="0.30"/>
   <arg name="max_cbf_obstacles" default="6"/>
@@ -202,6 +204,8 @@
     <arg name="qf_scale" value="$(arg qf_scale)"/>
     <arg name="delta_u_weight" value="$(arg delta_u_weight)"/>
     <arg name="delta_u_max" value="$(arg delta_u_max)"/>
+    <arg name="active_set_distance_m" value="$(arg active_set_distance_m)"/>
+    <arg name="graph_cache_enabled" value="$(arg graph_cache_enabled)"/>
     <arg name="safety_delta_bar" value="$(arg safety_delta_bar)"/>
     <arg name="safety_delta_beta_bar" value="$(arg safety_delta_beta_bar)"/>
     <arg name="max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>

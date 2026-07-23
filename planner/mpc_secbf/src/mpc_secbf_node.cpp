@@ -5,6 +5,7 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <Eigen/Dense>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <fstream>
@@ -61,13 +62,32 @@ struct PendingSafetyRecurrence {
     bool baseline_infeasible = false;
 };
 
+struct CycleTiming {
+    MpcSolveTiming initial_solver;
+    double guard_phase_ms = 0.0;
+    double guard_solver_ms = 0.0;
+    double guard_graph_build_ms = 0.0;
+    double guard_ipopt_ms = 0.0;
+    double guard_extract_ms = 0.0;
+    double guard_tau_audit_ms = 0.0;
+    double guard_slack_audit_ms = 0.0;
+    int guard_attempts = 0;
+};
+
+using NodeSteadyClock = std::chrono::steady_clock;
+double nodeElapsedMs(const NodeSteadyClock::time_point& start,
+                     const NodeSteadyClock::time_point& end = NodeSteadyClock::now()) {
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
 class MpcSecbfNode {
 public:
     MpcSecbfNode(ros::NodeHandle& nh) : nh_(nh) {
         // Parameters
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         double epsilon_max, slack_weight;
-        double qf_scale, delta_u_weight, delta_u_max;
+        double qf_scale, delta_u_weight, delta_u_max, active_set_distance_m;
+        bool graph_cache_enabled;
         double safety_delta_bar, safety_delta_beta_bar;
         int N;
         int max_cbf_obstacles;
@@ -128,6 +148,8 @@ public:
         nh_.param("mpc/qf_scale", qf_scale, 1.1);
         nh_.param("mpc/delta_u_weight", delta_u_weight, 0.02);
         nh_.param("mpc/delta_u_max", delta_u_max, 0.4);
+        nh_.param("mpc/active_set_distance_m", active_set_distance_m, 8.0);
+        nh_.param("mpc/graph_cache_enabled", graph_cache_enabled, false);
         nh_.param("mpc/safety_delta_bar", safety_delta_bar, 0.10);
         nh_.param("mpc/safety_delta_beta_bar", safety_delta_beta_bar, 0.30);
         if (!std::isfinite(qf_scale) || qf_scale <= 0.0 ||
@@ -209,7 +231,7 @@ public:
                             side_preference_enabled, side_weight, side_epsilon_n,
                             side_horizon, side_sign, side_min_obstacle_speed,
                             side_activation_distance, qf_scale, delta_u_weight,
-                            delta_u_max);
+                            delta_u_max, active_set_distance_m, graph_cache_enabled);
         side_preference_enabled_ = side_preference_enabled;
         side_weight_ = side_weight;
 
@@ -222,7 +244,13 @@ public:
                 "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
                 "T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
-                "t,mpc_secbf_ms,total_loop_time_ms\n");
+                "t,obstacle_cycle_id,mpc_secbf_ms,total_loop_time_ms,initial_solver_ms,"
+                "initial_graph_build_ms,initial_ipopt_solve_ms,initial_solution_extract_ms,"
+                "initial_tau_audit_ms,initial_slack_audit_ms,guard_phase_ms,guard_solver_ms,"
+                "guard_graph_build_ms,guard_ipopt_solve_ms,guard_solution_extract_ms,"
+                "guard_tau_audit_ms,guard_slack_audit_ms,guard_attempts,obs_count,"
+                "constrained_obs_count,initial_success,initial_graph_cache_hit,"
+                "graph_cache_enabled,graph_cache_slots\n");
         openCsv(mpc_margin_csv_, mpc_margin_log_path,
                 "t,obstacle_cycle_id,obs_id,beta_pre_guard,beta_applied,accepted_beta_source,"
                 "first_attempt_status,final_status,mpc_feasibility_guard_enabled,"
@@ -234,7 +262,9 @@ public:
         openCsv(guard_attempt_csv_, guard_attempt_log_path,
                 "t,obstacle_cycle_id,attempt_index,obstacle_id,obstacle_order,q,kappa,"
                 "candidate_beta,accepted_beta,candidate_beta_vector,accepted_beta_vector,"
-                "solver_success,solver_status,slack_max,solve_time_ms,reject_reason\n");
+                "solver_success,solver_status,slack_max,solve_time_ms,graph_build_ms,"
+                "ipopt_solve_ms,solution_extract_ms,tau_audit_ms,slack_audit_ms,"
+                "graph_cache_enabled,graph_cache_hit,graph_cache_slots,reject_reason\n");
         openCsv(safety_recurrence_csv_, safety_recurrence_log_path,
                 "time,obstacle_cycle_id,obs_id,H_t,h_eesm_t,beta_t,h_eesm_pred_next,H_pred_next,"
                 "h_eesm_next,beta_next,H_next,epsilon_t,epsilon_max,delta,delta_bar,"
@@ -608,7 +638,7 @@ private:
                            const std::vector<double>& accepted,
                            bool success, const std::string& status,
                            const std::string& reject_reason,
-                           double solve_time_ms) {
+                           const MpcSolveTiming& timing) {
         if (!guard_attempt_csv_.is_open()) return;
         guard_attempt_csv_ << std::fixed << std::setprecision(9)
                            << ros::Time::now().toSec() << ","
@@ -621,7 +651,13 @@ private:
                            << serializeVector(trial) << ","
                            << serializeVector(accepted) << ","
                            << (success ? 1 : 0) << "," << status << ","
-                           << solver_.last_slack_max << "," << solve_time_ms << ","
+                           << solver_.last_slack_max << "," << timing.total_ms << ","
+                           << timing.graph_build_ms << "," << timing.ipopt_solve_ms << ","
+                           << timing.solution_extract_ms << "," << timing.tau_audit_ms << ","
+                           << timing.slack_audit_ms << ","
+                           << (timing.graph_cache_enabled ? 1 : 0) << ","
+                           << (timing.graph_cache_hit ? 1 : 0) << ","
+                           << timing.graph_cache_slots << ","
                            << reject_reason << "\n";
         guard_attempt_csv_.flush();
     }
@@ -664,13 +700,19 @@ private:
                     return false;
                 }
                 trial[index] = beta;
-                const ros::Time attempt_start = ros::Time::now();
                 const bool ok = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, trial);
-                const double solve_ms = (ros::Time::now() - attempt_start).toSec() * 1000.0;
+                const MpcSolveTiming attempt_timing = solver_.last_timing;
+                cycle_timing_.guard_attempts++;
+                cycle_timing_.guard_solver_ms += attempt_timing.total_ms;
+                cycle_timing_.guard_graph_build_ms += attempt_timing.graph_build_ms;
+                cycle_timing_.guard_ipopt_ms += attempt_timing.ipopt_solve_ms;
+                cycle_timing_.guard_extract_ms += attempt_timing.solution_extract_ms;
+                cycle_timing_.guard_tau_audit_ms += attempt_timing.tau_audit_ms;
+                cycle_timing_.guard_slack_audit_ms += attempt_timing.slack_audit_ms;
                 writeGuardAttempt(attempt_index++, index, q, candidate[index], trial,
                                   *accepted, ok, ok ? "feasible" : "infeasible",
                                   ok ? "" : (q == guard_max_backtracks_ ? "zero_failed" : "retry_kappa"),
-                                  solve_ms);
+                                  attempt_timing);
                 if (ok) {
                     *accepted = std::move(trial);
                     component_accepted = true;
@@ -750,6 +792,7 @@ private:
         smoothYaw(goal_state_);
 
         ros::Time t0 = ros::Time::now();
+        cycle_timing_ = CycleTiming();
 
         // Solve MPC-SECBF
         std::string mpc_status = "success";
@@ -766,14 +809,17 @@ private:
             first_attempt_status = "beta_count_mismatch";
         } else {
             success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
+            cycle_timing_.initial_solver = solver_.last_timing;
             first_attempt_status = success ? "success" : "infeasible";
         }
         final_status = first_attempt_status;
 
         if (mpc_feasibility_guard_enabled_) {
             mpc_guard_used = true;
+            const NodeSteadyClock::time_point guard_start = NodeSteadyClock::now();
             success = runTeacherGuardSearch(beta_list_, &final_beta_values,
                                             &accepted_beta_source, &mpc_status, t0);
+            cycle_timing_.guard_phase_ms = nodeElapsedMs(guard_start);
             final_status = success ? "success" : mpc_status;
         }
 
@@ -943,8 +989,29 @@ private:
         }
         if (timing_csv_.is_open()) {
             timing_csv_ << t << ","
+                        << active_obstacle_cycle_id_ << ","
                         << solve_time_ms << ","
-                        << solve_time_ms << "\n";
+                        << solve_time_ms << ","
+                        << cycle_timing_.initial_solver.total_ms << ","
+                        << cycle_timing_.initial_solver.graph_build_ms << ","
+                        << cycle_timing_.initial_solver.ipopt_solve_ms << ","
+                        << cycle_timing_.initial_solver.solution_extract_ms << ","
+                        << cycle_timing_.initial_solver.tau_audit_ms << ","
+                        << cycle_timing_.initial_solver.slack_audit_ms << ","
+                        << cycle_timing_.guard_phase_ms << ","
+                        << cycle_timing_.guard_solver_ms << ","
+                        << cycle_timing_.guard_graph_build_ms << ","
+                        << cycle_timing_.guard_ipopt_ms << ","
+                        << cycle_timing_.guard_extract_ms << ","
+                        << cycle_timing_.guard_tau_audit_ms << ","
+                        << cycle_timing_.guard_slack_audit_ms << ","
+                        << cycle_timing_.guard_attempts << ","
+                        << obstacle_ids_.size() << ","
+                        << solver_.last_constrained_obs_count << ","
+                        << (cycle_timing_.initial_solver.success ? 1 : 0) << ","
+                        << (cycle_timing_.initial_solver.graph_cache_hit ? 1 : 0) << ","
+                        << (cycle_timing_.initial_solver.graph_cache_enabled ? 1 : 0) << ","
+                        << cycle_timing_.initial_solver.graph_cache_slots << "\n";
             timing_csv_.flush();
         }
     }
@@ -1205,6 +1272,7 @@ private:
     ros::Timer timer_replan_, timer_cmd_;
 
     MPC_SECBF_SOLVE solver_;
+    CycleTiming cycle_timing_;
     int N_;
     double Ts_;
     double robot_radius_ = 0.4;
