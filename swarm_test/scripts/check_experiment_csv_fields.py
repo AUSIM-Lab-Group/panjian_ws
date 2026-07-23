@@ -1316,13 +1316,26 @@ def validate_mpc_margin_rows(path, errors):
                 f"mpc_margin_log.csv:{row_index}: Guard search used while disabled"
             )
         if source == "candidate":
-            if first_status != "success" or final_status != "success":
+            # The teacher multi-obstacle Guard tests the full candidate vector
+            # first, then checks obstacles sequentially with unprocessed
+            # components set to zero.  Consequently the initial full-vector
+            # attempt may be infeasible while the final accepted component
+            # still has source=candidate and succeeds at q=0.  In that case
+            # beta_applied is allowed to be lower than beta_pre_guard because
+            # another (unprocessed) component was zeroed by the vector search.
+            if final_status != "success":
                 errors.append(
-                    f"mpc_margin_log.csv:{row_index}: candidate source lacks successful MPC status"
+                    f"mpc_margin_log.csv:{row_index}: candidate source lacks successful final MPC status"
                 )
-            if abs(beta_pre - beta_applied) > 1e-8:
+            if first_status != "success" and not (
+                used_true and first_status == "infeasible"
+            ):
                 errors.append(
-                    f"mpc_margin_log.csv:{row_index}: candidate source changed accepted beta"
+                    f"mpc_margin_log.csv:{row_index}: candidate source has invalid first MPC status"
+                )
+            if beta_applied > beta_pre + 1e-8:
+                errors.append(
+                    f"mpc_margin_log.csv:{row_index}: candidate source exceeds pre-Guard beta"
                 )
         if source == "kappa" and beta_applied > beta_pre + 2e-8:
             errors.append(
