@@ -10,12 +10,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "config/experiment_freezes"
 TEACHER_ROOT = ROOT.parents[1]
-SOURCE_FREEZE_MANIFEST = (
-    TEACHER_ROOT
-    / "seesm_social_navigation/新计划实验输出目录/05_formal_preparation/"
-      "20260728_regression_passed_source_freeze/SOURCE_FREEZE_MANIFEST.json"
-)
 COMMON_EVALUATOR = ROOT / "config/common_offline_evaluation_v1.yaml"
+PANJIAN_ALGORITHM_SOURCE_COMMIT = "8a6c00eb3dd1406a445ff06affc408899a9df9ac"
+SEESM_ANALYSIS_SOURCE_COMMIT = "dfa9391803ae411925d7b4d137016007e4fe3fd2"
 
 CAMPAIGNS = {
     "main": {
@@ -98,7 +95,7 @@ def payload(campaign, tier, profile):
         tier == "formal" or
         (tier == "smoke" and campaign in {"main", "stress"})
     )
-    freeze_version = "v2_20260728" if tier == "formal" else "v1_20260723"
+    freeze_version = "v3_clean_20260728" if tier == "formal" else "v1_20260723"
     result = {
         "freeze_id": f"teacher_v1_{campaign}_{tier}_{freeze_version}",
         "status": f"{tier}_frozen",
@@ -215,10 +212,9 @@ def payload(campaign, tier, profile):
     }
     if tier == "formal":
         result["validated_recovery_implementation_contract"] = {
-            "source_freeze_manifest": str(
-                SOURCE_FREEZE_MANIFEST.relative_to(TEACHER_ROOT)
-            ),
-            "source_freeze_manifest_sha256": sha256_file(SOURCE_FREEZE_MANIFEST),
+            "panjian_algorithm_source_commit": PANJIAN_ALGORITHM_SOURCE_COMMIT,
+            "seesm_analysis_source_commit": SEESM_ANALYSIS_SOURCE_COMMIT,
+            "source_release_branch": "formal/source-v3-clean-20260728",
             "common_offline_evaluation": str(
                 COMMON_EVALUATOR.relative_to(TEACHER_ROOT)
             ),

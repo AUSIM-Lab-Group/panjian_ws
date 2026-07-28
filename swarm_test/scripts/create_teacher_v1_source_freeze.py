@@ -226,12 +226,17 @@ def main():
             "size_bytes": path.stat().st_size,
         }
 
+    all_clean = all(not record["dirty"] for record in repositories.values())
     manifest = {
         "id": "teacher_v1_source_freeze_candidate_001",
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "status": "exact_snapshot_dirty_worktrees",
-        "formal_execution_ready": False,
+        "status": (
+            "clean_committed_source_release"
+            if all_clean else "exact_snapshot_dirty_worktrees"
+        ),
+        "formal_execution_ready": all_clean,
         "formal_blocker": (
+            None if all_clean else
             "Formal runner requires clean teacher-v1 commits; this snapshot "
             "is recoverable but preserves pre-existing dirty worktrees."
         ),
@@ -258,7 +263,7 @@ def main():
             "TEACHER_V1_SOURCE_FREEZE_CREATED",
             f"manifest_sha256={sha256_file(manifest_path)}",
             f"source_snapshot_sha256={manifest['source_snapshot']['sha256']}",
-            "formal_execution_ready=false",
+            f"formal_execution_ready={str(all_clean).lower()}",
             "",
         ]),
         encoding="utf-8",

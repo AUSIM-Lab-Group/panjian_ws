@@ -88,7 +88,7 @@ def test_formal_freezes_use_regression_validated_recovery_profile(runner, campai
     freeze = runner.load_parameter_freeze(path, "formal", campaign=campaign)
     switches = freeze["switches"]
 
-    assert freeze["id"] == f"teacher_v1_{campaign}_formal_v2_20260728"
+    assert freeze["id"] == f"teacher_v1_{campaign}_formal_v3_clean_20260728"
     assert switches["graph_cache_enabled"] is True
     assert switches["solver_max_cpu_time_ms"] == pytest.approx(120.0)
     assert switches["guard_time_budget_ms"] == pytest.approx(200.0)

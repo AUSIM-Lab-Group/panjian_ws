@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
-W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; O="$W/swarm_test/output/secbf_runs/20260721_r42_context_int_ablation_formal30"; M="$W/swarm_test/config/seed_manifests/20260712_nine_condition_formal30.csv"
+W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; T="$(cd "$W/.." && pwd)"; O="$T/seesm_social_navigation/新计划实验输出目录/04_formal/ablation_v3_clean_20260728"; M="$W/swarm_test/config/seed_manifests/20260712_nine_condition_formal30.csv"; F="$W/swarm_test/config/experiment_freezes/ablation_formal.yaml"
 source /opt/ros/noetic/setup.bash; source "$W/devel/setup.bash"; set -u
-python3 -u "$W/swarm_test/scripts/run_secbf_sim_experiments.py" --scenario head_on_context_int,crossing_context_int,local_crowding_context_int --baseline No_semantic,Category_only,Unguarded_SEESM,No_J_side,SEESM_Ours --duration-sec 30 --seed-manifest "$M" --output-root "$O" --roscore external --skip-existing-complete
+python3 -u "$W/swarm_test/scripts/run_secbf_sim_experiments.py" --scenario head_on_context_int,crossing_context_int,local_crowding_context_int --baseline No_semantic,Category_only,Unguarded_SEESM,No_J_side,SEESM_Ours --duration-sec 30 --seed-manifest "$M" --campaign ablation --execution-tier formal --parameter-freeze "$F" --protocol-id teacher_v1_ablation_formal_v3_clean_20260728 --output-root "$O" --roscore external --skip-existing-complete
 mapfile -d '' D < <(find "$O" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -print0 | sort -z); [[ ${#D[@]} -eq 450 ]] || { echo "expected 450, found ${#D[@]}" >&2; exit 1; }
 for d in "${D[@]}"; do python3 "$W/swarm_test/scripts/check_experiment_csv_fields.py" "$d" >/dev/null; done
 OUTPUT_ROOT="$O" python3 - <<'PY'

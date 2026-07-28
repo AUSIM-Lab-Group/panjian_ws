@@ -2,8 +2,10 @@
 set -eo pipefail
 
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT_ROOT="$WORKSPACE/swarm_test/output/secbf_runs/20260720_r32_feasibility_stress_formal30"
+TEACHER_ROOT="$(cd "$WORKSPACE/.." && pwd)"
+OUTPUT_ROOT="$TEACHER_ROOT/seesm_social_navigation/新计划实验输出目录/04_formal/stress_v3_clean_20260728"
 MANIFEST="$WORKSPACE/swarm_test/config/seed_manifests/20260720_feasibility_stress_formal30.csv"
+FREEZE="$WORKSPACE/swarm_test/config/experiment_freezes/stress_formal.yaml"
 
 source /opt/ros/noetic/setup.bash
 source "$WORKSPACE/devel/setup.bash"
@@ -24,6 +26,10 @@ python3 -u "$WORKSPACE/swarm_test/scripts/run_secbf_sim_experiments.py" \
   --baseline Unguarded_SEESM,SEESM_Ours \
   --duration-sec 30 \
   --seed-manifest "$MANIFEST" \
+  --campaign stress \
+  --execution-tier formal \
+  --parameter-freeze "$FREEZE" \
+  --protocol-id teacher_v1_stress_formal_v3_clean_20260728 \
   --output-root "$OUTPUT_ROOT" \
   --roscore external \
   --skip-existing-complete

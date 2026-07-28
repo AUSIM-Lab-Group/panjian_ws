@@ -2,8 +2,10 @@
 set -eo pipefail
 
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT_ROOT="$WORKSPACE/swarm_test/output/secbf_runs/20260715_r29_nine_condition_formal30_current_protocol"
+TEACHER_ROOT="$(cd "$WORKSPACE/.." && pwd)"
+OUTPUT_ROOT="$TEACHER_ROOT/seesm_social_navigation/新计划实验输出目录/04_formal/main_v3_clean_20260728"
 MANIFEST="$WORKSPACE/swarm_test/config/seed_manifests/20260712_nine_condition_formal30.csv"
+FREEZE="$WORKSPACE/swarm_test/config/experiment_freezes/main_formal.yaml"
 
 source /opt/ros/noetic/setup.bash
 source "$WORKSPACE/devel/setup.bash"
@@ -25,6 +27,10 @@ python3 -u "$WORKSPACE/swarm_test/scripts/run_secbf_sim_experiments.py" \
   --baseline Standard_MPC_CBF,EESM_MPC_ECBF,SEESM_Without_FPU,Proposed_MPC_SECBF \
   --duration-sec 30 \
   --seed-manifest "$MANIFEST" \
+  --campaign main \
+  --execution-tier formal \
+  --parameter-freeze "$FREEZE" \
+  --protocol-id teacher_v1_main_formal_v3_clean_20260728 \
   --output-root "$OUTPUT_ROOT" \
   --roscore auto \
   --skip-existing-complete
@@ -84,4 +90,3 @@ root = Path(os.environ["OUTPUT_ROOT"])
 )
 print(f"Formal batch and audit completed: {root}")
 PY
-
