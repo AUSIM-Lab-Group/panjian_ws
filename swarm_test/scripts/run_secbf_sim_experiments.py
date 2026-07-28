@@ -119,6 +119,8 @@ LOG_SCHEMA_VERSION = "teacher_v1_log_schema_002"
 SEMANTIC_MARGIN_CONTRACT_VERSION = "teacher_v1_f05_f07_provisional_001"
 TYPED_CYCLE_CONTRACT_VERSION = "teacher_v1_typed_cycle_001"
 DEFAULT_PROTOCOL_ID = "teacher_v1_protocol_001"
+DEVELOPMENT_SOURCE_BRANCH = "teacher-v1"
+FORMAL_SOURCE_BRANCH = "formal/source-v3-clean-20260728"
 TEACHER_WORKSPACE = SCRIPT_DIR.parents[2]
 TEACHER_SEESM_REPO = TEACHER_WORKSPACE / "seesm_social_navigation"
 TEACHER_MANUSCRIPT_PATH = (
@@ -814,16 +816,26 @@ def verify_repository_context_unchanged(run_context: dict) -> None:
         if current_sha256 != expected.get("sha256"):
             raise RuntimeError(
                 f"Teacher-v1 input changed during batch: {name}.sha256"
-            )
+                )
+
+
+def required_source_branch(execution_tier: str) -> str:
+    return (
+        FORMAL_SOURCE_BRANCH
+        if execution_tier == "formal" else DEVELOPMENT_SOURCE_BRANCH
+    )
 
 
 def collect_run_context(args) -> dict:
     panjian = git_repo_provenance(repo_root())
     seesm = git_repo_provenance(TEACHER_SEESM_REPO)
+    expected_branch = required_source_branch(
+        getattr(args, "execution_tier", "formal")
+    )
     for label, source in (("panjian_ws", panjian), ("seesm_social_navigation", seesm)):
-        if source["branch"] != "teacher-v1":
+        if source["branch"] != expected_branch:
             raise RuntimeError(
-                f"{label} must be on teacher-v1, got {source['branch']!r}"
+                f"{label} must be on {expected_branch}, got {source['branch']!r}"
             )
         if source["dirty"] and getattr(args, "execution_tier", "formal") == "formal":
             raise RuntimeError(
@@ -2572,8 +2584,13 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
                         errors.append(f"{repo_name} provenance is missing commit")
                     if not str(source.get("tree", "")).strip():
                         errors.append(f"{repo_name} provenance is missing tree")
-                    if source.get("branch") != "teacher-v1":
-                        errors.append(f"{repo_name} provenance branch is not teacher-v1")
+                    expected_branch = required_source_branch(
+                        meta.get("execution_tier")
+                    )
+                    if source.get("branch") != expected_branch:
+                        errors.append(
+                            f"{repo_name} provenance branch is not {expected_branch}"
+                        )
                     if (meta.get("execution_tier") != "smoke" and
                             source.get("dirty") is not False):
                         errors.append(f"{repo_name} provenance must be clean")

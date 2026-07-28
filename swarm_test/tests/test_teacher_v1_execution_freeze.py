@@ -32,6 +32,13 @@ def launch_args(command):
     }
 
 
+def test_execution_tier_selects_expected_source_branch(runner):
+    assert runner.required_source_branch("smoke") == "teacher-v1"
+    assert runner.required_source_branch("formal") == (
+        "formal/source-v3-clean-20260728"
+    )
+
+
 def test_smoke_freeze_is_complete_and_drives_all_main_launches(tmp_path, runner):
     freeze = runner.load_parameter_freeze(
         runner.DEFAULT_SMOKE_PARAMETER_FREEZE, "smoke"
