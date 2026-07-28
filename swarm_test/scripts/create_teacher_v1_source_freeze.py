@@ -228,7 +228,10 @@ def main():
 
     all_clean = all(not record["dirty"] for record in repositories.values())
     manifest = {
-        "id": "teacher_v1_source_freeze_candidate_001",
+        "id": (
+            "teacher_v1_source_freeze_v3_clean_20260728"
+            if all_clean else "teacher_v1_source_freeze_candidate_001"
+        ),
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": (
             "clean_committed_source_release"
