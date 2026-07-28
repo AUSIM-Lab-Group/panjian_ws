@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import math
 from pathlib import Path
 from typing import Optional
@@ -25,7 +26,18 @@ METHOD_LABELS = {
     "SEESM_Ours": "Proposed MPC-SECBF",
 }
 
-DYNAMIC_TAU_MODES = {"legacy_gate", "teacher_tca", "teacher_ke_tca"}
+COMMON_EVALUATION_CONTRACT_VERSION = "teacher_v1_common_offline_evaluation_001"
+COMMON_EVALUATION_TAU_MODE = "teacher_tca"
+COMMON_EVALUATION_CATEGORIES = (
+    "box",
+    "adult",
+    "pedestrian",
+    "child",
+    "child_like",
+    "cyclist",
+    "vehicle",
+    "unknown",
+)
 
 
 RUN_FIELDS = [
@@ -50,6 +62,11 @@ RUN_FIELDS = [
     "min_h_eval",
     "semantic_violation_eval_ratio",
     "eval_records",
+    "common_eval_contract_id",
+    "common_eval_contract_version",
+    "common_eval_contract_status",
+    "common_eval_contract_sha256",
+    "common_eval_status",
     "h_eesm_eval_log_error_max",
     "mpc_feasibility_rate",
     "mpc_first_attempt_feasibility_rate",
@@ -80,6 +97,11 @@ MANIFEST_FIELDS = [
     "scenario_family",
     "context_level",
     "method_label",
+    "common_eval_contract_id",
+    "common_eval_contract_version",
+    "common_eval_contract_status",
+    "common_eval_contract_sha256",
+    "common_eval_status",
     "summary_csv",
 ]
 
@@ -89,6 +111,11 @@ TABLE_FIELDS = [
     "context_level",
     "baseline",
     "method_label",
+    "common_eval_contract_id",
+    "common_eval_contract_version",
+    "common_eval_contract_status",
+    "common_eval_contract_sha256",
+    "common_eval_status",
     "n_trials",
     "success_rate",
     "goal_reached_rate",
@@ -153,109 +180,169 @@ def parse_bool(value, default: bool = False) -> bool:
     return default
 
 
-def load_dynamic_tau_contract(run_dir: Path) -> dict[str, object]:
-    # Missing mode identifies archived Legacy-v1 metadata.  Teacher-v1 writes
-    # the mode explicitly, so its post-processing never silently falls back to
-    # the old collision-cone formula.
-    contract: dict[str, object] = {
-        "enabled": False,
-        "mode": "legacy_gate",
-        "ke": 0.3,
-        "t_max": 2.0,
-        "delta_tau": 1.0e-6,
-        "min_speed": 1.0e-6,
-        "min_distance": 1.0e-6,
-        "max_tau": 2.0,
-    }
-    meta_path = run_dir / "meta.yaml"
-    if yaml is None or not meta_path.exists():
-        return contract
+class CommonEvaluationContractError(ValueError):
+    """Raised when the frozen common-offline evaluator is unusable."""
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def require_finite_number(value, label: str, *, positive: bool = False,
+                          nonnegative: bool = False) -> float:
+    parsed = parse_float(value)
+    if parsed is None or not math.isfinite(parsed):
+        raise CommonEvaluationContractError(f"{label} must be a finite number")
+    if positive and parsed <= 0.0:
+        raise CommonEvaluationContractError(f"{label} must be positive")
+    if nonnegative and parsed < 0.0:
+        raise CommonEvaluationContractError(f"{label} must be nonnegative")
+    return float(parsed)
+
+
+def load_common_evaluation_contract(path: Path) -> dict[str, object]:
+    """Load the method-independent offline evaluator used for Table I/E2.
+
+    This deliberately does not inspect a controller's run metadata.  The
+    controller may use a fixed-distance barrier, no semantic margin, or a
+    Guard-reduced margin; the teacher plan instead requires one frozen TCA,
+    Phi, and beta_max mapping for *every* realised trajectory.
+    """
+    path = Path(path).expanduser().resolve()
+    if yaml is None:
+        raise CommonEvaluationContractError("PyYAML is required for common evaluation")
+    if not path.exists():
+        raise CommonEvaluationContractError(f"common evaluation contract not found: {path}")
     try:
-        with meta_path.open("r", encoding="utf-8") as handle:
-            meta = yaml.safe_load(handle) or {}
-        configured = meta.get("dynamic_tau") or {}
-        if not isinstance(configured, dict):
-            return contract
-        contract["enabled"] = parse_bool(configured.get("enabled"), False)
-        mode = str(configured.get("mode", "legacy_gate")).strip()
-        contract["mode"] = mode if mode in DYNAMIC_TAU_MODES else "unknown"
-        for output_name, input_name in (
-            ("ke", "Ke"),
-            ("t_max", "Tmax"),
-            ("delta_tau", "delta_tau"),
-            ("min_speed", "min_speed"),
-            ("min_distance", "min_distance"),
-            ("max_tau", "max_tau"),
-        ):
-            value = parse_float(configured.get(input_name))
-            if value is not None and math.isfinite(value):
-                contract[output_name] = value
-    except (OSError, TypeError, ValueError, yaml.YAMLError):
-        pass
-    return contract
+        with path.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise CommonEvaluationContractError(
+            f"cannot read common evaluation contract {path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise CommonEvaluationContractError("common evaluation contract must be a YAML mapping")
+    contract_id = str(payload.get("id", "")).strip()
+    if not contract_id:
+        raise CommonEvaluationContractError("common evaluation contract id is required")
+    if payload.get("version") != COMMON_EVALUATION_CONTRACT_VERSION:
+        raise CommonEvaluationContractError("common evaluation contract version mismatch")
+    if payload.get("status") not in {"smoke_frozen", "formal_frozen"}:
+        raise CommonEvaluationContractError(
+            "common evaluation contract status must be smoke_frozen or formal_frozen"
+        )
 
-
-def logged_tau(row: dict[str, str]) -> Optional[float]:
-    value = parse_float(row.get("tau"))
-    if value is None or not math.isfinite(value) or value < 0.0:
-        return None
-    # Teacher-v1 separates successful formula evaluation from a positive
-    # look-ahead horizon.  Prefer tau_computed; tau_valid is retained only for
-    # archived logs where it represented one of these two concepts.
-    validity_field = (
-        row.get("tau_computed")
-        if str(row.get("tau_computed", "")).strip()
-        else row.get("tau_valid", "")
+    tau = payload.get("dynamic_tau")
+    if not isinstance(tau, dict) or tau.get("mode") != COMMON_EVALUATION_TAU_MODE:
+        raise CommonEvaluationContractError("common evaluation must use fixed teacher_tca")
+    delta_tau = require_finite_number(
+        tau.get("delta_tau"), "dynamic_tau.delta_tau", positive=True
     )
-    validity = str(validity_field).strip().lower()
-    if validity in {"0", "false", "no"}:
-        return None
-    return value
-
-
-def recompute_dynamic_tau(
-    distance: float,
-    speed: float,
-    cos_delta: float,
-    inflated_radius: float,
-    contract: dict[str, object],
-) -> Optional[float]:
-    if not bool(contract["enabled"]):
-        return 0.0
-    mode = str(contract["mode"])
-    max_tau = max(0.0, float(contract["max_tau"]))
-    if mode in {"teacher_tca", "teacher_ke_tca"}:
-        delta_tau = max(0.0, float(contract["delta_tau"]))
-        denominator = speed * speed + delta_tau
-        if denominator <= 0.0:
-            return 0.0
-        t_ca = max(0.0, min(-(distance * speed * cos_delta) / denominator, max_tau))
-        if mode == "teacher_ke_tca":
-            return max(0.0, min(float(contract["ke"]) * t_ca, max_tau))
-        return t_ca
-    if mode != "legacy_gate":
-        return None
-    if (
-        distance <= float(contract["min_distance"])
-        or speed <= float(contract["min_speed"])
-        or max_tau <= 0.0
-    ):
-        return 0.0
-    dot = distance * speed * cos_delta
-    cone_value = (
-        dot * dot
-        + (inflated_radius * inflated_radius - distance * distance) * speed * speed
+    max_tau = require_finite_number(
+        tau.get("max_tau_sec"), "dynamic_tau.max_tau_sec", nonnegative=True
     )
-    approach_cos = max(0.0, -cos_delta)
-    interaction_time = max(0.0, distance - inflated_radius) * approach_cos / speed
-    if (
-        cos_delta < 0.0
-        and cone_value > 0.0
-        and interaction_time > 0.0
-        and float(contract["t_max"]) - interaction_time > 0.0
-    ):
-        return min(float(contract["ke"]) * interaction_time, max_tau)
-    return 0.0
+
+    phi = payload.get("phi")
+    if not isinstance(phi, dict):
+        raise CommonEvaluationContractError("common evaluation phi must be a mapping")
+    if phi.get("form") != "explicit_linear_current_mapping":
+        raise CommonEvaluationContractError("common evaluation phi form mismatch")
+    weights_raw = phi.get("weights")
+    if not isinstance(weights_raw, dict):
+        raise CommonEvaluationContractError("common evaluation phi weights must be a mapping")
+    weights = {
+        name: require_finite_number(weights_raw.get(name), f"phi.weights.{name}")
+        for name in ("bias", "head_on", "ttc_norm", "density_norm")
+    }
+    if any(weights[name] < 0.0 for name in ("head_on", "ttc_norm", "density_norm")):
+        raise CommonEvaluationContractError("common evaluation interaction weights must be nonnegative")
+    if phi.get("multiplier_clip") != [0.0, 1.0]:
+        raise CommonEvaluationContractError("common evaluation phi multiplier clip mismatch")
+
+    def category_table(name: str) -> dict[str, float]:
+        raw = payload.get(name)
+        if not isinstance(raw, dict):
+            raise CommonEvaluationContractError(f"{name} must be a mapping")
+        missing = [category for category in COMMON_EVALUATION_CATEGORIES if category not in raw]
+        if missing:
+            raise CommonEvaluationContractError(f"{name} is missing categories: {missing}")
+        return {
+            category: require_finite_number(
+                raw[category], f"{name}.{category}", nonnegative=True
+            )
+            for category in COMMON_EVALUATION_CATEGORIES
+        }
+
+    beta_bar = category_table("beta_bar_m")
+    beta_max = category_table("beta_max_m")
+
+    features = payload.get("features")
+    if not isinstance(features, dict):
+        raise CommonEvaluationContractError("common evaluation features must be a mapping")
+    ttc_horizon = require_finite_number(
+        features.get("ttc_horizon_sec"), "features.ttc_horizon_sec", positive=True
+    )
+    min_distance = require_finite_number(
+        features.get("min_feature_distance_m"),
+        "features.min_feature_distance_m", nonnegative=True,
+    )
+    min_speed = require_finite_number(
+        features.get("min_feature_speed_mps"),
+        "features.min_feature_speed_mps", nonnegative=True,
+    )
+    min_closing_speed = require_finite_number(
+        features.get("min_closing_speed_mps"),
+        "features.min_closing_speed_mps", nonnegative=True,
+    )
+    density_divisor = require_finite_number(
+        features.get("density_divisor"), "features.density_divisor", positive=True
+    )
+    if payload.get("category_policy") != "error":
+        raise CommonEvaluationContractError("common evaluation category_policy must be error")
+
+    return {
+        "id": contract_id,
+        "version": COMMON_EVALUATION_CONTRACT_VERSION,
+        "status": payload["status"],
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "delta_tau": delta_tau,
+        "max_tau_sec": max_tau,
+        "weights": weights,
+        "beta_bar_m": beta_bar,
+        "beta_max_m": beta_max,
+        "ttc_horizon_sec": ttc_horizon,
+        "min_feature_distance_m": min_distance,
+        "min_feature_speed_mps": min_speed,
+        "min_closing_speed_mps": min_closing_speed,
+        "density_divisor": density_divisor,
+    }
+
+
+def common_evaluation_tau(distance: float, speed: float, cos_delta: float,
+                          contract: dict[str, object]) -> float:
+    denominator = speed * speed + float(contract["delta_tau"])
+    raw = -(distance * speed * cos_delta) / denominator
+    return max(0.0, min(raw, float(contract["max_tau_sec"])))
+
+
+def common_evaluation_density(rows: list[dict[str, str]],
+                              contract: dict[str, object]) -> dict[str, float]:
+    obstacle_ids_by_cycle: dict[str, set[str]] = {}
+    for row_index, row in enumerate(rows, start=1):
+        cycle = str(row.get("obstacle_cycle_id", "")).strip()
+        obstacle_id = str(row.get("obs_id", "")).strip()
+        if not cycle or not obstacle_id:
+            raise CommonEvaluationContractError(
+                "margin_guard_log.csv row "
+                f"{row_index} is missing obstacle_cycle_id or obs_id"
+            )
+        obstacle_ids_by_cycle.setdefault(cycle, set()).add(obstacle_id)
+    divisor = float(contract["density_divisor"])
+    return {
+        cycle: min(1.0, max(0.0, (len(ids) - 1) / divisor))
+        for cycle, ids in obstacle_ids_by_cycle.items()
+    }
 
 
 def fmt(value: Optional[float]) -> str:
@@ -302,21 +389,108 @@ def repeat_id_from_run(run_id: str) -> str:
     return "r01"
 
 
-def collect_summary_rows(output_root: Path) -> list[dict[str, str]]:
-    aggregate = output_root / "summary.csv"
-    rows = read_csv(aggregate)
-    if rows:
-        return rows
+def parse_seal(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                values[key.strip()] = value.strip()
+    except OSError:
+        return {}
+    return values
 
+
+def has_valid_integrity_manifest(run_dir: Path) -> bool:
+    manifest = run_dir / "trial_integrity.sha256"
+    if not manifest.exists() or manifest.stat().st_size <= 0:
+        return False
+    try:
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            expected, separator, relative_name = line.partition("  ")
+            relative = Path(relative_name)
+            if (not separator or not expected or not relative_name or
+                    relative.is_absolute() or ".." in relative.parts):
+                return False
+            target = run_dir / relative
+            if not target.is_file() or sha256_file(target) != expected:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def is_sealed_complete_run_dir(run_dir: Path) -> bool:
+    """Accept only a runner-sealed, intact trial; never trust root summary.csv."""
+    run_dir = Path(run_dir)
+    complete = run_dir / "RUN_COMPLETE.txt"
+    invalid = run_dir / "RUN_INVALID.txt"
+    if (not complete.exists() or complete.stat().st_size <= 0 or invalid.exists() or
+            not (run_dir / "summary.csv").exists() or
+            not (run_dir / "run_meta.yaml").exists()):
+        return False
+    seal = parse_seal(complete)
+    if seal.get("trial_valid") != "true":
+        return False
+    if seal.get("run_meta_sha256") != sha256_file(run_dir / "run_meta.yaml"):
+        return False
+    manifest = run_dir / "trial_integrity.sha256"
+    if (not manifest.exists() or
+            seal.get("integrity_manifest_sha256") != sha256_file(manifest) or
+            not has_valid_integrity_manifest(run_dir)):
+        return False
+    if yaml is None:
+        return False
+    try:
+        with (run_dir / "run_meta.yaml").open("r", encoding="utf-8") as handle:
+            meta = yaml.safe_load(handle) or {}
+    except (OSError, TypeError, ValueError, yaml.YAMLError):
+        return False
+    return isinstance(meta, dict) and meta.get("run_state") == "complete"
+
+
+def collect_summary_rows(output_root: Path) -> list[dict[str, str]]:
     collected: list[dict[str, str]] = []
     for summary in sorted(output_root.glob("*/summary.csv")):
+        if not is_sealed_complete_run_dir(summary.parent):
+            continue
         run_rows = read_csv(summary)
         if run_rows:
             collected.append(run_rows[0])
     return collected
 
 
-def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
+def validate_run_common_evaluation_provenance(
+    run_dir: Path, common_evaluation: dict[str, object]
+) -> None:
+    """Reject a sealed trajectory whose metadata names another evaluator."""
+    if yaml is None:
+        raise CommonEvaluationContractError("PyYAML is required for run provenance")
+    meta_path = Path(run_dir) / "run_meta.yaml"
+    try:
+        with meta_path.open("r", encoding="utf-8") as handle:
+            meta = yaml.safe_load(handle) or {}
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise CommonEvaluationContractError(
+            f"cannot read run metadata for common-evaluation provenance: {exc}"
+        ) from exc
+    if not isinstance(meta, dict):
+        raise CommonEvaluationContractError("run metadata must be a mapping")
+    record = meta.get("common_offline_evaluation_contract")
+    if not isinstance(record, dict):
+        raise CommonEvaluationContractError(
+            "run metadata lacks common_offline_evaluation_contract"
+        )
+    for field in ("id", "version", "status", "sha256"):
+        if record.get(field) != common_evaluation.get(field):
+            raise CommonEvaluationContractError(
+                f"run common-evaluation provenance {field} mismatch"
+            )
+
+
+def semantic_violation_metrics(
+    run_dir: Path, common_evaluation: dict[str, object]
+) -> dict[str, object]:
     rows = read_csv(run_dir / "margin_guard_log.csv")
     if not rows:
         return {
@@ -327,17 +501,25 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             "min_h_eval": None,
             "semantic_violation_eval_ratio": None,
             "eval_records": 0,
+            "common_eval_status": "missing_margin_guard_log",
+            "common_eval_error": "margin_guard_log.csv has no rows",
             "h_eesm_eval_log_error_max": None,
         }
-
-    dynamic_tau = load_dynamic_tau_contract(run_dir)
 
     time_groups: dict[str, bool] = {}
     h_values: list[float] = []
     h_eval_values: list[float] = []
     h_eesm_eval_log_errors: list[float] = []
     pair_violations = 0
-    for row in rows:
+    try:
+        density_by_cycle = common_evaluation_density(rows, common_evaluation)
+    except CommonEvaluationContractError as exc:
+        density_by_cycle = {}
+        common_eval_error = str(exc)
+    else:
+        common_eval_error = ""
+
+    for row_index, row in enumerate(rows, start=1):
         h_see = parse_float(row.get("h_seesm"))
         if h_see is None:
             h_see = parse_float(row.get("h_see"))
@@ -352,43 +534,78 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
         speed = parse_float(row.get("rel_v_norm"))
         cos_delta = parse_float(row.get("cos_delta"))
         inflated_radius = parse_float(row.get("R_base"))
-        beta_applied = parse_float(row.get("beta_applied"))
-        beta_bar = parse_float(row.get("beta_bar"))
-        mu = parse_float(row.get("mu"))
         geometry_values = (distance, speed, cos_delta, inflated_radius)
         if any(
             value is None or not math.isfinite(value)
             for value in geometry_values
         ):
-            continue
-        if beta_applied is None or not math.isfinite(beta_applied):
-            if any(
-                value is None or not math.isfinite(value)
-                for value in (beta_bar, mu)
-            ):
-                continue
-            beta_applied = min(
-                max(0.0, float(beta_bar)) *
-                max(0.0, min(1.0, float(mu))),
-                max(0.0, float(beta_bar)),
+            common_eval_error = (
+                "margin_guard_log.csv row "
+                f"{row_index} has missing/nonfinite common geometry"
             )
+            break
 
         distance = max(0.0, float(distance))
         speed = max(0.0, float(speed))
         cos_delta = max(-1.0, min(1.0, float(cos_delta)))
         inflated_radius = max(0.0, float(inflated_radius))
-        beta_applied = max(0.0, float(beta_applied))
-
-        # A valid logged tau is the value the runtime actually used and takes
-        # precedence.  Older logs without it are reconstructed using their
-        # explicit meta mode (or legacy_gate for mode-less Legacy-v1 data).
-        tau = logged_tau(row)
-        if tau is None:
-            tau = recompute_dynamic_tau(
-                distance, speed, cos_delta, inflated_radius, dynamic_tau
+        category = str(row.get("class", "")).strip()
+        if category not in common_evaluation["beta_bar_m"]:
+            common_eval_error = (
+                "margin_guard_log.csv row "
+                f"{row_index} has unknown common-evaluation category {category!r}"
             )
-        if tau is None:
-            continue
+            break
+        cycle = str(row.get("obstacle_cycle_id", "")).strip()
+        if cycle not in density_by_cycle:
+            common_eval_error = (
+                "margin_guard_log.csv row "
+                f"{row_index} has no common-evaluation density group"
+            )
+            break
+
+        # This is intentionally reconstructed from raw state features and the
+        # frozen evaluator contract.  In particular, do not use beta_requested
+        # (which is zero/fixed for some baselines), beta_pre_guard,
+        # beta_applied, a logged tau, or a controller-specific dynamic_tau
+        # contract.  That is the teacher-required common offline comparison.
+        if (
+            distance > float(common_evaluation["min_feature_distance_m"])
+            and speed > float(common_evaluation["min_feature_speed_mps"])
+        ):
+            f_head = max(0.0, -cos_delta)
+        else:
+            f_head = 0.0
+        closing_speed = max(-speed * cos_delta, 0.0)
+        if closing_speed > float(common_evaluation["min_closing_speed_mps"]):
+            ttc_norm = max(
+                0.0,
+                min(
+                    1.0,
+                    1.0 - distance / (
+                        closing_speed * float(common_evaluation["ttc_horizon_sec"])
+                    ),
+                ),
+            )
+        else:
+            ttc_norm = 0.0
+        rho_norm = density_by_cycle[cycle]
+        weights = common_evaluation["weights"]
+        mu_eval = max(
+            0.0,
+            min(
+                1.0,
+                float(weights["bias"])
+                + float(weights["head_on"]) * f_head
+                + float(weights["ttc_norm"]) * ttc_norm
+                + float(weights["density_norm"]) * rho_norm,
+            ),
+        )
+        beta_tilde_eval = float(common_evaluation["beta_bar_m"][category]) * mu_eval
+        beta_eval = min(
+            beta_tilde_eval, float(common_evaluation["beta_max_m"][category])
+        )
+        tau = common_evaluation_tau(distance, speed, cos_delta, common_evaluation)
 
         norm_squared = (
             distance * distance
@@ -396,13 +613,19 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             + tau * tau * speed * speed
         )
         h_eesm_eval = math.sqrt(max(0.0, norm_squared)) - inflated_radius
-        h_eval_values.append(h_eesm_eval - beta_applied)
+        h_eval_values.append(h_eesm_eval - beta_eval)
 
         logged_h_eesm = parse_float(row.get("h_eesm"))
         if logged_h_eesm is None:
             logged_h_eesm = parse_float(row.get("h_ee"))
         if logged_h_eesm is not None:
             h_eesm_eval_log_errors.append(abs(h_eesm_eval - logged_h_eesm))
+
+    common_eval_status = "ok" if not common_eval_error else "invalid_raw_input"
+    if common_eval_error:
+        # Never turn a partial common evaluator into a valid Table-I result.
+        h_eval_values = []
+        h_eesm_eval_log_errors = []
 
     if not h_values:
         return {
@@ -416,6 +639,8 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
                 if h_eval_values else None
             ),
             "eval_records": len(h_eval_values),
+            "common_eval_status": common_eval_status,
+            "common_eval_error": common_eval_error,
             "h_eesm_eval_log_error_max": (
                 max(h_eesm_eval_log_errors) if h_eesm_eval_log_errors else None
             ),
@@ -434,6 +659,8 @@ def semantic_violation_metrics(run_dir: Path) -> dict[str, object]:
             if h_eval_values else None
         ),
         "eval_records": len(h_eval_values),
+        "common_eval_status": common_eval_status,
+        "common_eval_error": common_eval_error,
         "h_eesm_eval_log_error_max": (
             max(h_eesm_eval_log_errors) if h_eesm_eval_log_errors else None
         ),
@@ -624,7 +851,9 @@ def collision_episode_metrics(run_dir: Path) -> dict[str, int]:
     return {"collision_episode_count": episode_count}
 
 
-def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def build_rows(
+    output_root: Path, config_path: Path, common_evaluation: dict[str, object]
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     scenario_meta = load_scenario_meta(config_path)
     summary_rows = collect_summary_rows(output_root)
     manifest_rows: list[dict[str, object]] = []
@@ -636,8 +865,9 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
         if baseline not in METHOD_LABELS:
             continue
         output_dir = Path(summary.get("output_dir", ""))
-        if not output_dir.exists():
+        if not output_dir.exists() or not is_sealed_complete_run_dir(output_dir):
             continue
+        validate_run_common_evaluation_provenance(output_dir, common_evaluation)
         run_id = output_dir.name
         scenario = summary.get("scenario", "")
         repeat_id = repeat_id_from_run(run_id)
@@ -659,11 +889,22 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "scenario_family": meta.get("scenario_family", ""),
                 "context_level": meta.get("context_level", ""),
                 "method_label": method_label,
+                "common_eval_contract_id": common_evaluation["id"],
+                "common_eval_contract_version": common_evaluation["version"],
+                "common_eval_contract_status": common_evaluation["status"],
+                "common_eval_contract_sha256": common_evaluation["sha256"],
+                "common_eval_status": "pending",
                 "summary_csv": str(summary_csv),
             }
         )
 
-        sem = semantic_violation_metrics(output_dir)
+        sem = semantic_violation_metrics(output_dir, common_evaluation)
+        if sem["common_eval_status"] != "ok":
+            raise CommonEvaluationContractError(
+                f"{output_dir}: common offline evaluation failed: "
+                f"{sem['common_eval_error']}"
+            )
+        manifest_rows[-1]["common_eval_status"] = sem["common_eval_status"]
         plan = planner_metrics(output_dir, summary)
         global_metrics = global_seesm_metrics(output_dir)
         collision_episodes = collision_episode_metrics(output_dir)
@@ -695,6 +936,11 @@ def build_rows(output_root: Path, config_path: Path) -> tuple[list[dict[str, obj
                 "min_h_eval": fmt(sem["min_h_eval"]),
                 "semantic_violation_eval_ratio": fmt(sem["semantic_violation_eval_ratio"]),
                 "eval_records": sem["eval_records"],
+                "common_eval_contract_id": common_evaluation["id"],
+                "common_eval_contract_version": common_evaluation["version"],
+                "common_eval_contract_status": common_evaluation["status"],
+                "common_eval_contract_sha256": common_evaluation["sha256"],
+                "common_eval_status": sem["common_eval_status"],
                 "h_eesm_eval_log_error_max": fmt(sem["h_eesm_eval_log_error_max"]),
                 "mpc_feasibility_rate": fmt(plan["mpc_feasibility_rate"]),
                 "mpc_first_attempt_feasibility_rate": fmt(plan["mpc_first_attempt_feasibility_rate"]),
@@ -732,6 +978,23 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
     summary_rows: list[dict[str, object]] = []
     for key, rows in sorted(grouped.items()):
         scenario, family, context, baseline, method = key
+        contract_ids = {str(row.get("common_eval_contract_id", "")) for row in rows}
+        contract_hashes = {
+            str(row.get("common_eval_contract_sha256", "")) for row in rows
+        }
+        contract_versions = {
+            str(row.get("common_eval_contract_version", "")) for row in rows
+        }
+        contract_freeze_statuses = {
+            str(row.get("common_eval_contract_status", "")) for row in rows
+        }
+        contract_statuses = {str(row.get("common_eval_status", "")) for row in rows}
+        if (len(contract_ids) > 1 or len(contract_hashes) > 1 or
+                len(contract_versions) > 1 or len(contract_freeze_statuses) > 1 or
+                len(contract_statuses) > 1):
+            raise CommonEvaluationContractError(
+                "cannot aggregate rows with mixed common-evaluation provenance"
+            )
 
         def values(name: str) -> list[float]:
             return [value for value in (parse_float(row.get(name)) for row in rows) if value is not None]
@@ -749,6 +1012,11 @@ def aggregate_rows(metric_rows: list[dict[str, object]]) -> list[dict[str, objec
                 "context_level": context,
                 "baseline": baseline,
                 "method_label": method,
+                "common_eval_contract_id": next(iter(contract_ids)),
+                "common_eval_contract_version": next(iter(contract_versions)),
+                "common_eval_contract_status": next(iter(contract_freeze_statuses)),
+                "common_eval_contract_sha256": next(iter(contract_hashes)),
+                "common_eval_status": next(iter(contract_statuses)),
                 "n_trials": len(rows),
                 "success_rate": fmt(mean(success)),
                 "goal_reached_rate": fmt(mean(goal_reached)),
@@ -789,25 +1057,59 @@ def main() -> None:
         type=Path,
         default=repo_root() / "swarm_test/config/secbf_scenarios.yaml",
     )
+    parser.add_argument(
+        "--evaluation-contract",
+        type=Path,
+        required=True,
+        help=(
+            "Frozen method-independent Teacher-TCA/Phi/beta_max evaluator. "
+            "Required so Table-I/E2 metrics cannot inherit controller margins."
+        ),
+    )
     args = parser.parse_args()
     output_root = args.output_root.expanduser().resolve()
     config = args.config.expanduser().resolve()
+    common_evaluation = load_common_evaluation_contract(args.evaluation_contract)
 
-    manifest_rows, metric_rows = build_rows(output_root, config)
+    manifest_rows, metric_rows = build_rows(output_root, config, common_evaluation)
     table_rows = aggregate_rows(metric_rows)
 
     write_csv(output_root / "manifest.csv", manifest_rows, MANIFEST_FIELDS)
     write_csv(output_root / "teacher_run_metrics.csv", metric_rows, RUN_FIELDS)
     write_csv(output_root / "teacher_table_summary.csv", table_rows, TABLE_FIELDS)
+    provenance_path = output_root / "common_evaluation_provenance.yaml"
+    provenance_path.write_text(
+        yaml.safe_dump(
+            {
+                "id": common_evaluation["id"],
+                "version": common_evaluation["version"],
+                "status": common_evaluation["status"],
+                "sha256": common_evaluation["sha256"],
+                "path": common_evaluation["path"],
+                "semantic_evaluation_status": "all_rows_must_be_ok",
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
     print(
         {
             "output_root": str(output_root),
+            "common_evaluation_contract": {
+                "id": common_evaluation["id"],
+                "version": common_evaluation["version"],
+                "status": common_evaluation["status"],
+                "sha256": common_evaluation["sha256"],
+                "path": common_evaluation["path"],
+            },
             "manifest_rows": len(manifest_rows),
             "metric_rows": len(metric_rows),
             "table_rows": len(table_rows),
             "manifest": str(output_root / "manifest.csv"),
             "teacher_run_metrics": str(output_root / "teacher_run_metrics.csv"),
             "teacher_table_summary": str(output_root / "teacher_table_summary.csv"),
+            "common_evaluation_provenance": str(provenance_path),
         }
     )
 

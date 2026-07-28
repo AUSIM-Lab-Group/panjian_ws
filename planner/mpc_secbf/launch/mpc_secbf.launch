@@ -13,6 +13,7 @@
   <arg name="delta_u_max" default="0.4"/>
   <arg name="active_set_distance_m" default="8.0"/>
   <arg name="graph_cache_enabled" default="false"/>
+  <arg name="solver_max_cpu_time_ms" default="0.0"/>
   <arg name="safety_delta_bar" default="0.10"/>
   <arg name="safety_delta_beta_bar" default="0.30"/>
   <arg name="max_cbf_obstacles" default="6"/>
@@ -21,7 +22,16 @@
   <arg name="guard_kappa" default="0.5"/>
   <arg name="guard_max_backtracks" default="6"/>
   <arg name="guard_time_budget_ms" default="500.0"/>
+  <arg name="guard_solver_max_cpu_time_ms" default="70.0"/>
   <arg name="guard_binary_search" default="false"/>
+  <arg name="guard_bounded_midpoint_then_zero" default="false"/>
+  <arg name="emergency_cbf_enabled" default="false"/>
+  <arg name="emergency_cbf_alpha" default="1.5"/>
+  <arg name="emergency_cbf_extra_margin" default="0.10"/>
+  <arg name="emergency_cbf_v_max" default="0.35"/>
+  <arg name="emergency_cbf_turn_gain" default="1.5"/>
+  <arg name="emergency_cbf_activation_distance" default="4.0"/>
+  <arg name="emergency_cbf_progress_v" default="0.20"/>
   <arg name="typed_payload_timeout" default="0.50"/>
   <arg name="side_preference_enabled" default="false"/>
   <arg name="side_weight" default="0.05"/>
@@ -71,6 +81,7 @@
     <param name="mpc/delta_u_max" value="$(arg delta_u_max)" type="double"/>
     <param name="mpc/active_set_distance_m" value="$(arg active_set_distance_m)" type="double"/>
     <param name="mpc/graph_cache_enabled" value="$(arg graph_cache_enabled)" type="bool"/>
+    <param name="mpc/solver_max_cpu_time_ms" value="$(arg solver_max_cpu_time_ms)" type="double"/>
     <param name="mpc/safety_delta_bar" value="$(arg safety_delta_bar)" type="double"/>
     <param name="mpc/safety_delta_beta_bar" value="$(arg safety_delta_beta_bar)" type="double"/>
     <param name="mpc/max_cbf_obstacles" value="$(arg max_cbf_obstacles)"/>
@@ -79,7 +90,16 @@
     <param name="mpc/guard_kappa" value="$(arg guard_kappa)" type="double"/>
     <param name="mpc/guard_max_backtracks" value="$(arg guard_max_backtracks)" type="int"/>
     <param name="mpc/guard_time_budget_ms" value="$(arg guard_time_budget_ms)" type="double"/>
+    <param name="mpc/guard_solver_max_cpu_time_ms" value="$(arg guard_solver_max_cpu_time_ms)" type="double"/>
     <param name="mpc/guard_binary_search" value="$(arg guard_binary_search)" type="bool"/>
+    <param name="mpc/guard_bounded_midpoint_then_zero" value="$(arg guard_bounded_midpoint_then_zero)" type="bool"/>
+    <param name="mpc/emergency_cbf_enabled" value="$(arg emergency_cbf_enabled)" type="bool"/>
+    <param name="mpc/emergency_cbf_alpha" value="$(arg emergency_cbf_alpha)" type="double"/>
+    <param name="mpc/emergency_cbf_extra_margin" value="$(arg emergency_cbf_extra_margin)" type="double"/>
+    <param name="mpc/emergency_cbf_v_max" value="$(arg emergency_cbf_v_max)" type="double"/>
+    <param name="mpc/emergency_cbf_turn_gain" value="$(arg emergency_cbf_turn_gain)" type="double"/>
+    <param name="mpc/emergency_cbf_activation_distance" value="$(arg emergency_cbf_activation_distance)" type="double"/>
+    <param name="mpc/emergency_cbf_progress_v" value="$(arg emergency_cbf_progress_v)" type="double"/>
     <param name="mpc/typed_payload_timeout" value="$(arg typed_payload_timeout)" type="double"/>
     <param name="mpc/side_preference_enabled" value="$(arg side_preference_enabled)"/>
     <param name="mpc/side_weight" value="$(arg side_weight)"/>

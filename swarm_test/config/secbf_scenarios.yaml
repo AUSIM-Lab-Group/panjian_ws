@@ -46,9 +46,6 @@ scenarios:
       cyclist: 0.90
       vehicle: 0.80
       unknown: 0.75
-    experiment_switches:
-      epsilon_max: 0.01
-      slack_weight: 5000.0
     theory:
       delta_bar_beta: 0.3
     expected_role: "feasibility pressure from high beta and short TTC"
@@ -79,7 +76,7 @@ scenarios:
     expected_role: "short-TTC lateral interaction with higher-risk class"
 
   crossing_context_ext:
-    description: "Crossing / Context-Ext: fast child-like crossing plus static narrowing obstacle"
+    description: "Crossing / Context-Ext: fast child-like crossing with short TTC"
     scenario_family: "Crossing"
     context_level: "Context-Ext"
     map: {x: 14.0, y: 8.0, z: 3.0}
@@ -87,9 +84,6 @@ scenarios:
       - {x: 4.8, y: 0.0, z: 0.75, offset: 0.0, slower: 3.2,
          scale_x: 0.0, scale_y: 12.0, scale_z: 0.0,
          semantic_class: "child_like"}
-      - {x: 6.8, y: -0.9, z: 0.5, offset: 0.0, slower: 999.0,
-         scale_x: 0.0, scale_y: 0.0, scale_z: 0.0,
-         semantic_class: "box"}
     goal: {x: 11.0, y: 0.0}
     beta_bar:
       box: 0.20
@@ -100,12 +94,9 @@ scenarios:
       adult: 0.75
       vehicle: 0.80
       unknown: 0.75
-    experiment_switches:
-      epsilon_max: 0.01
-      slack_weight: 5000.0
     theory:
       delta_bar_beta: 0.3
-    expected_role: "short-TTC crossing under corridor narrowing"
+    expected_role: "short-TTC lateral interaction with high-risk class"
 
   # Main simulation: Local Crowding
   local_crowding_context_bl:
@@ -178,9 +169,6 @@ scenarios:
       adult: 0.75
       vehicle: 0.80
       unknown: 0.75
-    experiment_switches:
-      epsilon_max: 0.01
-      slack_weight: 5000.0
     theory:
       delta_bar_beta: 0.3
     expected_role: "high-density feasibility and semantic-bound stress"

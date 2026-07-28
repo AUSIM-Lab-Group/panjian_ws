@@ -1,0 +1,55 @@
+# Teacher-v1 common offline safety evaluator for Table I / Fig. E2.
+#
+# This contract is deliberately independent of the controller's internal
+# accepted margin and dynamic-tau switch.  It is applied after a trajectory is
+# recorded, identically to Standard MPC-CBF, EESM-MPC-ECBF, Unguarded SEESM,
+# and Proposed MPC-SECBF.
+id: teacher_v1_common_offline_evaluation_001
+version: teacher_v1_common_offline_evaluation_001
+status: formal_frozen
+
+relative_state:
+  position: p_robot_minus_p_obstacle
+  velocity: v_robot_minus_v_obstacle
+
+dynamic_tau:
+  mode: teacher_tca
+  delta_tau: 1.0e-6
+  max_tau_sec: 2.0
+
+phi:
+  form: explicit_linear_current_mapping
+  formula: beta_tilde=beta_bar(c)*clip(bias+head_on*f_head+ttc_norm*TTC_norm+density_norm*rho_norm,0,1)
+  weights: {bias: 0.6, head_on: 0.2, ttc_norm: 0.15, density_norm: 0.1}
+  multiplier_clip: [0.0, 1.0]
+
+# These are evaluator parameters, not each controller's beta table.  They are
+# intentionally complete and independent of accepted/candidate/Guard values.
+beta_bar_m:
+  box: 0.20
+  adult: 0.75
+  pedestrian: 0.75
+  child: 1.05
+  child_like: 1.05
+  cyclist: 0.90
+  vehicle: 0.80
+  unknown: 0.75
+beta_max_m:
+  box: 0.20
+  adult: 0.75
+  pedestrian: 0.75
+  child: 1.05
+  child_like: 1.05
+  cyclist: 0.90
+  vehicle: 0.80
+  unknown: 0.75
+category_policy: error
+
+# Recomputed from raw logged geometry, rather than inheriting method-specific
+# beta_requested, beta_applied, tau, or pre-guard fields.
+features:
+  min_feature_distance_m: 0.01
+  min_feature_speed_mps: 0.01
+  min_closing_speed_mps: 0.01
+  ttc_horizon_sec: 5.0
+  density_divisor: 5.0

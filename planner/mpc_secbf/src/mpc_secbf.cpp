@@ -12,6 +12,22 @@ double elapsedMs(const SteadyClock::time_point& start,
                  const SteadyClock::time_point& end = SteadyClock::now()) {
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
+
+std::string casadiReturnStatus(const casadi::CasadiException& error) {
+    const std::string message = error.what();
+    const std::string marker = "return_status is '";
+    const std::size_t begin = message.find(marker);
+    if (begin == std::string::npos) return "CasadiException";
+    const std::size_t value_begin = begin + marker.size();
+    const std::size_t end = message.find('\'', value_begin);
+    if (end == std::string::npos) return "CasadiException";
+    return message.substr(value_begin, end - value_begin);
+}
+}
+
+void MPC_SECBF_SOLVE::copyWarmStartFrom(const MPC_SECBF_SOLVE& other) {
+    predict_x = other.predict_x;
+    predict_u = other.predict_u;
 }
 
 void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, double o_max,
@@ -28,7 +44,8 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    double qf_scale, double delta_u_weight,
                                    double delta_u_max,
                                    double active_set_distance_m,
-                                   bool graph_cache_enabled) {
+                                   bool graph_cache_enabled,
+                                   double solver_max_cpu_time_ms) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
@@ -62,6 +79,10 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                  ? active_set_distance_m
                                  : 8.0;
     graph_cache_enabled_ = graph_cache_enabled;
+    solver_max_cpu_time_sec_ =
+        std::isfinite(solver_max_cpu_time_ms) && solver_max_cpu_time_ms > 0.0
+            ? solver_max_cpu_time_ms / 1000.0
+            : 0.0;
 
     kine_equation_ = setKinematicEquation();
     teacher_graphs_.clear();
@@ -244,6 +265,9 @@ void MPC_SECBF_SOLVE::initTeacherParameterizedProblem(int obstacle_slots) {
     opts["print_time"] = 0;
     opts["ipopt.acceptable_tol"] = 3e-3;
     opts["ipopt.acceptable_obj_change_tol"] = 3e-3;
+    if (solver_max_cpu_time_sec_ > 0.0) {
+        opts["ipopt.max_cpu_time"] = solver_max_cpu_time_sec_;
+    }
     prob.solver("ipopt", opts);
     graph.ready = true;
 }
@@ -271,6 +295,8 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
     Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
     Eigen::MatrixXd* obs_matrix, const std::vector<double>& beta_list) {
     const SteadyClock::time_point total_start = SteadyClock::now();
+    const std::vector<double> last_feasible_x = predict_x;
+    const std::vector<double> last_feasible_u = predict_u;
     resetAuditMetrics();
     last_timing.graph_cache_enabled = true;
     if (cur_state == nullptr || goal_state == nullptr || obs_matrix == nullptr ||
@@ -439,8 +465,10 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
     teacher_opti_.set_value(teacher_p_cbf_mask_, cbf_mask_dm);
     teacher_opti_.set_value(teacher_p_side_mask_, side_mask_dm);
 
+    last_warm_start_source = "cold_start";
     if (!predict_u.empty() && predict_u.size() == static_cast<size_t>(2 * N_) &&
         !predict_x.empty() && predict_x.size() == static_cast<size_t>(5 * (N_ + 1))) {
+        last_warm_start_source = "shifted_last_feasible";
         std::vector<double> x_warm = predict_x;
         std::vector<double> u_warm = predict_u;
         std::rotate(u_warm.begin(), u_warm.begin() + 2, u_warm.end());
@@ -538,6 +566,7 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
         last_timing.solution_extract_ms = elapsedMs(extract_start);
         last_timing.success = true;
         last_timing.total_ms = elapsedMs(total_start);
+        last_return_status = "Solve_Succeeded";
 
         // A cached graph is an optimization experiment, never a safety
         // authority.  Reject a cached solution that already violates the
@@ -556,8 +585,18 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
             ROS_WARN_THROTTLE(
                 1.0,
                 "[MPC-SECBF] Rejecting cached Teacher graph solution with nonpositive h_EESM; falling back to rebuild");
-            predict_x.clear();
-            predict_u.clear();
+            predict_x = last_feasible_x;
+            predict_u = last_feasible_u;
+            rotateSolution();
+            last_return_status = "cached_safety_violation";
+            if (solver_max_cpu_time_sec_ > 0.0) {
+                // A synchronous cache->rebuild retry can consume two complete
+                // IPOPT budgets inside one control cycle.  Under a hard solver
+                // limit, fail closed and let the node's bounded Guard/safe-stop
+                // policy decide whether any remaining recovery budget exists.
+                last_timing.success = false;
+                return false;
+            }
             return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);
         }
         return true;
@@ -566,9 +605,15 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
                   << e.what() << std::endl;
         last_timing.ipopt_solve_ms = elapsedMs(solve_start);
         last_timing.total_ms = elapsedMs(total_start);
-        predict_x.clear();
-        predict_u.clear();
+        predict_x = last_feasible_x;
+        predict_u = last_feasible_u;
         rotateSolution();
+        last_return_status = casadiReturnStatus(e);
+        if (solver_max_cpu_time_sec_ > 0.0) {
+            // Preserve the per-cycle hard bound: do not hide a timed-out or
+            // failed cached solve behind an unbudgeted rebuild solve.
+            return false;
+        }
         // Never expose a failed cached solve to the Guard as if it were the
         // production result.  Rebuild the exact Teacher-v1 problem instead.
         return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);
@@ -578,6 +623,7 @@ bool MPC_SECBF_SOLVE::solveTeacherParameterized(
 bool MPC_SECBF_SOLVE::solveRebuilding(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
                                       Eigen::MatrixXd* obs_matrix, const std::vector<double>& beta_list) {
     const SteadyClock::time_point total_start = SteadyClock::now();
+    last_warm_start_source = predict_u.empty() ? "cold_start" : "shifted_last_feasible";
     cur_state_ptr_ = cur_state;
     goal_state_ptr_ = goal_state;
     obs_matrix_ptr_ = obs_matrix;
@@ -882,6 +928,9 @@ bool MPC_SECBF_SOLVE::solveRebuilding(Eigen::VectorXd* cur_state, Eigen::MatrixX
     opts["print_time"] = 0;
     opts["ipopt.acceptable_tol"] = 3e-3;
     opts["ipopt.acceptable_obj_change_tol"] = 3e-3;
+    if (solver_max_cpu_time_sec_ > 0.0) {
+        opts["ipopt.max_cpu_time"] = solver_max_cpu_time_sec_;
+    }
     prob.solver("ipopt", opts);
     const SteadyClock::time_point solve_start = SteadyClock::now();
     last_timing.graph_build_ms = elapsedMs(total_start, solve_start);
@@ -1006,6 +1055,7 @@ bool MPC_SECBF_SOLVE::solveRebuilding(Eigen::VectorXd* cur_state, Eigen::MatrixX
         last_timing.selected_obstacle_count = last_constrained_obs_count;
         last_timing.success = true;
         last_timing.total_ms = elapsedMs(total_start);
+        last_return_status = "Solve_Succeeded";
         return true;
 
     } catch (const casadi::CasadiException& e) {
@@ -1014,6 +1064,7 @@ bool MPC_SECBF_SOLVE::solveRebuilding(Eigen::VectorXd* cur_state, Eigen::MatrixX
         last_timing.total_ms = elapsedMs(total_start);
         last_timing.selected_obstacle_count = last_constrained_obs_count;
         rotateSolution();
+        last_return_status = casadiReturnStatus(e);
         return false;
     }
 }

@@ -10,6 +10,72 @@ SPEC = importlib.util.spec_from_file_location("postprocess_teacher_canonical_run
 postprocess = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(postprocess)
 
+COMMON_EVALUATION_PATH = (
+    REPO_ROOT / "swarm_test/config/common_offline_evaluation_v1.yaml"
+)
+
+
+def common_evaluation_contract():
+    return postprocess.load_common_evaluation_contract(COMMON_EVALUATION_PATH)
+
+
+def write_margin_rows(run_dir: Path, rows) -> None:
+    path = run_dir / "margin_guard_log.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_sealed_summary(output_root: Path, run_name: str, run_id: str) -> Path:
+    run_dir = output_root / run_name
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_meta.yaml").write_text("run_state: complete\n", encoding="utf-8")
+    with (run_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["run_id", "scenario", "baseline"])
+        writer.writeheader()
+        writer.writerow({"run_id": run_id, "scenario": "head_on_context_bl", "baseline": "SEESM_Ours"})
+    manifest = run_dir / "trial_integrity.sha256"
+    manifest.write_text(
+        "\n".join(
+            f"{postprocess.sha256_file(run_dir / name)}  {name}"
+            for name in ("run_meta.yaml", "summary.csv")
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "RUN_COMPLETE.txt").write_text(
+        "\n".join([
+            "TEACHER_V1_RUN_COMPLETE",
+            "trial_valid=true",
+            f"run_meta_sha256={postprocess.sha256_file(run_dir / 'run_meta.yaml')}",
+            f"integrity_manifest_sha256={postprocess.sha256_file(manifest)}",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    return run_dir
+
+
+def test_collect_summary_rows_uses_only_sealed_complete_trials(tmp_path):
+    valid = write_sealed_summary(tmp_path, "valid", "valid_run")
+    invalid = write_sealed_summary(tmp_path, "invalid", "invalid_run")
+    (invalid / "RUN_INVALID.txt").write_text("trial_valid=false\n", encoding="utf-8")
+    unsealed = tmp_path / "unsealed"
+    unsealed.mkdir()
+    (unsealed / "summary.csv").write_text(
+        "run_id,scenario,baseline\nunsealed_run,head_on_context_bl,SEESM_Ours\n",
+        encoding="utf-8",
+    )
+    # A stale aggregate must not bypass the per-trial seal and integrity checks.
+    (tmp_path / "summary.csv").write_text(
+        "run_id,scenario,baseline\npoisoned_root,head_on_context_bl,SEESM_Ours\n",
+        encoding="utf-8",
+    )
+
+    rows = postprocess.collect_summary_rows(tmp_path)
+
+    assert rows == [{"run_id": "valid_run", "scenario": "head_on_context_bl", "baseline": "SEESM_Ours"}]
+    assert postprocess.is_sealed_complete_run_dir(valid)
+
 
 def test_global_log_metrics_count_semantic_and_stale_rows(tmp_path):
     rows = [
@@ -67,132 +133,108 @@ def test_paper_travel_time_prefers_navigation_completion_time():
     assert postprocess.paper_travel_time(summary) == 10.5
 
 
-def test_common_eval_reconstructs_dynamic_eesm_independently_of_controller_margin(tmp_path):
-    (tmp_path / "meta.yaml").write_text(
-        "dynamic_tau:\n"
-        "  enabled: true\n"
-        "  mode: legacy_gate\n"
-        "  Ke: 0.3\n"
-        "  Tmax: 2.0\n"
-        "  min_speed: 1.0e-6\n"
-        "  min_distance: 1.0e-6\n"
-        "  max_tau: 2.0\n",
-        encoding="utf-8",
-    )
-    rows = [
-        {
-            "time": "0.1",
-            "h_see": "0.84",
-            "h_ee": "0.84",
-            "d_i": "2.0",
-            "rel_v_norm": "1.0",
-            "cos_delta": "-1.0",
-            "R_base": "0.8",
-            "beta_bar": "0.75",
-            "mu": "0.8",
-        }
-    ]
-    path = tmp_path / "margin_guard_log.csv"
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0])
-        writer.writeheader()
-        writer.writerows(rows)
+def test_common_eval_reconstructs_teacher_tca_and_phi_independently(tmp_path):
+    rows = [{
+        "time": "0.1", "obstacle_cycle_id": "7", "obs_id": "4000",
+        "class": "adult", "h_seesm": "1.1", "h_eesm": "1.2",
+        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
+        "R_base": "0.8",
+        # These controller fields intentionally disagree with the frozen
+        # evaluator and must not affect H_eval.
+        "beta_requested": "0.0", "beta_applied": "0.0", "tau": "0.0",
+    }]
+    write_margin_rows(tmp_path, rows)
 
-    metrics = postprocess.semantic_violation_metrics(tmp_path)
+    contract = common_evaluation_contract()
+    metrics = postprocess.semantic_violation_metrics(tmp_path, contract)
 
-    # T_i=(2.0-0.8)/1.0=1.2 s, tau=0.3*T_i=0.36 s,
-    # h_EESM=|2.0-0.36|-0.8=0.84 m and beta_eval=0.75*0.8=0.60 m.
-    assert math.isclose(metrics["min_h_eval"], 0.24, abs_tol=1.0e-12)
-    assert metrics["semantic_violation_eval_ratio"] == 0.0
+    tau = 2.0 / (1.0 + 1.0e-6)
+    ttc_norm = 1.0 - 2.0 / 5.0
+    mu = 0.6 + 0.2 + 0.15 * ttc_norm
+    expected = abs(2.0 - tau) - 0.8 - 0.75 * mu
+    assert math.isclose(metrics["min_h_eval"], expected, abs_tol=1.0e-12)
+    assert metrics["common_eval_status"] == "ok"
+    assert metrics["semantic_violation_eval_ratio"] == 1.0
     assert metrics["eval_records"] == 1
 
 
-def test_common_eval_recomputes_teacher_tca_from_explicit_meta_mode(tmp_path):
-    (tmp_path / "meta.yaml").write_text(
-        "dynamic_tau:\n"
-        "  enabled: true\n"
-        "  mode: teacher_tca\n"
-        "  delta_tau: 0.01\n"
-        "  max_tau: 2.0\n",
-        encoding="utf-8",
-    )
+def test_common_eval_ignores_logged_tau_and_controller_margin(tmp_path):
+    base = {
+        "time": "0.1", "obstacle_cycle_id": "8", "obs_id": "4000",
+        "class": "adult", "h_seesm": "0.0", "h_eesm": "0.0",
+        "d_i": "3.0", "rel_v_norm": "1.5", "cos_delta": "-0.5",
+        "R_base": "0.8",
+    }
+    reference_dir = tmp_path / "reference"
+    changed_dir = tmp_path / "changed"
+    reference_dir.mkdir()
+    changed_dir.mkdir()
+    write_margin_rows(reference_dir, [{
+        **base, "beta_requested": "0.0", "beta_applied": "0.0", "tau": "0.0",
+    }])
+    write_margin_rows(changed_dir, [{
+        **base, "beta_requested": "99.0", "beta_applied": "0.75", "tau": "1.7",
+    }])
+
+    contract = common_evaluation_contract()
+    reference = postprocess.semantic_violation_metrics(reference_dir, contract)
+    changed = postprocess.semantic_violation_metrics(changed_dir, contract)
+    assert math.isclose(reference["min_h_eval"], changed["min_h_eval"], abs_tol=1.0e-12)
+    assert reference["common_eval_status"] == changed["common_eval_status"] == "ok"
+
+
+def test_common_eval_caps_phi_with_frozen_beta_max(tmp_path):
     rows = [{
-        "time": "0.1", "h_see": "-1.38", "h_ee": "-0.78",
-        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
-        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
+        "time": "0.1", "obstacle_cycle_id": "9", "obs_id": "4000",
+        "class": "adult", "h_see": "0.0", "h_ee": "0.0",
+        "d_i": "5.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
+        "R_base": "0.8", "beta_requested": "0.0", "beta_applied": "0.0",
     }]
-    with (tmp_path / "margin_guard_log.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0])
-        writer.writeheader()
-        writer.writerows(rows)
+    write_margin_rows(tmp_path, rows)
+    contract = common_evaluation_contract()
+    contract["beta_max_m"] = dict(contract["beta_max_m"])
+    contract["beta_max_m"]["adult"] = 0.50
 
-    metrics = postprocess.semantic_violation_metrics(tmp_path)
-
-    tau = 2.0 / 1.01
-    expected = abs(2.0 - tau) - 0.8 - 0.75 * 0.8
+    metrics = postprocess.semantic_violation_metrics(tmp_path, contract)
+    tau = 2.0
+    expected = abs(5.0 - tau) - 0.8 - 0.50
     assert math.isclose(metrics["min_h_eval"], expected, abs_tol=1.0e-12)
 
 
-def test_common_eval_prefers_valid_logged_tau_over_reconstruction(tmp_path):
-    (tmp_path / "meta.yaml").write_text(
-        "dynamic_tau:\n"
-        "  enabled: true\n"
-        "  mode: teacher_tca\n"
-        "  delta_tau: 1.0e-6\n"
-        "  max_tau: 2.0\n",
-        encoding="utf-8",
+def test_common_eval_recomputes_density_per_obstacle_cycle(tmp_path):
+    common = {
+        "time": "0.1", "obstacle_cycle_id": "10", "class": "adult",
+        "h_see": "0.0", "h_ee": "0.0", "d_i": "5.0",
+        "rel_v_norm": "0.0", "cos_delta": "0.0", "R_base": "0.8",
+        "beta_requested": "0.0", "beta_applied": "0.0",
+    }
+    write_margin_rows(tmp_path, [
+        {**common, "obs_id": "4000", "rho_norm": "0.0"},
+        {**common, "obs_id": "4001", "rho_norm": "0.0"},
+    ])
+    metrics = postprocess.semantic_violation_metrics(
+        tmp_path, common_evaluation_contract()
     )
-    rows = [{
-        "time": "0.1", "h_see": "0.1", "h_ee": "0.7",
+    # rho=(2-1)/5=0.2, so the frozen evaluator uses
+    # beta=0.75*(0.6+0.1*0.2)=0.465, not the forged rho_norm log value.
+    assert math.isclose(metrics["min_h_eval"], 5.0 - 0.8 - 0.465, abs_tol=1.0e-12)
+
+
+def test_common_eval_fails_closed_for_unknown_category(tmp_path):
+    write_margin_rows(tmp_path, [{
+        "time": "0.1", "obstacle_cycle_id": "11", "obs_id": "4000",
+        "class": "not_a_teacher_category", "h_see": "0.0", "h_ee": "0.0",
         "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
-        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
-        "tau": "0.5", "tau_valid": "1",
-    }]
-    with (tmp_path / "margin_guard_log.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0])
-        writer.writeheader()
-        writer.writerows(rows)
-
-    metrics = postprocess.semantic_violation_metrics(tmp_path)
-
-    # Logged tau=0.5 gives |2-0.5|-0.8-0.6=0.1. Reconstructing pure TCA
-    # would give a negative value, so this assertion fixes source priority.
-    assert math.isclose(metrics["min_h_eval"], 0.1, abs_tol=1.0e-12)
-
-
-def test_common_eval_prefers_tau_computed_and_final_applied_margin(tmp_path):
-    (tmp_path / "meta.yaml").write_text(
-        "dynamic_tau:\n"
-        "  enabled: true\n"
-        "  mode: teacher_tca\n"
-        "  delta_tau: 1.0e-6\n"
-        "  max_tau: 2.0\n",
-        encoding="utf-8",
+        "R_base": "0.8",
+    }])
+    metrics = postprocess.semantic_violation_metrics(
+        tmp_path, common_evaluation_contract()
     )
-    rows = [{
-        "time": "0.1", "h_seesm": "1.1", "h_eesm": "1.2",
-        "d_i": "2.0", "rel_v_norm": "1.0", "cos_delta": "-1.0",
-        "R_base": "0.8", "beta_bar": "0.75", "mu": "0.8",
-        "beta_applied": "0.1", "tau": "0.0", "tau_computed": "1",
-        "tau_active": "0", "tau_valid": "0",
-    }]
-    with (tmp_path / "margin_guard_log.csv").open(
-        "w", newline="", encoding="utf-8"
-    ) as handle:
-        writer = csv.DictWriter(handle, fieldnames=rows[0])
-        writer.writeheader()
-        writer.writerows(rows)
-
-    metrics = postprocess.semantic_violation_metrics(tmp_path)
-
-    # tau_computed=true makes the valid inactive tau=0 authoritative even
-    # though the deprecated tau_valid field says false. The final applied
-    # margin is 0.1, not the requested beta_bar*mu=0.6.
-    assert math.isclose(metrics["min_h_eval"], 1.1, abs_tol=1.0e-12)
-    assert math.isclose(metrics["min_h_seesm_from_log"], 1.1, abs_tol=1.0e-12)
+    assert metrics["common_eval_status"] == "invalid_raw_input"
+    assert metrics["min_h_eval"] is None
 
 
-def test_mpc_feasibility_excludes_no_cbf_emergency_fallback(tmp_path):
+def test_mpc_feasibility_excludes_terminal_safe_stop(tmp_path):
     rows = [
         {
             "mpc_status": "success", "first_attempt_status": "success",
@@ -200,8 +242,8 @@ def test_mpc_feasibility_excludes_no_cbf_emergency_fallback(tmp_path):
             "solve_time_ms": "10.0",
         },
         {
-            "mpc_status": "no_cbf_fallback", "first_attempt_status": "infeasible",
-            "final_status": "success", "accepted_beta_source": "no_cbf",
+            "mpc_status": "infeasible_safe_stop", "first_attempt_status": "infeasible",
+            "final_status": "infeasible", "accepted_beta_source": "safe_stop",
             "solve_time_ms": "11.0",
         },
         {

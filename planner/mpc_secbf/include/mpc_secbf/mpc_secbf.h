@@ -69,7 +69,8 @@ public:
                      double delta_u_weight = 0.02,
                      double delta_u_max = 0.4,
                      double active_set_distance_m = 8.0,
-                     bool graph_cache_enabled = false);
+                     bool graph_cache_enabled = false,
+                     double solver_max_cpu_time_ms = 0.0);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -81,6 +82,8 @@ public:
      */
     bool solve(Eigen::VectorXd* cur_state, Eigen::MatrixXd* goal_state,
                Eigen::MatrixXd* obs_matrix, const std::vector<double>& beta_list);
+
+    void copyWarmStartFrom(const MPC_SECBF_SOLVE& other);
 
     void resetAuditMetrics();
 
@@ -105,6 +108,8 @@ public:
     // reconstruction performed by the ROS node.
     std::vector<MpcTauStageAudit> last_tau_stage_audit;
     MpcSolveTiming last_timing;
+    std::string last_return_status = "not_run";
+    std::string last_warm_start_source = "cold_start";
 
 private:
     // Teacher-v1 production path: keep one parameterized CasADi graph and
@@ -188,6 +193,7 @@ private:
     double delta_u_max_ = 0.4;
     double active_set_distance_m_ = 8.0;
     bool graph_cache_enabled_ = false;
+    double solver_max_cpu_time_sec_ = 0.0;
     std::vector<double> Q_, R_;
 
     // CasADi objects

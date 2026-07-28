@@ -314,6 +314,8 @@ public:
             !margin_time.isZero() && (receipt_time - margin_time).toSec() > global_seesm_margin_timeout_;
         if (accepted_source == "no_cbf") {
           reason = "no_cbf";
+        } else if (accepted_source == "safe_stop") {
+          reason = "safe_stop";
         } else if (margin_is_stale) {
           reason = "stale";
         } else {

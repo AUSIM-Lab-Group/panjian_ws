@@ -3,9 +3,12 @@
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 from pathlib import Path
+
+import yaml
 
 
 BETA_PRIORS = {
@@ -236,6 +239,56 @@ def true_value(value):
     return str(value).strip().lower() in {"1", "true", "yes"}
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def audit_parameter_freeze(path):
+    with path.open("r", encoding="utf-8") as handle:
+        freeze = yaml.safe_load(handle) or {}
+    semantic = freeze.get("semantic_margin", {})
+    weights = semantic.get("phi_weights", {})
+    beta_bar = semantic.get("beta_bar_m", {})
+    guard = freeze.get("guard_and_failure_policy", {})
+    expected_weights = {
+        "bias": WEIGHTS["bias"],
+        "head_on": WEIGHTS["heading"],
+        "ttc_norm": WEIGHTS["ttc"],
+        "density_norm": WEIGHTS["density"],
+    }
+    expected_priors = {name: BETA_PRIORS[name] for name in BETA_PRIORS}
+    observed_priors = {name: beta_bar.get(name) for name in BETA_PRIORS}
+    errors = []
+    if weights != expected_weights:
+        errors.append(f"phi_weights mismatch: {weights!r}")
+    if observed_priors != expected_priors:
+        errors.append(f"beta_bar_m mismatch: {observed_priors!r}")
+    if semantic.get("h_min_m") != ETA:
+        errors.append(f"h_min_m must equal {ETA}")
+    if semantic.get("delta_beta_positive_m_per_cycle") != MAX_DELTA_BETA:
+        errors.append(
+            "delta_beta_positive_m_per_cycle must equal "
+            f"{MAX_DELTA_BETA}"
+        )
+    if guard.get("feasibility_guard_enabled") is not True:
+        errors.append("feasibility_guard_enabled must be true")
+    if guard.get("kappa") != 0.5 or guard.get("max_backtracks_q") != 6:
+        errors.append("Guard backtracking must use kappa=0.5 and Q=6")
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {
+        "path": str(path.resolve()),
+        "sha256": sha256_file(path),
+        "id": freeze.get("id"),
+        "status": freeze.get("status"),
+        "campaign": freeze.get("campaign"),
+    }
+
+
 def audit_integrated_guard(candidate_dir, retry_dir):
     candidate_rows = read_csv(candidate_dir / "mpc_margin_log.csv")
     retry_rows = read_csv(retry_dir / "mpc_margin_log.csv")
@@ -271,8 +324,13 @@ def audit_integrated_guard(candidate_dir, retry_dir):
         "retry_total_rows": len(retry_rows),
         "retry_used_rows": len(retry_used_rows),
         "retry_sources": {
-            source: sum(row["accepted_beta_source"] == source for row in retry_used_rows)
-            for source in ("previous", "zero", "no_cbf")
+            source: sum(
+                row["accepted_beta_source"] == source
+                for row in retry_used_rows
+            )
+            for source in sorted({
+                row["accepted_beta_source"] for row in retry_used_rows
+            })
         },
     }
 
@@ -289,11 +347,13 @@ def main():
     )
     parser.add_argument("--candidate-accept-audit-dir", type=Path, required=True)
     parser.add_argument("--retry-audit-dir", type=Path, required=True)
+    parser.add_argument("--parameter-freeze", type=Path, required=True)
     args = parser.parse_args()
     if args.cycles < 3:
         parser.error("--cycles must be at least 3 so the rate-limit transient can settle")
 
     try:
+        freeze_record = audit_parameter_freeze(args.parameter_freeze)
         guard_audit = audit_integrated_guard(
             args.candidate_accept_audit_dir, args.retry_audit_dir
         )
@@ -321,12 +381,14 @@ def main():
 
     write_csv(args.output_dir / "component_trials.csv", all_rows)
     write_csv(args.output_dir / "component_summary.csv", summary_rows)
+    write_csv(args.output_dir / "component-validation.csv", summary_rows)
     metadata = {
         "protocol": "paper_B_SEESM_component_validation",
         "deterministic": True,
         "sweep_mode": args.sweep,
         "cycles_per_condition": args.cycles,
         "condition_count": len(summary_rows),
+        "parameter_freeze": freeze_record,
         "parameters": {
             "beta_priors": BETA_PRIORS,
             "weights": WEIGHTS,
@@ -390,6 +452,21 @@ def main():
 
     if passed != len(summary_rows):
         raise SystemExit(f"component protocol failed: {passed}/{len(summary_rows)}")
+    sentinel_lines = [
+        "TEACHER_V1_COMPONENT_VALIDATION_PASS",
+        f"conditions={passed}/{len(summary_rows)}",
+        f"parameter_freeze_sha256={freeze_record['sha256']}",
+        "component_validation_csv_sha256="
+        + sha256_file(args.output_dir / "component-validation.csv"),
+        f"candidate_accept_rows={guard_audit['candidate_accept_rows']}",
+        f"retry_used_rows={guard_audit['retry_used_rows']}",
+        "retry_sources="
+        + json.dumps(guard_audit["retry_sources"], sort_keys=True),
+        "",
+    ]
+    (args.output_dir / "COMPONENT_VALIDATION_AUDIT_PASS.txt").write_text(
+        "\n".join(sentinel_lines), encoding="utf-8"
+    )
     print(f"component protocol passed: {passed}/{len(summary_rows)}")
     print(args.output_dir)
 

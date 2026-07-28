@@ -23,12 +23,16 @@
   <arg name="reference_path_file" default=""/>
   <arg name="final_goal_x" default="$(arg goal_x)"/>
   <arg name="final_goal_y" default="$(arg goal_y)"/>
+  <arg name="wait_for_global_path_ready" default="false"/>
+  <arg name="global_path_start_gate_topic" default="/teacher_v1/global_path_ready"/>
 
   <!-- 动态障碍物仿真环境 -->
   <include file="$(find dynamic_simulator)/launch/spawn_dynamic_obstacle.launch">
     <arg name="num_of_obs" value="$(arg num_of_obs)" />
     <arg name="obstacle_params_file" value="$(arg obstacle_params_file)" />
     <arg name="runtime_ld_library_path" value="$(arg runtime_ld_library_path)" />
+    <arg name="wait_for_start_gate" value="$(arg wait_for_global_path_ready)" />
+    <arg name="start_gate_topic" value="$(arg global_path_start_gate_topic)" />
   </include>
 
   <!-- 发布目标点 -->

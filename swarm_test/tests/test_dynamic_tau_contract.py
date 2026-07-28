@@ -1016,6 +1016,162 @@ def test_csv_checker_accepts_legacy_tau_free_logs(tmp_path):
     assert result.returncode == 0, result.stdout
 
 
+def test_margin_history_accepts_synchronized_rebirth_across_missing_cycle(tmp_path):
+    path = tmp_path / "margin_guard_log.csv"
+    headers = list(CHECKER_HEADERS["margin_guard_log.csv"]) + ["h_eesm", "h_seesm"]
+
+    def row(cycle, beta_previous, source="candidate"):
+        applied = 0.0 if source == "emergency_cbf" else 0.5
+        return {
+            "time": str(cycle), "obstacle_cycle_id": str(cycle), "obs_id": "7",
+            "class": "adult", "d_i": "2", "rel_v_norm": "0", "ttc": "0",
+            "ttc_norm": "0", "cos_delta": "0", "rho_norm": "0", "mu": "1",
+            "beta_bar": "0.5", "beta_max": "0.5", "beta_requested": "0.5",
+            "beta_previous": str(beta_previous), "beta_pre_guard": "0.5",
+            "beta_applied": str(applied), "available_margin": "1.9",
+            "positive_increment_bound": str(float(beta_previous) + 0.3),
+            "guard_upper_bound": "0.5",
+            "guard_passed": "1" if source == "candidate" else "0",
+            "accepted_source": source, "h_ee": "2", "h_see": str(2.0 - applied),
+            "h_eesm": "2", "h_seesm": str(2.0 - applied),
+            "guard_status": "ok", "semantic_mode": "full",
+            "delta_beta": str(max(0.0, applied - float(beta_previous))),
+            "rate_limit_active": "0", "projection_active": "0",
+        }
+
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([
+            row(10, 0.0),
+            row(11, 0.5),
+            row(13, 0.0, "emergency_cbf"),
+        ])
+    meta = {
+        "semantic_mode": "full",
+        "semantic_margin_contract": {
+            "h_min_m": 0.1,
+            "delta_beta_positive_m_per_cycle": 0.3,
+            "phi": {"weights": {"bias": 1.0, "head_on": 0.0, "ttc": 0.0, "density": 0.0}},
+            "beta_bar_m": {"adult": 0.5},
+            "beta_max_m": {"adult": 0.5},
+            "enforcement": {
+                "category_bound": False,
+                "positive_increment_bound": False,
+                "available_margin_bound": False,
+            },
+        },
+        "typed_cycle_contract": {
+            "accepted_sources": ["candidate", "emergency_cbf"],
+            "configured_obstacle_ids": [7],
+        },
+    }
+    with checker_module() as checker:
+        errors = []
+        checker.validate_margin_guard_rows(path, meta, errors)
+    assert errors == []
+
+
+def test_margin_history_keeps_delayed_nonzero_after_explained_zero_gap(tmp_path):
+    path = tmp_path / "margin_guard_log.csv"
+    headers = list(CHECKER_HEADERS["margin_guard_log.csv"]) + ["h_eesm", "h_seesm"]
+
+    def row(cycle, beta_previous, source, applied):
+        return {
+            "time": str(cycle), "obstacle_cycle_id": str(cycle), "obs_id": "7",
+            "class": "adult", "d_i": "2", "rel_v_norm": "0", "ttc": "0",
+            "ttc_norm": "0", "cos_delta": "0", "rho_norm": "0", "mu": "1",
+            "beta_bar": "0.5", "beta_max": "0.5", "beta_requested": "0.5",
+            "beta_previous": str(beta_previous), "beta_pre_guard": "0.5",
+            "beta_applied": str(applied), "available_margin": "1.9",
+            "positive_increment_bound": str(float(beta_previous) + 0.3),
+            "guard_upper_bound": "0.5",
+            "guard_passed": "1" if source == "candidate" else "0",
+            "accepted_source": source, "h_ee": "2", "h_see": str(2.0 - applied),
+            "h_eesm": "2", "h_seesm": str(2.0 - applied),
+            "guard_status": "ok", "semantic_mode": "full",
+            "delta_beta": str(max(0.0, applied - float(beta_previous))),
+            "rate_limit_active": "0", "projection_active": "0",
+        }
+
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows([
+            row(8, 0.0, "candidate", 0.5),
+            row(9, 0.5, "candidate", 0.5),
+            row(10, 0.5, "zero", 0.0),
+            row(12, 0.5, "kappa", 0.1),
+            row(14, 0.0, "emergency_cbf", 0.0),
+            row(16, 0.1, "kappa", 0.1),
+        ])
+    meta = {
+        "semantic_mode": "full",
+        "semantic_margin_contract": {
+            "h_min_m": 0.1,
+            "delta_beta_positive_m_per_cycle": 0.3,
+            "phi": {"weights": {
+                "bias": 1.0, "head_on": 0.0, "ttc": 0.0, "density": 0.0,
+            }},
+            "beta_bar_m": {"adult": 0.5},
+            "beta_max_m": {"adult": 0.5},
+            "enforcement": {
+                "category_bound": False,
+                "positive_increment_bound": False,
+                "available_margin_bound": False,
+            },
+        },
+        "typed_cycle_contract": {
+            "accepted_sources": [
+                "candidate", "zero", "kappa", "emergency_cbf",
+            ],
+            "configured_obstacle_ids": [7],
+        },
+    }
+    with checker_module() as checker:
+        errors = []
+        checker.validate_margin_guard_rows(path, meta, errors)
+    assert errors == []
+
+
+def test_margin_history_rejects_unexplained_contiguous_zero_reset(tmp_path):
+    path = tmp_path / "margin_guard_log.csv"
+    headers = list(CHECKER_HEADERS["margin_guard_log.csv"]) + ["h_eesm", "h_seesm"]
+    base = {
+        "time": "1", "obstacle_cycle_id": "10", "obs_id": "7", "class": "adult",
+        "d_i": "2", "rel_v_norm": "0", "ttc": "0", "ttc_norm": "0",
+        "cos_delta": "0", "rho_norm": "0", "mu": "1", "beta_bar": "0.5",
+        "beta_max": "0.5", "beta_requested": "0.5", "beta_previous": "0",
+        "beta_pre_guard": "0.5", "beta_applied": "0.5", "available_margin": "1.9",
+        "positive_increment_bound": "0.3", "guard_upper_bound": "0.5",
+        "guard_passed": "1", "accepted_source": "candidate", "h_ee": "2",
+        "h_see": "1.5", "h_eesm": "2", "h_seesm": "1.5",
+        "guard_status": "ok", "semantic_mode": "full",
+        "delta_beta": "0.5", "rate_limit_active": "0", "projection_active": "0",
+    }
+    rows = [dict(base), dict(base), dict(base)]
+    rows[1].update({"time": "2", "obstacle_cycle_id": "11", "beta_previous": "0.5", "positive_increment_bound": "0.8", "delta_beta": "0"})
+    rows[2].update({"time": "3", "obstacle_cycle_id": "12", "beta_applied": "0", "guard_passed": "0", "accepted_source": "emergency_cbf", "h_see": "2", "h_seesm": "2", "delta_beta": "0"})
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    meta = {
+        "semantic_mode": "full",
+        "semantic_margin_contract": {
+            "h_min_m": 0.1, "delta_beta_positive_m_per_cycle": 0.3,
+            "phi": {"weights": {"bias": 1.0, "head_on": 0.0, "ttc": 0.0, "density": 0.0}},
+            "beta_bar_m": {"adult": 0.5}, "beta_max_m": {"adult": 0.5},
+            "enforcement": {"category_bound": False, "positive_increment_bound": False, "available_margin_bound": False},
+        },
+        "typed_cycle_contract": {"accepted_sources": ["candidate", "emergency_cbf"], "configured_obstacle_ids": [7]},
+    }
+    with checker_module() as checker:
+        errors = []
+        checker.validate_margin_guard_rows(path, meta, errors)
+    assert any("beta_previous=0" in error for error in errors)
+
+
 def test_csv_checker_rejects_partial_tau_fields_even_for_legacy_logs(tmp_path):
     run_dir = tmp_path / "partial"
     write_checker_fixture(run_dir, tau_files={"margin_guard_log.csv"}, partial_tau=True)
@@ -1492,9 +1648,14 @@ def test_runner_classifies_auditable_termination_reasons(tmp_path):
 
         planner["first_infeasible_count"] = 0
         phase5["robot_mean_abs_v"] = "0.01"
+        phase5["robot_deadlock_low_speed_max_s"] = str(
+            runner.DEADLOCK_HOLD_SEC
+        )
         assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "deadlock"
 
-        phase5["robot_mean_abs_v"] = "0.20"
+        phase5["robot_deadlock_low_speed_max_s"] = str(
+            runner.DEADLOCK_HOLD_SEC - 0.1
+        )
         assert runner.classify_termination_reason(run_dir, nav, phase5, planner) == "timeout"
 
 
@@ -1701,6 +1862,79 @@ def test_runner_generates_all_baseline_contracts_at_write_sites(
         assert_runtime_snapshot(original_sys_path, original_importer_cache, original_sys_modules)
 
 
+def test_successful_complete_candidate_bypasses_guard_recovery_search():
+    mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
+    replan = cpp_function_body(mpc, "void replanCb(const ros::TimerEvent&)")
+
+    initial_solve = (
+        "success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, "
+        "beta_list_);"
+    )
+    guarded_recovery = "if (mpc_feasibility_guard_enabled_ && !success) {"
+    guard_call = re.compile(
+        r"success\s*=\s*runTeacherGuardSearch\("
+        r"beta_list_,\s*&final_beta_values,\s*&accepted_beta_source,\s*"
+        r"&mpc_status,\s*t0\);"
+    )
+
+    assert initial_solve in replan
+    assert guarded_recovery in replan
+    guard_match = guard_call.search(replan)
+    assert guard_match is not None
+    assert replan.index(initial_solve) < replan.index(guarded_recovery)
+    assert replan.index(guarded_recovery) < guard_match.start()
+
+
+def test_bounded_midpoint_then_zero_guard_uses_at_most_two_recovery_solves():
+    mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
+    guard = cpp_function_body_raw(
+        mpc,
+        "bool runTeacherGuardSearch(const std::vector<double>& candidate,",
+    )
+
+    mode_gate = "if (guard_bounded_midpoint_then_zero_)"
+    bounded_solve = "const bool ok = guard_solver_.solve("
+    legacy_loop = (
+        "for (size_t order_position = 0; order_position < order.size(); "
+        "++order_position)"
+    )
+
+    assert mode_gate in guard
+    assert bounded_solve in guard
+    assert "const size_t midpoint_q" in guard
+    assert "attempt_global_q(midpoint_q" in guard
+    assert "attempt_global_q(guard_max_backtracks_" in guard
+    assert '*status = "baseline_infeasible";' in guard
+    assert '*source = "zero";' in guard
+    assert '*status = "guard_zero";' in guard
+    assert '*source = "kappa";' in guard
+    assert '*status = "guard_kappa";' in guard
+    gated = guard[guard.index(mode_gate):guard.index(legacy_loop)]
+    assert bounded_solve in gated
+    assert gated.count("solver_.solve(") == 1
+    assert gated.count("attempt_global_q(") == 2
+    assert "return true;" in gated
+    assert "return false;" in gated
+
+
+def test_hard_solver_limit_disables_unbudgeted_cache_rebuild_retry():
+    mpc = read("planner/mpc_secbf/src/mpc_secbf.cpp")
+    cached = cpp_function_body_raw(
+        mpc,
+        "bool MPC_SECBF_SOLVE::solveTeacherParameterized(",
+    )
+
+    hard_limit_gate = "if (solver_max_cpu_time_sec_ > 0.0)"
+    rebuild_call = (
+        "return solveRebuilding(cur_state, goal_state, obs_matrix, beta_list);"
+    )
+    assert cached.count(hard_limit_gate) >= 2
+    assert cached.count(rebuild_call) >= 2
+    for match in re.finditer(re.escape(hard_limit_gate), cached):
+        following = cached[match.start():match.start() + 500]
+        assert "return false;" in following
+
+
 def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
     mpc = read("planner/mpc_secbf/src/mpc_secbf_node.cpp")
     assert_cpp_include(mpc, "semantic_guard/dynamic_tau.hpp")
@@ -1757,8 +1991,15 @@ def test_final_beta_and_audit_fields_are_at_their_actual_writer_paths():
         ("tau_computed", "tau_result.computed"),
         ("tau_active", "tau_result.valid"),
         ("tau_clipped_low", "tau_result.lower_clipped"),
-        ("tau_clipped_high", "tau_result.upper_clipped"),
-        ("T_i", "tau_result.T_i"),
+            ("tau_clipped_high", "tau_result.upper_clipped"),
+            ("initial_solver_return_status", "cycle_initial_return_status_"),
+            ("warm_start_source", "cycle_initial_warm_start_source_"),
+            ("guard_skip_reason", "last_guard_skip_reason_"),
+            ("consecutive_emergency_cycles", "consecutive_emergency_cycles_"),
+            ("emergency_active_obstacle_count", "last_emergency_command_.active_obstacle_count"),
+            ("emergency_progress_mode", "(last_emergency_command_.progress_mode ? 1 : 0)"),
+            ("emergency_minimum_residual", "(std::isfinite(last_emergency_command_.minimum_residual) ? last_emergency_command_.minimum_residual : 0.0)"),
+            ("T_i", "tau_result.T_i"),
         ("f_r", "tau_result.f_r"),
         ("f_v", "tau_result.f_v"),
         ("f_T", "tau_result.f_T"),
@@ -2026,3 +2267,23 @@ def test_standard_mpc_cbf_and_legacy_acbf_are_separate_paths(tmp_path):
     assert "set_tau_value" in legacy_safety
     assert "dynamic_tau_enabled" not in legacy_safety
     assert "double tau_max" in legacy_tau
+
+
+def test_global_path_ready_gate_contract_is_wired_end_to_end():
+    runner = read("swarm_test/scripts/run_secbf_sim_experiments.py")
+    start_launch = read("swarm_test/launch/start_test.launch")
+    simulator_launch = read(
+        "simulation_tools/dynamic_simulator/launch/spawn_dynamic_obstacle.launch"
+    )
+    simulator = read(
+        "simulation_tools/dynamic_simulator/scripts/generate_agents_fixed_poses.py"
+    )
+
+    assert "--global-path-ready-gate" in runner
+    assert "wait_for_global_path_ready" in runner
+    assert "release_global_path_start_gate" in runner
+    assert "global_path_ready_gate.yaml" in runner
+    assert "wait_for_global_path_ready" in start_launch
+    assert "wait_for_start_gate" in simulator_launch
+    assert "startGateCallback" in simulator
+    assert "self.motion_started_" in simulator

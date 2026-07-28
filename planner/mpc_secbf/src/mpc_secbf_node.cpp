@@ -24,6 +24,7 @@
 #include "semantic_guard/PreGuardMarginArray.h"
 #include "semantic_guard/PredictedObstacleArray.h"
 #include "semantic_guard/dynamic_tau.hpp"
+#include "semantic_guard/emergency_cbf.hpp"
 #include "semantic_guard/guard_backtracking.hpp"
 #include "semantic_guard/safety_recurrence.hpp"
 #include "semantic_guard/planar_velocity.hpp"
@@ -87,6 +88,7 @@ public:
         double mpc_freq, Ts, gamma, beta_unknown, robot_radius;
         double epsilon_max, slack_weight;
         double qf_scale, delta_u_weight, delta_u_max, active_set_distance_m;
+        double solver_max_cpu_time_ms, guard_solver_max_cpu_time_ms;
         bool graph_cache_enabled;
         double safety_delta_bar, safety_delta_beta_bar;
         int N;
@@ -94,8 +96,11 @@ public:
         bool mpc_feasibility_guard_enabled;
         double guard_kappa, guard_time_budget_ms;
         int guard_max_backtracks;
-        bool guard_binary_search;
-        bool side_preference_enabled;
+        bool guard_binary_search, guard_bounded_midpoint_then_zero;
+        bool side_preference_enabled, emergency_cbf_enabled;
+        double emergency_cbf_alpha, emergency_cbf_extra_margin;
+        double emergency_cbf_v_max, emergency_cbf_turn_gain;
+        double emergency_cbf_activation_distance, emergency_cbf_progress_v;
         double side_weight, side_epsilon_n, side_sign, side_min_obstacle_speed, side_activation_distance;
         int side_horizon;
         double v_max, v_min, o_max;
@@ -151,11 +156,14 @@ public:
         nh_.param("mpc/delta_u_max", delta_u_max, 0.4);
         nh_.param("mpc/active_set_distance_m", active_set_distance_m, 8.0);
         nh_.param("mpc/graph_cache_enabled", graph_cache_enabled, false);
+        nh_.param("mpc/solver_max_cpu_time_ms", solver_max_cpu_time_ms, 0.0);
         nh_.param("mpc/safety_delta_bar", safety_delta_bar, 0.10);
         nh_.param("mpc/safety_delta_beta_bar", safety_delta_beta_bar, 0.30);
         if (!std::isfinite(qf_scale) || qf_scale <= 0.0 ||
             !std::isfinite(delta_u_weight) || delta_u_weight < 0.0 ||
-            !std::isfinite(delta_u_max) || delta_u_max <= 0.0) {
+            !std::isfinite(delta_u_max) || delta_u_max <= 0.0 ||
+            !std::isfinite(solver_max_cpu_time_ms) ||
+            solver_max_cpu_time_ms < 0.0) {
             throw std::invalid_argument("invalid Teacher-v1 Qf/Delta-u parameters");
         }
         if (!std::isfinite(safety_delta_bar) || safety_delta_bar < 0.0 ||
@@ -176,11 +184,32 @@ public:
         nh_.param("mpc/guard_kappa", guard_kappa, 0.5);
         nh_.param("mpc/guard_max_backtracks", guard_max_backtracks, 6);
         nh_.param("mpc/guard_time_budget_ms", guard_time_budget_ms, 500.0);
+        nh_.param("mpc/guard_solver_max_cpu_time_ms",
+                  guard_solver_max_cpu_time_ms, 70.0);
         nh_.param("mpc/guard_binary_search", guard_binary_search, false);
+        nh_.param("mpc/guard_bounded_midpoint_then_zero",
+                  guard_bounded_midpoint_then_zero, false);
+        nh_.param("mpc/emergency_cbf_enabled", emergency_cbf_enabled, false);
+        nh_.param("mpc/emergency_cbf_alpha", emergency_cbf_alpha, 1.5);
+        nh_.param("mpc/emergency_cbf_extra_margin", emergency_cbf_extra_margin, 0.10);
+        nh_.param("mpc/emergency_cbf_v_max", emergency_cbf_v_max, 0.35);
+        nh_.param("mpc/emergency_cbf_turn_gain", emergency_cbf_turn_gain, 1.5);
+        nh_.param("mpc/emergency_cbf_activation_distance",
+                  emergency_cbf_activation_distance, 4.0);
+        nh_.param("mpc/emergency_cbf_progress_v", emergency_cbf_progress_v, 0.20);
         if (!std::isfinite(guard_kappa) || guard_kappa <= 0.0 || guard_kappa > 1.0 ||
             guard_max_backtracks < 1 || !std::isfinite(guard_time_budget_ms) ||
-            guard_time_budget_ms <= 0.0) {
+            guard_time_budget_ms <= 0.0 ||
+            !std::isfinite(guard_solver_max_cpu_time_ms) ||
+            guard_solver_max_cpu_time_ms <= 0.0 ||
+            guard_solver_max_cpu_time_ms >= guard_time_budget_ms) {
             throw std::invalid_argument("invalid Teacher-v1 Guard backtracking parameters");
+        }
+        if (!std::isfinite(emergency_cbf_activation_distance) ||
+            emergency_cbf_activation_distance <= 0.0 ||
+            !std::isfinite(emergency_cbf_progress_v) ||
+            emergency_cbf_progress_v < 0.0) {
+            throw std::invalid_argument("invalid emergency CBF progress parameters");
         }
         nh_.param("mpc/typed_payload_timeout", typed_payload_timeout_sec_, 0.50);
         if (!std::isfinite(typed_payload_timeout_sec_) ||
@@ -225,10 +254,24 @@ public:
         guard_kappa_ = guard_kappa;
         guard_max_backtracks_ = static_cast<std::size_t>(guard_max_backtracks);
         guard_time_budget_ms_ = guard_time_budget_ms;
+        solver_max_cpu_time_ms_ = solver_max_cpu_time_ms;
+        guard_solver_max_cpu_time_ms_ = guard_solver_max_cpu_time_ms;
         guard_binary_search_ = guard_binary_search;
+        guard_bounded_midpoint_then_zero_ = guard_bounded_midpoint_then_zero;
+        emergency_cbf_enabled_ = emergency_cbf_enabled;
+        emergency_cbf_params_.alpha = emergency_cbf_alpha;
+        emergency_cbf_params_.extra_margin = emergency_cbf_extra_margin;
+        emergency_cbf_params_.v_min = v_min;
+        emergency_cbf_params_.v_max = std::min(v_max, emergency_cbf_v_max);
+        emergency_cbf_params_.omega_max = o_max;
+        emergency_cbf_params_.turn_gain = emergency_cbf_turn_gain;
+        emergency_cbf_params_.activation_distance = emergency_cbf_activation_distance;
+        emergency_cbf_params_.progress_v = std::min(v_max, emergency_cbf_progress_v);
         ROS_INFO_STREAM("Teacher-v1 Guard finite search mode: "
-                        << (guard_binary_search_ ? "q0_then_binary_diagnostic" :
-                            "sequential_q0_to_qmax"));
+                        << (guard_bounded_midpoint_then_zero_
+                                ? "bounded_midpoint_then_zero"
+                                : (guard_binary_search_ ? "q0_then_binary_diagnostic" :
+                                   "sequential_q0_to_qmax")));
 
         // Initialize solver
         solver_.init_solver(Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown, robot_radius,
@@ -237,7 +280,16 @@ public:
                             side_preference_enabled, side_weight, side_epsilon_n,
                             side_horizon, side_sign, side_min_obstacle_speed,
                             side_activation_distance, qf_scale, delta_u_weight,
-                            delta_u_max, active_set_distance_m, graph_cache_enabled);
+                            delta_u_max, active_set_distance_m, graph_cache_enabled,
+                            solver_max_cpu_time_ms);
+        guard_solver_.init_solver(
+            Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown,
+            robot_radius, epsilon_max, slack_weight, max_cbf_obstacles,
+            cbf_metric, dynamic_tau_enabled_, dynamic_tau_params_,
+            side_preference_enabled, side_weight, side_epsilon_n, side_horizon,
+            side_sign, side_min_obstacle_speed, side_activation_distance,
+            qf_scale, delta_u_weight, delta_u_max, active_set_distance_m,
+            graph_cache_enabled, guard_solver_max_cpu_time_ms);
         side_preference_enabled_ = side_preference_enabled;
         side_weight_ = side_weight;
 
@@ -248,6 +300,9 @@ public:
                 "slack,slack_sum,slack_mean,slack_max,side_preference_enabled,side_weight,side_cost,"
                 "side_dynamic_obstacle_count,side_candidate_count,side_dominant_obs_index,side_dominant_stage,side_dominant_tau,side_dominant_h,delta_u_max_observed,qf_scale,delta_u_weight,delta_u_bound,solve_time_ms,"
                 "dynamic_tau_enabled,tau_mode,tau,tca_raw,tca_clipped,tau_scale,tau_computed,tau_active,tau_clipped_low,tau_clipped_high,"
+                "initial_solver_return_status,warm_start_source,guard_skip_reason,"
+                "consecutive_emergency_cycles,emergency_active_obstacle_count,"
+                "emergency_progress_mode,emergency_minimum_residual,"
                 "T_i,f_r,f_v,f_T,tau_valid,tau_reason\n");
         openCsv(timing_csv_, timing_log_path,
                 "t,obstacle_cycle_id,mpc_secbf_ms,total_loop_time_ms,initial_solver_ms,"
@@ -680,21 +735,109 @@ private:
         accepted->assign(candidate.size(), 0.0);
         *source = "candidate";
         *status = "guard_candidate";
+        guard_solver_.copyWarmStartFrom(solver_);
         std::vector<unsigned int> ids(obstacle_ids_.begin(), obstacle_ids_.end());
         const auto order = semantic_guard::teacherRiskOrder(ids, beta_tilde_list_);
         size_t attempt_index = 0;
         if (order.empty()) {
             Eigen::MatrixXd empty_obs(7, 0);
-            const bool ok = solver_.solve(&cur_state_, &goal_state_, &empty_obs, *accepted);
+            const bool ok = guard_solver_.solve(
+                &cur_state_, &goal_state_, &empty_obs, *accepted);
             *status = ok ? "guard_zero" : "baseline_infeasible";
             return ok;
+        }
+        if (guard_bounded_midpoint_then_zero_) {
+            const size_t log_index = order.front();
+            auto attempt_global_q = [&](size_t q, std::vector<double>* successful_trial) {
+                const double elapsed_ms =
+                    (ros::Time::now() - search_start).toSec() * 1000.0;
+                const double remaining_ms = guard_time_budget_ms_ - elapsed_ms;
+                const int guard_obstacle_count =
+                    (N_ > 0 && obs_matrix_.cols() > 0) ? obs_matrix_.cols() / N_ : 0;
+                const double launch_reserve_ms =
+                    guard_obstacle_count <= 1
+                        ? guard_solver_single_obstacle_reserve_ms_
+                        : guard_solver_multi_obstacle_reserve_ms_;
+                if (remaining_ms <= 0.0 ||
+                    remaining_ms + 1e-9 <
+                        guard_solver_max_cpu_time_ms_ + launch_reserve_ms) {
+                    *status = "guard_budget_exceeded";
+                    last_guard_skip_reason_ = "remaining_budget_below_guard_solver_limit";
+                    return false;
+                }
+                std::vector<double> trial(candidate.size(), 0.0);
+                for (size_t index = 0; index < candidate.size(); ++index) {
+                    trial[index] = semantic_guard::teacherBacktrackingCandidate(
+                        candidate[index], guard_kappa_, q, guard_max_backtracks_);
+                    if (!std::isfinite(trial[index])) {
+                        *status = "guard_invalid_candidate";
+                        return false;
+                    }
+                }
+                const bool ok = guard_solver_.solve(
+                    &cur_state_, &goal_state_, &obs_matrix_, trial);
+                const MpcSolveTiming attempt_timing = guard_solver_.last_timing;
+                cycle_timing_.guard_attempts++;
+                cycle_timing_.guard_solver_ms += attempt_timing.total_ms;
+                cycle_timing_.guard_graph_build_ms += attempt_timing.graph_build_ms;
+                cycle_timing_.guard_ipopt_ms += attempt_timing.ipopt_solve_ms;
+                cycle_timing_.guard_extract_ms += attempt_timing.solution_extract_ms;
+                cycle_timing_.guard_tau_audit_ms += attempt_timing.tau_audit_ms;
+                cycle_timing_.guard_slack_audit_ms += attempt_timing.slack_audit_ms;
+                writeGuardAttempt(
+                    attempt_index++, log_index, q, candidate[log_index], trial,
+                    *accepted, ok, ok ? "feasible" : "infeasible",
+                    ok ? "" : (q == guard_max_backtracks_
+                                     ? "zero_failed_fail_fast"
+                                     : "midpoint_failed_try_zero"),
+                    attempt_timing);
+                if (ok && successful_trial) {
+                    *successful_trial = std::move(trial);
+                }
+                return ok;
+            };
+
+            const size_t midpoint_q = std::max<size_t>(
+                1, (guard_max_backtracks_ + 1) / 2);
+            std::vector<double> successful_trial;
+            if (attempt_global_q(midpoint_q, &successful_trial)) {
+                *accepted = std::move(successful_trial);
+                *source = "kappa";
+                *status = "guard_kappa";
+                return true;
+            }
+            if (*status == "guard_budget_exceeded" ||
+                *status == "guard_invalid_candidate") {
+                return false;
+            }
+            if (attempt_global_q(guard_max_backtracks_, &successful_trial)) {
+                *accepted = std::move(successful_trial);
+                *source = "zero";
+                *status = "guard_zero";
+                return true;
+            }
+            if (*status != "guard_budget_exceeded" &&
+                *status != "guard_invalid_candidate") {
+                *status = "baseline_infeasible";
+            }
+            return false;
         }
         for (size_t order_position = 0; order_position < order.size(); ++order_position) {
             const size_t index = order[order_position];
             auto attempt_at_q = [&](size_t q, std::vector<double>* successful_trial) -> bool {
                 const double elapsed_ms = (ros::Time::now() - search_start).toSec() * 1000.0;
-                if (elapsed_ms > guard_time_budget_ms_) {
+                const double remaining_ms = guard_time_budget_ms_ - elapsed_ms;
+                const int guard_obstacle_count =
+                    (N_ > 0 && obs_matrix_.cols() > 0) ? obs_matrix_.cols() / N_ : 0;
+                const double launch_reserve_ms =
+                    guard_obstacle_count <= 1
+                        ? guard_solver_single_obstacle_reserve_ms_
+                        : guard_solver_multi_obstacle_reserve_ms_;
+                if (remaining_ms <= 0.0 ||
+                    remaining_ms + 1e-9 <
+                        guard_solver_max_cpu_time_ms_ + launch_reserve_ms) {
                     *status = "guard_budget_exceeded";
+                    last_guard_skip_reason_ = "remaining_budget_below_guard_solver_limit";
                     return false;
                 }
                 std::vector<double> trial = *accepted;
@@ -705,8 +848,9 @@ private:
                     return false;
                 }
                 trial[index] = beta;
-                const bool ok = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, trial);
-                const MpcSolveTiming attempt_timing = solver_.last_timing;
+                const bool ok = guard_solver_.solve(
+                    &cur_state_, &goal_state_, &obs_matrix_, trial);
+                const MpcSolveTiming attempt_timing = guard_solver_.last_timing;
                 cycle_timing_.guard_attempts++;
                 cycle_timing_.guard_solver_ms += attempt_timing.total_ms;
                 cycle_timing_.guard_graph_build_ms += attempt_timing.graph_build_ms;
@@ -793,6 +937,35 @@ private:
         return true;
     }
 
+    semantic_guard::EmergencyCommand emergencyCommandLocked() const {
+        std::vector<semantic_guard::EmergencyObstacle> obstacles;
+        if (N_ > 0 && obs_matrix_.cols() % N_ == 0) {
+            const int count = obs_matrix_.cols() / N_;
+            obstacles.reserve(count);
+            for (int index = 0; index < count; ++index) {
+                const Eigen::VectorXd obs = obs_matrix_.col(index * N_);
+                if (obs.size() < 7 || !obs.allFinite()) continue;
+                semantic_guard::EmergencyObstacle item;
+                item.x = obs(0);
+                item.y = obs(1);
+                item.radius = std::max(obs(2), obs(3));
+                item.vx = obs(5);
+                item.vy = obs(6);
+                obstacles.push_back(item);
+            }
+        }
+        double preferred_yaw = std::numeric_limits<double>::quiet_NaN();
+        if (goal_state_.cols() > 0) {
+            const int target_col = goal_state_.cols() - 1;
+            const double dx = goal_state_(0, target_col) - cur_state_(0);
+            const double dy = goal_state_(1, target_col) - cur_state_(1);
+            if (std::hypot(dx, dy) > 1e-3) preferred_yaw = std::atan2(dy, dx);
+        }
+        return semantic_guard::emergencyCbfCommand(
+            cur_state_(0), cur_state_(1), cur_state_(2), robot_radius_,
+            obstacles, emergency_cbf_params_, preferred_yaw);
+    }
+
     void replanCb(const ros::TimerEvent&) {
         std::lock_guard<std::mutex> lock_o(odom_mutex_);
         std::lock_guard<std::mutex> lock_p(path_mutex_);
@@ -857,6 +1030,10 @@ private:
 
         ros::Time t0 = ros::Time::now();
         cycle_timing_ = CycleTiming();
+        last_guard_skip_reason_.clear();
+        last_emergency_command_ = semantic_guard::EmergencyCommand();
+        cycle_initial_return_status_ = "not_run";
+        cycle_initial_warm_start_source_ = "not_run";
 
         // Solve MPC-SECBF
         std::string mpc_status = "success";
@@ -874,11 +1051,18 @@ private:
         } else {
             success = solver_.solve(&cur_state_, &goal_state_, &obs_matrix_, beta_list_);
             cycle_timing_.initial_solver = solver_.last_timing;
+            cycle_initial_return_status_ = solver_.last_return_status;
+            cycle_initial_warm_start_source_ = solver_.last_warm_start_source;
             first_attempt_status = success ? "success" : "infeasible";
         }
         final_status = first_attempt_status;
 
-        if (mpc_feasibility_guard_enabled_) {
+        // The initial solve already checks the complete candidate vector.
+        // Keep its feasible solution directly; invoke the finite Guard search
+        // only as a recovery path after that complete candidate is infeasible.
+        // This avoids repeating one full NLP solve per obstacle on every
+        // nominal control cycle.
+        if (mpc_feasibility_guard_enabled_ && !success) {
             mpc_guard_used = true;
             const NodeSteadyClock::time_point guard_start = NodeSteadyClock::now();
             success = runTeacherGuardSearch(beta_list_, &final_beta_values,
@@ -887,46 +1071,58 @@ private:
             final_status = success ? "success" : mpc_status;
         }
 
-        if (!success && mpc_feasibility_guard_enabled_) {
-            // F09 treats failure of the explicit zero candidate as baseline
-            // infeasible. Do not silently turn this theorem path into no-CBF.
-            cmd_vel_.linear.x = 0.0;
-            cmd_vel_.angular.z = 0.0;
-            const double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
-            writePlannerCsv("baseline_infeasible", first_attempt_status,
-                            final_status, "none", false, true, cost_ms);
-            return;
-        }
-
         if (!success) {
-            // Fallback: try without CBF constraints (empty beta)
+            // Every compared controller uses the same terminal recovery
+            // action.  Proposed may first exercise its F09 Guard, while the
+            // baselines do not; once that method-specific constrained search
+            // is exhausted, none of them may obtain an unlogged advantage by
+            // solving again with all obstacle constraints removed.
+            //
+            // Keep the zero feedback observable so the semantic logger can
+            // close this obstacle cycle, but mark it as safe_stop rather than
+            // an accepted margin or a successful no-CBF solve.
             used_fallback = true;
-            std::vector<double> empty_beta;
-            Eigen::MatrixXd empty_obs(7, 0);
-            success = solver_.solve(&cur_state_, &goal_state_, &empty_obs, empty_beta);
-
-            if (!success) {
-                // Complete failure: stop
-                ROS_ERROR_THROTTLE(1.0, "[MPC-SECBF] Both SECBF and fallback infeasible, STOPPING");
+            if (emergency_cbf_enabled_) {
+                const semantic_guard::EmergencyCommand emergency =
+                    emergencyCommandLocked();
+                last_emergency_command_ = emergency;
+                ++consecutive_emergency_cycles_;
+                mpc_status = "infeasible_emergency_cbf";
+                final_status = "backup";
+                accepted_beta_source = "emergency_cbf";
+                cmd_vel_.linear.x = emergency.v;
+                cmd_vel_.angular.z = emergency.w;
+            } else {
+                mpc_status = "infeasible_safe_stop";
+                final_status = "infeasible";
+                accepted_beta_source = "safe_stop";
                 cmd_vel_.linear.x = 0.0;
                 cmd_vel_.angular.z = 0.0;
-                double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
-                writePlannerCsv("zero", first_attempt_status, "zero", "none",
-                                used_fallback, mpc_guard_used, cost_ms);
-                return;
-            } else {
-                mpc_status = "no_cbf_fallback";
-                final_status = "success";
-                accepted_beta_source = "no_cbf";
-                final_beta_values.assign(obstacle_ids_.size(), 0.0);
-                ROS_WARN_THROTTLE(1.0, "[MPC-SECBF] Fallback (no CBF) succeeded");
             }
+            final_beta_values.assign(obstacle_ids_.size(), 0.0);
+            writeMpcMarginCsv(final_beta_values, accepted_beta_source,
+                              first_attempt_status, final_status, mpc_guard_used);
+            publishAcceptedMargins(final_beta_values, accepted_beta_source);
+            writeTauStageCsv(accepted_beta_source);
+            writeSafetyRecurrenceCsv(final_beta_values, accepted_beta_source);
+            const double cost_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+            writePlannerCsv(mpc_status, first_attempt_status, final_status,
+                            accepted_beta_source, used_fallback,
+                            mpc_guard_used, cost_ms);
+            ROS_WARN_THROTTLE(1.0,
+                "[MPC-SECBF] Final constrained solve infeasible; issuing common %s",
+                emergency_cbf_enabled_ ? "emergency CBF command" : "safe stop");
+            return;
         } else if (accepted_beta_source == "candidate" ||
                    accepted_beta_source == "mpc_reprojected") {
             final_beta_values = beta_list_;
         }
 
+        consecutive_emergency_cycles_ = 0;
+
         if (accepted_beta_source != "no_cbf" &&
+            accepted_beta_source != "safe_stop" &&
+            accepted_beta_source != "emergency_cbf" &&
             !semantic_guard::storeAcceptedMargins(
                 obstacle_ids_, final_beta_values, &accepted_beta_by_id_)) {
             ROS_ERROR_THROTTLE(
@@ -1043,6 +1239,14 @@ private:
                          << tau_result.valid << ","
                          << tau_result.lower_clipped << ","
                          << tau_result.upper_clipped << ","
+                         << cycle_initial_return_status_ << ","
+                         << cycle_initial_warm_start_source_ << ","
+                         << last_guard_skip_reason_ << ","
+                         << consecutive_emergency_cycles_ << ","
+                         << last_emergency_command_.active_obstacle_count << ","
+                         << (last_emergency_command_.progress_mode ? 1 : 0) << ","
+                         << (std::isfinite(last_emergency_command_.minimum_residual)
+                                 ? last_emergency_command_.minimum_residual : 0.0) << ","
                          << tau_result.T_i << ","
                          << tau_result.f_r << ","
                          << tau_result.f_v << ","
@@ -1092,7 +1296,10 @@ private:
                 continue;
             }
             const semantic_guard::DynamicTauResult& tau = audit.tau_result;
-            tau_stage_csv_ << t << ","
+            // Full double precision is required for offline replay.  Rounding
+            // l/v_rel to nine significant digits can amplify into a visible
+            // TCA error when ||v_rel|| is close to zero.
+            tau_stage_csv_ << std::setprecision(17) << t << ","
                            << active_obstacle_cycle_id_ << ","
                            << accepted_beta_source << ","
                            << obstacle_ids_[audit.obstacle_index] << ","
@@ -1149,14 +1356,18 @@ private:
                 input.epsilon_max = epsilon_max_runtime_;
                 input.delta_bar = safety_delta_bar_;
                 input.delta_beta_bar = safety_delta_beta_bar_;
-                input.cbf_executed = previous.second.cbf_executed && accepted_beta_source != "no_cbf";
-                input.backup_used = previous.second.backup_used || accepted_beta_source == "no_cbf";
+                input.cbf_executed = previous.second.cbf_executed &&
+                    accepted_beta_source != "no_cbf" &&
+                    accepted_beta_source != "safe_stop";
+                input.backup_used = previous.second.backup_used ||
+                    accepted_beta_source == "no_cbf" ||
+                    accepted_beta_source == "safe_stop";
                 input.baseline_infeasible = previous.second.baseline_infeasible;
                 const auto audit = semantic_guard::auditSafetyRecurrence(input);
                 std::string exclusion_reason;
                 if (!audit.finite) exclusion_reason = "nonfinite_or_invalid_contract";
                 else if (!input.cbf_executed) exclusion_reason = "cbf_not_executed";
-                else if (input.backup_used) exclusion_reason = "backup_or_no_cbf";
+                else if (input.backup_used) exclusion_reason = "backup_or_no_cbf_or_safe_stop";
                 else if (input.baseline_infeasible) exclusion_reason = "baseline_infeasible";
                 else if (input.epsilon_t > input.epsilon_max + 1e-12) exclusion_reason = "epsilon_bound_exceeded";
                 else if (audit.delta > safety_delta_bar_ + 1e-12) exclusion_reason = "delta_bound_exceeded";
@@ -1175,7 +1386,10 @@ private:
             safety_recurrence_csv_.flush();
         }
         std::map<uint32_t, PendingSafetyRecurrence> next;
-        const bool executed = accepted_beta_source != "no_cbf" && accepted_beta_source != "none";
+        const bool executed = accepted_beta_source != "no_cbf" &&
+            accepted_beta_source != "safe_stop" &&
+            accepted_beta_source != "emergency_cbf" &&
+            accepted_beta_source != "none";
         for (const auto& item : current) {
             if (!item.second.has0 || !item.second.has1) continue;
             const auto id_it = std::find(obstacle_ids_.begin(), obstacle_ids_.end(), item.first);
@@ -1188,8 +1402,12 @@ private:
             pending.h_eesm_pred_next = item.second.h1;
             pending.epsilon_t = solver_.last_slack_max;
             pending.cbf_executed = executed;
-            pending.backup_used = accepted_beta_source == "no_cbf";
-            pending.baseline_infeasible = accepted_beta_source == "none";
+            pending.backup_used = accepted_beta_source == "no_cbf" ||
+                accepted_beta_source == "safe_stop" ||
+                accepted_beta_source == "emergency_cbf";
+            pending.baseline_infeasible = accepted_beta_source == "none" ||
+                accepted_beta_source == "safe_stop" ||
+                accepted_beta_source == "emergency_cbf";
             next[item.first] = pending;
         }
         pending_safety_.swap(next);
@@ -1336,6 +1554,7 @@ private:
     ros::Timer timer_replan_, timer_cmd_;
 
     MPC_SECBF_SOLVE solver_;
+    MPC_SECBF_SOLVE guard_solver_;
     CycleTiming cycle_timing_;
     int N_;
     double Ts_;
@@ -1386,7 +1605,24 @@ private:
     double guard_kappa_ = 0.5;
     std::size_t guard_max_backtracks_ = 6;
     double guard_time_budget_ms_ = 500.0;
+    double solver_max_cpu_time_ms_ = 0.0;
+    double guard_solver_max_cpu_time_ms_ = 70.0;
+    // Single-obstacle graphs showed only small CPU-to-wall overshoot, while
+    // the first multi-obstacle Guard solve spent about 100 ms in lazy solver
+    // finalization outside Ipopt's max_cpu_time. Keep the single-obstacle
+    // recovery path available for Short-TTC, and fail closed before launching
+    // an unbudgetable multi-obstacle recovery NLP.
+    double guard_solver_single_obstacle_reserve_ms_ = 5.0;
+    double guard_solver_multi_obstacle_reserve_ms_ = 100.0;
     bool guard_binary_search_ = false;
+    bool guard_bounded_midpoint_then_zero_ = false;
+    bool emergency_cbf_enabled_ = false;
+    semantic_guard::EmergencyCbfParams emergency_cbf_params_;
+    semantic_guard::EmergencyCommand last_emergency_command_;
+    int consecutive_emergency_cycles_ = 0;
+    std::string last_guard_skip_reason_;
+    std::string cycle_initial_return_status_ = "not_run";
+    std::string cycle_initial_warm_start_source_ = "not_run";
 };
 
 int main(int argc, char** argv) {

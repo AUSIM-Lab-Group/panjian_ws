@@ -11,6 +11,7 @@ from datetime import datetime
 from dynamic_simulator.msg import DynTraj
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
+from std_msgs.msg import Bool
 
 box_size = 0.568   # 障碍物直径
 
@@ -32,9 +33,21 @@ class DynCorridor:
         self.available_meshes_dynamic=["package://dynamic_simulator/meshes/ConcreteDamage01b/model4.dae"]
         self.marker_array=MarkerArray()
         self.all_dyn_traj=[]
+        self.initial_positions_=[]
+        self.dynamic_s_num_=[]
 
+        self.wait_for_start_gate_ = rospy.get_param('~wait_for_start_gate', False)
+        self.start_gate_topic_ = rospy.get_param(
+            '~start_gate_topic', '/teacher_v1/global_path_ready'
+        )
+        self.motion_started_ = not self.wait_for_start_gate_
         t_ros = rospy.Time.now()
-        self.start_time_ = rospy.get_time()
+        # Keep both the published analytic prediction and the realized
+        # obstacle motion at their initial state until the path-ready gate.
+        self.start_time_ = (
+            rospy.get_time() if self.motion_started_
+            else rospy.get_time() + 86400.0
+        )
 
         for i in range(self.total_num_obs):
             [traj_x, traj_y, traj_z, s_num, x, y, z, mesh, bbox]=self.getTrajectoryPosMeshBBox(i, self.start_time_)
@@ -43,21 +56,34 @@ class DynCorridor:
             dynamic_trajectory_msg = DynTraj(); 
             dynamic_trajectory_msg.header.stamp= t_ros
             dynamic_trajectory_msg.start_time.stamp = t_ros
-            dynamic_trajectory_msg.s_mean = [traj_x, traj_y, traj_z]
+            hold_position = self.positionAtElapsedZero(s_num)
+            self.initial_positions_.append(hold_position)
+            self.dynamic_s_num_.append(list(s_num))
+            dynamic_trajectory_msg.s_mean = (
+                [str(hold_position[0]), str(hold_position[1]), str(hold_position[2])]
+                if self.wait_for_start_gate_
+                else [traj_x, traj_y, traj_z]
+            )
             dynamic_trajectory_msg.s_var = ["0.001", "0.001", "0.001"]
             dynamic_trajectory_msg.bbox = [bbox[0], bbox[1], bbox[2]]
-            dynamic_trajectory_msg.pos.x = x    # 障碍物初始位置x
-            dynamic_trajectory_msg.pos.y = y    # 障碍物初始位置y
-            dynamic_trajectory_msg.pos.z = z    # 障碍物初始位置z
+            dynamic_trajectory_msg.pos.x = hold_position[0]
+            dynamic_trajectory_msg.pos.y = hold_position[1]
+            dynamic_trajectory_msg.pos.z = hold_position[2]
             dynamic_trajectory_msg.id = 4000 + i
-            dynamic_trajectory_msg.s_num = [
-                s_num[0], s_num[1], s_num[2], s_num[3], s_num[4], s_num[5], s_num[6], s_num[7], s_num[8]
-            ]
+            dynamic_trajectory_msg.s_num = (
+                [0.0, 0.0, 0.0, hold_position[0], hold_position[1],
+                 hold_position[2], s_num[6], 0.0, 0.0]
+                if self.wait_for_start_gate_
+                else list(s_num)
+            )
 
             self.all_dyn_traj.append(dynamic_trajectory_msg)
 
         self.pubTraj = rospy.Publisher('/Dyn_Obs_trajs', DynTraj, queue_size=100, latch=True)
         self.pubShapes_dynamic_mesh = rospy.Publisher('/obstacles_mesh', MarkerArray, queue_size=1, latch=True)
+        self.start_gate_sub_ = rospy.Subscriber(
+            self.start_gate_topic_, Bool, self.startGateCallback, queue_size=1
+        )
 
         if(gazebo):
             for i in range(self.total_num_obs):
@@ -65,6 +91,36 @@ class DynCorridor:
                 rospy.sleep(0.05)
 
         rospy.sleep(1.0)
+
+    def positionAtElapsedZero(self, s_num):
+        start_delay = s_num[8] if len(s_num) > 8 else 0.0
+        if 0.0 < start_delay:
+            tt = 0.0
+        else:
+            tt = (-start_delay + s_num[7]) % (2 * s_num[6])
+        return (
+            self.sfunc(s_num[0], s_num[6], tt) + s_num[3],
+            self.sfunc(s_num[1], s_num[6], tt) + s_num[4],
+            self.sfunc(s_num[2], s_num[6], tt) + s_num[5],
+        )
+
+    def startGateCallback(self, message):
+        if not message.data or self.motion_started_:
+            return
+        self.motion_started_ = True
+        self.start_time_ = rospy.get_time()
+        t_ros = rospy.Time.now()
+        for i in range(self.total_num_obs):
+            trajectory = self.getTrajectoryPosMeshBBox(i, self.start_time_)
+            self.all_dyn_traj[i].s_mean = [
+                trajectory[0], trajectory[1], trajectory[2]
+            ]
+            self.all_dyn_traj[i].s_num = list(trajectory[3])
+            self.all_dyn_traj[i].start_time.stamp = t_ros
+        rospy.logwarn(
+            'Dynamic obstacle motion released by path-ready gate: %s',
+            self.start_gate_topic_
+        )
 
     def getTrajectoryPosMeshBBox(self, i, start_time):
         # 障碍物轨迹初始参数, 随机设置
@@ -116,15 +172,18 @@ class DynCorridor:
             # z = eval(self.all_dyn_traj[i].s_mean[2])
             # for janedipan's model
             #   s_num: scale_x/6.0, scale_y/5.0, scale_z/2.0, x, y, z, slower, offset, start_delay
-            start_delay = self.all_dyn_traj[i].s_num[8] if len(self.all_dyn_traj[i].s_num) > 8 else 0.0
-            elapsed = t - self.start_time_
-            if elapsed < start_delay:
-                tt = 0.0
+            if not self.motion_started_:
+                x, y, z = self.initial_positions_[i]
             else:
-                tt = (elapsed - start_delay + self.all_dyn_traj[i].s_num[7])%(2*self.all_dyn_traj[i].s_num[6])
-            x = self.sfunc(self.all_dyn_traj[i].s_num[0], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[3]
-            y = self.sfunc(self.all_dyn_traj[i].s_num[1], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[4]
-            z = self.sfunc(self.all_dyn_traj[i].s_num[2], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[5]
+                start_delay = self.all_dyn_traj[i].s_num[8] if len(self.all_dyn_traj[i].s_num) > 8 else 0.0
+                elapsed = t - self.start_time_
+                if elapsed < start_delay:
+                    tt = 0.0
+                else:
+                    tt = (elapsed - start_delay + self.all_dyn_traj[i].s_num[7])%(2*self.all_dyn_traj[i].s_num[6])
+                x = self.sfunc(self.all_dyn_traj[i].s_num[0], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[3]
+                y = self.sfunc(self.all_dyn_traj[i].s_num[1], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[4]
+                z = self.sfunc(self.all_dyn_traj[i].s_num[2], self.all_dyn_traj[i].s_num[6], tt) + self.all_dyn_traj[i].s_num[5]
 
             # Set the stamp and the current pos
             self.all_dyn_traj[i].header.stamp= t_ros

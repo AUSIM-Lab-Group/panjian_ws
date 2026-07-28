@@ -560,14 +560,16 @@ private:
             const bool known_source =
                 source == "candidate" || source == "previous" ||
                 source == "zero" || source == "kappa" ||
-                source == "mpc_reprojected" || source == "no_cbf";
+                source == "mpc_reprojected" || source == "no_cbf" ||
+                source == "safe_stop" || source == "emergency_cbf";
             const bool source_value_valid =
                 applied <= audit.beta_max + 1e-8 &&
                 ((source == "candidate" &&
                  std::abs(applied - audit.beta_pre) <= 1e-8) ||
                 (source == "previous" &&
                  std::abs(applied - audit.beta_previous) <= 1e-8) ||
-                ((source == "zero" || source == "no_cbf") &&
+                ((source == "zero" || source == "no_cbf" ||
+                  source == "safe_stop" || source == "emergency_cbf") &&
                  std::abs(applied) <= 1e-8) ||
                 ((source == "kappa" || source == "mpc_reprojected") &&
                  applied <= audit.beta_pre + 1e-8));
@@ -596,7 +598,9 @@ private:
                 active_ids_.count(audit.obstacle_id) != 0 &&
                 birth_it != active_birth_cycle_.end() &&
                 birth_it->second == audit.birth_cycle;
-            if (accepted_source != "no_cbf" && same_lifecycle) {
+            if (accepted_source != "no_cbf" &&
+                accepted_source != "safe_stop" &&
+                accepted_source != "emergency_cbf" && same_lifecycle) {
                 beta_prev_[audit.obstacle_id] = beta_applied;
             }
             if (!candidate_accepted) ++total_rollbacks_;

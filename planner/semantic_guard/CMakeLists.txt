@@ -67,4 +67,6 @@ if(CATKIN_ENABLE_TESTING)
     test/test_guard_backtracking.cpp)
   catkin_add_gtest(safety_recurrence_test
     test/test_safety_recurrence.cpp)
+  catkin_add_gtest(emergency_cbf_test
+    test/test_emergency_cbf.cpp)
 endif()

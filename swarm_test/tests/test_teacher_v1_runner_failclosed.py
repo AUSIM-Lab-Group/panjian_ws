@@ -254,8 +254,19 @@ def test_run_meta_is_canonical_versioned_and_uses_trial_seed(tmp_path, runner):
         "enforce_available_margin_bound",
     ]
     assert typed["accepted_sources"] == [
-        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "safe_stop",
+        "emergency_cbf",
+        "mpc_reprojected",
     ]
+    assert meta["terminal_fallback_contract"] == {
+        "action": "safe_stop",
+        "trigger": "final_constrained_attempt_infeasible",
+        "planner_status": "infeasible_safe_stop",
+        "final_status": "infeasible",
+        "accepted_beta_source": "safe_stop",
+        "command": "[0,0]",
+        "shared_across_methods": True,
+    }
 
 
 def test_teacher_t3_objective_parameters_are_frozen_in_metadata_and_launch(
@@ -353,6 +364,16 @@ def test_beta_max_is_a_distinct_provisional_table_and_launch_parameter(
     }
     assert float(launch_args["beta_bar_adult"]) == pytest.approx(0.61)
     assert float(launch_args["beta_max_adult"]) == pytest.approx(0.72)
+
+
+def test_beta_bar_override_does_not_implicitly_change_beta_max(runner):
+    custom = scenario()
+    custom["beta_bar"] = {"adult": 0.61}
+
+    assert runner.scenario_beta_bar("SEESM_Ours", custom)["adult"] == pytest.approx(0.61)
+    assert runner.scenario_beta_max("SEESM_Ours", custom)["adult"] == pytest.approx(
+        runner.DEFAULT_BETA_MAX["adult"]
+    )
 
 
 def test_meta_contract_rejects_mutated_semantic_or_typed_contract(
@@ -457,6 +478,39 @@ def test_per_trial_repository_state_is_rechecked(monkeypatch, runner):
         runner.verify_repository_context_unchanged(context)
 
 
+def test_per_trial_external_input_hash_is_rechecked(tmp_path, monkeypatch, runner):
+    expected_repo = {
+        "path": "/fixture/repo",
+        "commit": "a" * 40,
+        "tree": "b" * 40,
+        "branch": "teacher-v1",
+        "dirty": False,
+        "working_tree_state_sha256": "c" * 64,
+    }
+    manuscript = tmp_path / "draft.tex"
+    manuscript.write_text("frozen manuscript\n", encoding="utf-8")
+    context = {
+        "repositories": {
+            "panjian_ws": dict(expected_repo),
+            "seesm_social_navigation": dict(expected_repo),
+        },
+        "inputs": {
+            "teacher_manuscript": {
+                "path": str(manuscript),
+                "sha256": runner.sha256_file(manuscript),
+            }
+        },
+    }
+    monkeypatch.setattr(
+        runner, "git_repo_provenance", lambda _path: dict(expected_repo)
+    )
+    runner.verify_repository_context_unchanged(context)
+
+    manuscript.write_text("changed manuscript\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="input changed during batch"):
+        runner.verify_repository_context_unchanged(context)
+
+
 def test_meta_contract_fails_if_compatibility_mirror_diverges(
     tmp_path, monkeypatch, runner
 ):
@@ -472,6 +526,32 @@ def test_meta_contract_fails_if_compatibility_mirror_diverges(
     passed, errors = runner.validate_run_meta_contract(run_dir, strict_provenance=True)
     assert not passed
     assert any("byte-identical" in error for error in errors)
+
+
+def test_smoke_metadata_accepts_dirty_but_hashed_repository_state(
+    tmp_path, monkeypatch, runner
+):
+    allowed = tmp_path / "allowed"
+    run_dir = allowed / "trial"
+    monkeypatch.setattr(runner, "TEACHER_OUTPUT_ROOT", allowed)
+    meta_path = write_meta(runner, run_dir)
+    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+    meta["execution_tier"] = "smoke"
+    meta["common_offline_evaluation_contract"] = {"sha256": "c" * 64}
+    meta["provenance"]["inputs"]["common_offline_evaluation"] = {
+        "sha256": "c" * 64
+    }
+    for source in meta["provenance"]["repositories"].values():
+        source["dirty"] = True
+        source["working_tree_state_sha256"] = "f" * 64
+    payload = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
+    (run_dir / "run_meta.yaml").write_text(payload, encoding="utf-8")
+    (run_dir / "meta.yaml").write_text(payload, encoding="utf-8")
+
+    _, errors = runner.validate_run_meta_contract(
+        run_dir, strict_provenance=True
+    )
+    assert not any("provenance must be clean" in error for error in errors)
 
 
 def test_complete_sentinel_is_hash_bound_and_negative_outcome_can_be_valid(

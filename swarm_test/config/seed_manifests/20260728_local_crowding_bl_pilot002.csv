@@ -1,0 +1,4 @@
+trial_id,seed,scenario_id,obstacle_id,start_x_offset_m,start_y_offset_m,speed_scale,start_delay_offset_s
+pilot_002,20260721,local_crowding_context_bl,obs_001,0.033709,0.141053,1.020494,0.110564
+pilot_002,20260721,local_crowding_context_bl,obs_002,-0.028929,0.103464,0.950705,0.125318
+pilot_002,20260721,local_crowding_context_bl,obs_003,0.111504,-0.016486,1.007860,0.053945

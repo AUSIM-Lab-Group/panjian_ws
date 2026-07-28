@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import hashlib
 import math
 from pathlib import Path
 import sys
@@ -179,6 +180,26 @@ def read_rows(path):
         return list(csv.DictReader(f))
 
 
+def all_cycles_explicit_infeasible_safe_stop(run_dir):
+    """True only when every recorded MPC cycle has auditable terminal fallback."""
+    path = run_dir / "planner_log.csv"
+    if not path.exists():
+        return False
+    rows = read_rows(path)
+    return bool(rows) and all(
+        row.get("mpc_status") == "infeasible_safe_stop"
+        and row.get("first_attempt_status") == "infeasible"
+        and row.get("final_status") == "infeasible"
+        and row.get("accepted_beta_source") == "safe_stop"
+        and str(row.get("candidate_feasibility_checked", "")).strip().lower()
+        in {"1", "true", "yes"}
+        and abs(float(row.get("cmd_v", "nan"))) <= 1.0e-12
+        and abs(float(row.get("cmd_w", "nan"))) <= 1.0e-12
+        and row.get("tau_reason") == "stage_audit_unavailable"
+        for row in rows
+    )
+
+
 def expected_log_profile(baseline_id):
     return LOG_PROFILE_BY_BASELINE.get(baseline_id, "teacher_seesm_v1")
 
@@ -279,7 +300,7 @@ def validate_semantic_contract_metadata(meta, baseline_id, errors):
         ("first_seen_beta_previous_m", 0.0),
         ("disappearance_policy", "erase_history_reappearance_is_rebirth_zero"),
         ("category_change_policy", "preserve_same_id_history_apply_current_category_cap"),
-        ("no_cbf_history_policy", "do_not_commit"),
+        ("no_cbf_history_policy", "no_cbf_or_safe_stop_do_not_commit"),
     ):
         if semantic.get(field) != expected:
             errors.append(f"metadata semantic {field} mismatch")
@@ -327,10 +348,11 @@ def validate_semantic_contract_metadata(meta, baseline_id, errors):
     if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
         errors.append("metadata typed stale_cycle_policy mismatch")
     if typed.get("accepted_sources") != [
-        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "safe_stop", "emergency_cbf",
+        "mpc_reprojected",
     ]:
         errors.append("metadata typed accepted_sources mismatch")
-    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
+    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf_or_safe_stop":
         errors.append("metadata typed history_commit_policy mismatch")
 
 
@@ -381,7 +403,7 @@ def validate_safety_recurrence_metadata(meta, baseline_id, errors):
     if contract.get("log") != "safety_recurrence_log.csv":
         errors.append("metadata safety_recurrence_contract.log mismatch")
     expected_policy = (
-        "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+        "cbf_executed and no backup/no_cbf/safe_stop/baseline_infeasible and "
         "epsilon_t<=epsilon_max and delta<=delta_bar and "
         "delta_beta_plus<=delta_beta_bar"
     )
@@ -408,6 +430,97 @@ def validate_safety_recurrence_metadata(meta, baseline_id, errors):
             errors.append(
                 f"metadata safety recurrence {field} mismatch or invalid"
             )
+
+
+def validate_terminal_fallback_metadata(meta, baseline_id, errors):
+    """Ensure every compared method records the same terminal fallback path."""
+    if baseline_id == "B1_ACBF_fixed":
+        return
+    contract = meta.get("terminal_fallback_contract")
+    if not isinstance(contract, dict):
+        errors.append("metadata terminal_fallback_contract must be a mapping")
+        return
+    if contract.get("action") == "emergency_cbf":
+        expected = {
+            "action": "emergency_cbf",
+            "trigger": "final_constrained_attempt_infeasible",
+            "planner_status": "infeasible_emergency_cbf",
+            "final_status": "backup",
+            "accepted_beta_source": "emergency_cbf",
+            "command": "analytic_current_state_cbf",
+            "shared_across_methods": True,
+        }
+    else:
+        expected = {
+            "action": "safe_stop",
+            "trigger": "final_constrained_attempt_infeasible",
+            "planner_status": "infeasible_safe_stop",
+            "final_status": "infeasible",
+            "accepted_beta_source": "safe_stop",
+            "command": "[0,0]",
+            "shared_across_methods": True,
+        }
+    for field, expected_value in expected.items():
+        if contract.get(field) != expected_value:
+            errors.append(f"metadata terminal_fallback_contract.{field} mismatch")
+
+
+def metadata_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def validate_execution_provenance_metadata(meta, errors):
+    """Keep the selected execution and common-evaluator freezes auditable."""
+    tier = meta.get("execution_tier")
+    freeze = meta.get("execution_freeze")
+    common = meta.get("common_offline_evaluation_contract")
+    if tier == "legacy_unfrozen":
+        if freeze is not None or common is not None:
+            errors.append("metadata legacy_unfrozen must not carry freeze contracts")
+        return
+    if tier not in {"smoke", "formal"}:
+        errors.append("metadata execution_tier is invalid")
+        return
+    if not isinstance(freeze, dict):
+        errors.append("metadata execution_freeze must be a mapping")
+    else:
+        for field in ("id", "status", "execution_tier", "path", "sha256", "phi_status"):
+            if not str(freeze.get(field, "")).strip():
+                errors.append(f"metadata execution_freeze.{field} is required")
+        if freeze.get("execution_tier") != tier:
+            errors.append("metadata execution_freeze.execution_tier mismatch")
+        if tier == "formal" and freeze.get("status") != "formal_frozen":
+            errors.append("metadata formal execution_freeze.status must be formal_frozen")
+        try:
+            if metadata_sha256(freeze["path"]) != freeze.get("sha256"):
+                errors.append("metadata execution_freeze.sha256 mismatch")
+        except (KeyError, OSError, TypeError, ValueError):
+            errors.append("metadata execution_freeze path is unreadable")
+    if not isinstance(common, dict):
+        errors.append("metadata common_offline_evaluation_contract must be a mapping")
+    else:
+        for field in ("id", "version", "status", "path", "sha256"):
+            if not str(common.get(field, "")).strip():
+                errors.append(f"metadata common_offline_evaluation_contract.{field} is required")
+        if common.get("version") != "teacher_v1_common_offline_evaluation_001":
+            errors.append("metadata common_offline_evaluation_contract.version mismatch")
+        if common.get("status") not in {"smoke_frozen", "formal_frozen"}:
+            errors.append("metadata common_offline_evaluation_contract.status is invalid")
+        if tier == "formal" and common.get("status") != "formal_frozen":
+            errors.append("metadata formal common offline evaluation must be formal_frozen")
+        try:
+            if metadata_sha256(common["path"]) != common.get("sha256"):
+                errors.append("metadata common_offline_evaluation_contract.sha256 mismatch")
+        except (KeyError, OSError, TypeError, ValueError):
+            errors.append("metadata common_offline_evaluation_contract path is unreadable")
+    inputs = (meta.get("provenance") or {}).get("inputs", {})
+    if isinstance(freeze, dict) and isinstance(inputs, dict):
+        if (inputs.get("parameter_freeze") or {}).get("sha256") != freeze.get("sha256"):
+            errors.append("metadata provenance parameter_freeze hash mismatch")
+    if isinstance(common, dict) and isinstance(inputs, dict):
+        if ((inputs.get("common_offline_evaluation") or {}).get("sha256") !=
+                common.get("sha256")):
+            errors.append("metadata provenance common offline evaluation hash mismatch")
 
 
 def validate_teacher_metadata(run_dir, errors):
@@ -450,6 +563,8 @@ def validate_teacher_metadata(run_dir, errors):
     validate_semantic_contract_metadata(meta, baseline_id, errors)
     validate_t3_objective_metadata(meta, baseline_id, errors)
     validate_safety_recurrence_metadata(meta, baseline_id, errors)
+    validate_terminal_fallback_metadata(meta, baseline_id, errors)
+    validate_execution_provenance_metadata(meta, errors)
     profile = expected_log_profile(baseline_id)
     if meta.get("log_profile") != profile:
         errors.append(
@@ -780,7 +895,7 @@ def validate_disabled_tau_rows(file_name, path, expected_mode, errors):
 
 
 def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
-                            canonical_teacher=False):
+                            canonical_teacher=False, allow_empty=False):
     file_name = "tau_stage_log.csv"
     if not path.exists():
         if required:
@@ -797,7 +912,7 @@ def validate_tau_stage_file(path, dynamic_contract, errors, required=False,
 
     expected_mode = dynamic_contract["mode"]
     rows = read_rows(path)
-    if required and not rows:
+    if required and not rows and not allow_empty:
         errors.append(
             f"{file_name}: no data rows for enabled Teacher dynamic tau"
         )
@@ -1130,6 +1245,7 @@ def validate_margin_guard_rows(path, meta, errors):
     # committing one complete cycle and accept that pending value as an
     # explicitly auditable transport-lag alternative.
     deferred_commit_batches = []
+    previous_logged_cycle = None
     for cycle_id in cycle_order:
         cycle_rows = by_cycle[cycle_id]
         if len(deferred_commit_batches) > 1:
@@ -1138,6 +1254,55 @@ def validate_margin_guard_rows(path, meta, errors):
         active_ids = {item[1] for item in cycle_rows}
         for stale_id in set(committed_history) - active_ids:
             del committed_history[stale_id]
+
+        # An empty typed snapshot is intentionally not represented by a
+        # margin row. The runtime erases every active obstacle history on that
+        # snapshot, so a later reappearance is a new lifecycle with
+        # beta_previous=0. Accept this only when the logged cycle IDs prove a
+        # missing intervening cycle and every currently active ID resets
+        # synchronously; an isolated or contiguous-cycle reset still fails.
+        cycle_has_gap = (
+            previous_logged_cycle is not None and
+            cycle_id > previous_logged_cycle + 1
+        )
+        rows_by_id = {item[1]: item for item in cycle_rows}
+        synchronized_zero_rebirth = (
+            cycle_has_gap and active_ids and
+            all(
+                "beta_previous" in rows_by_id[obs_id][4] and
+                close(rows_by_id[obs_id][4]["beta_previous"], 0.0)
+                for obs_id in active_ids
+            ) and
+            # Do not infer a lifecycle reset when beta_previous=0 is already
+            # explained by a committed or transport-delayed zero feedback.
+            # A later non-zero feedback from a newer cycle may still be in
+            # flight and must remain eligible for the next snapshot.
+            all(
+                not close(committed_history.get(obs_id, 0.0), 0.0) and
+                not any(
+                    pending_id == obs_id and close(beta_applied, 0.0)
+                    for batch in deferred_commit_batches
+                    for pending_id, beta_applied in batch
+                )
+                for obs_id in active_ids
+            ) and
+            any(
+                not close(committed_history.get(obs_id, 0.0), 0.0) or
+                any(
+                    pending_id == obs_id and not close(beta_applied, 0.0)
+                    for batch in deferred_commit_batches
+                    for pending_id, beta_applied in batch
+                )
+                for obs_id in active_ids
+            )
+        )
+        if synchronized_zero_rebirth:
+            for obs_id in active_ids:
+                committed_history.pop(obs_id, None)
+            deferred_commit_batches = [
+                [entry for entry in batch if entry[0] not in active_ids]
+                for batch in deferred_commit_batches
+            ]
         cycle_sources = {item[5] for item in cycle_rows}
         if len(cycle_sources) > 1:
             errors.append(
@@ -1251,7 +1416,7 @@ def validate_margin_guard_rows(path, meta, errors):
                     row_index, "beta_applied", value["beta_applied"],
                     value["beta_previous"],
                 )
-            elif source in {"zero", "no_cbf"}:
+            elif source in {"zero", "no_cbf", "safe_stop", "emergency_cbf"}:
                 require_close(row_index, "beta_applied", value["beta_applied"], 0.0)
             elif source == "kappa":
                 if value["beta_applied"] > value["beta_pre_guard"] + 2.0e-8:
@@ -1303,9 +1468,10 @@ def validate_margin_guard_rows(path, meta, errors):
             ).strip().lower() in {"1", "true", "yes"}
             if rate_active != expected_rate_active:
                 errors.append(f"{file_name}:{row_index}: rate_limit_active mismatch")
-            if source != "no_cbf":
+            if source not in {"no_cbf", "safe_stop", "emergency_cbf"}:
                 pending_commits.append((obs_id, value["beta_applied"]))
         deferred_commit_batches.append(pending_commits)
+        previous_logged_cycle = cycle_id
 
 
 def validate_mpc_margin_rows(path, errors):
@@ -1372,9 +1538,9 @@ def validate_mpc_margin_rows(path, errors):
             errors.append(
                 f"mpc_margin_log.csv:{row_index}: kappa source exceeds pre-Guard beta"
             )
-        if source in {"zero", "no_cbf"} and abs(beta_applied) > 1e-8:
+        if source in {"zero", "no_cbf", "safe_stop", "emergency_cbf"} and abs(beta_applied) > 1e-8:
             errors.append(
-                f"mpc_margin_log.csv:{row_index}: zero/no_cbf source has nonzero beta"
+                f"mpc_margin_log.csv:{row_index}: zero/no_cbf/safe_stop source has nonzero beta"
             )
 
 
@@ -1616,6 +1782,9 @@ def main():
                 validate_safety_recurrence_rows(path, teacher_meta, errors)
 
     teacher_mode = dynamic_contract["mode"] in TEACHER_TAU_MODES
+    explicit_infeasible_safe_stop = all_cycles_explicit_infeasible_safe_stop(
+        args.run_dir
+    )
     tau_stage_path = args.run_dir / "tau_stage_log.csv"
     tau_stage_header = validate_tau_stage_file(
         tau_stage_path,
@@ -1623,6 +1792,7 @@ def main():
         errors,
         required=dynamic_enabled and teacher_mode,
         canonical_teacher=args.require_teacher_meta,
+        allow_empty=explicit_infeasible_safe_stop,
     )
     if tau_stage_header:
         headers["tau_stage_log.csv"] = tau_stage_header

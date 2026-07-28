@@ -63,9 +63,9 @@ LOG_PROFILES = {
     "teacher_distance_mpc_v1": {
         "required_logs": REQUIRED_TRIAL_LOGS,
         "required_data_rows": (
-            "robot_log.csv", "obstacle_log.csv", "margin_guard_log.csv",
-            "planner_log.csv", "timing_log.csv", "mpc_margin_log.csv",
-            "event_log.csv", "safety_recurrence_log.csv", "data_processor_summary.csv",
+            "robot_log.csv", "obstacle_log.csv", "planner_log.csv",
+            "timing_log.csv", "mpc_margin_log.csv",
+            "event_log.csv", "data_processor_summary.csv",
             "data_processor_distance.csv",
         ),
         "teacher_formula_applicable": False,
@@ -119,19 +119,94 @@ LOG_SCHEMA_VERSION = "teacher_v1_log_schema_002"
 SEMANTIC_MARGIN_CONTRACT_VERSION = "teacher_v1_f05_f07_provisional_001"
 TYPED_CYCLE_CONTRACT_VERSION = "teacher_v1_typed_cycle_001"
 DEFAULT_PROTOCOL_ID = "teacher_v1_protocol_001"
-TEACHER_MANUSCRIPT_PATH = Path("/home/lxr20/下载/draft_V7_071.tex")
+TEACHER_WORKSPACE = SCRIPT_DIR.parents[2]
+TEACHER_SEESM_REPO = TEACHER_WORKSPACE / "seesm_social_navigation"
+TEACHER_MANUSCRIPT_PATH = (
+    TEACHER_WORKSPACE
+    / "老师发的实验设置/最新指示/draft_V7_071.tex"
+)
 TEACHER_MANUSCRIPT_SHA256 = (
     "c4482f2acda626162a830859db1745d12ee3afaf0c8820b47a3dd94b641ebdf5"
 )
-TEACHER_OUTPUT_ROOT = Path(
-    "/home/lxr20/lxr/seesm_social_navigation/新计划实验输出目录"
+TEACHER_OUTPUT_ROOT = TEACHER_SEESM_REPO / "新计划实验输出目录"
+PARAMETER_FREEZE_ROOT = SCRIPT_DIR.parent / "config/experiment_freezes"
+DEFAULT_SMOKE_PARAMETER_FREEZE = (
+    PARAMETER_FREEZE_ROOT / "main_smoke.yaml"
 )
-TEACHER_PARAMETER_FREEZE = TEACHER_OUTPUT_ROOT / "01_spec/parameter_freeze.yaml"
-TEACHER_SEESM_REPO = Path("/home/lxr20/lxr/Teacher-v1/seesm_social_navigation")
+# Kept as a compatibility name for callers that import the former constant.
+TEACHER_PARAMETER_FREEZE = DEFAULT_SMOKE_PARAMETER_FREEZE
+COMMON_OFFLINE_EVALUATION_CONTRACT = (
+    SCRIPT_DIR.parent / "config/common_offline_evaluation_v1.yaml"
+)
 RUN_COMPLETE_SENTINEL = "RUN_COMPLETE.txt"
 RUN_INVALID_SENTINEL = "RUN_INVALID.txt"
 GOAL_TOLERANCE_M = 0.55
-DEADLOCK_MEAN_ABS_V_MPS = 0.05
+DEADLOCK_SPEED_MPS = 0.05
+DEADLOCK_HOLD_SEC = 2.0
+
+PARAMETER_FREEZE_CATEGORIES = (
+    "box", "adult", "pedestrian", "child", "child_like", "cyclist",
+    "vehicle", "unknown",
+)
+COMMON_OFFLINE_EVALUATION_VERSION = "teacher_v1_common_offline_evaluation_001"
+MAIN_MATRIX_SCENARIOS = (
+    "head_on_context_bl", "head_on_context_int", "head_on_context_ext",
+    "crossing_context_bl", "crossing_context_int", "crossing_context_ext",
+    "local_crowding_context_bl", "local_crowding_context_int",
+    "local_crowding_context_ext",
+)
+MAIN_MATRIX_METHODS = (
+    "Standard_MPC_CBF", "EESM_MPC_ECBF", "SEESM_Without_FPU",
+    "Proposed_MPC_SECBF",
+)
+ABLATION_MATRIX_SCENARIOS = (
+    "head_on_context_int", "crossing_context_int", "local_crowding_context_int",
+)
+ABLATION_MATRIX_METHODS = (
+    "No_semantic", "Category_only", "Unguarded_SEESM", "No_J_side",
+    "SEESM_Ours",
+)
+STRESS_MATRIX_SCENARIOS = (
+    "stress_high_candidate_margin", "stress_short_ttc",
+    "stress_local_crowding",
+)
+STRESS_MATRIX_METHODS = ("Unguarded_SEESM", "SEESM_Ours")
+RUNTIME_MATRIX_SCENARIOS = (
+    "runtime_scaling_n1", "runtime_scaling_n2", "runtime_scaling_n4",
+    "runtime_scaling_n6",
+)
+RUNTIME_MATRIX_METHODS = ("EESM_MPC_ECBF", "Proposed_MPC_SECBF")
+
+CAMPAIGN_PROFILES = {
+    "main": {
+        "scenarios": MAIN_MATRIX_SCENARIOS,
+        "methods": MAIN_MATRIX_METHODS,
+        "smoke_trials": 72,
+        "formal_trials": 1080,
+        "scenario_semantic_overrides": False,
+    },
+    "ablation": {
+        "scenarios": ABLATION_MATRIX_SCENARIOS,
+        "methods": ABLATION_MATRIX_METHODS,
+        "smoke_trials": 30,
+        "formal_trials": 450,
+        "scenario_semantic_overrides": False,
+    },
+    "stress": {
+        "scenarios": STRESS_MATRIX_SCENARIOS,
+        "methods": STRESS_MATRIX_METHODS,
+        "smoke_trials": 12,
+        "formal_trials": 180,
+        "scenario_semantic_overrides": True,
+    },
+    "runtime": {
+        "scenarios": RUNTIME_MATRIX_SCENARIOS,
+        "methods": RUNTIME_MATRIX_METHODS,
+        "smoke_trials": 16,
+        "formal_trials": 240,
+        "scenario_semantic_overrides": False,
+    },
+}
 
 
 SCENARIO_INDEX = {
@@ -233,6 +308,16 @@ BASELINES = {
             "vehicle": 0.4,
             "unknown": 0.4,
         },
+        "beta_max": {
+            "box": 0.4,
+            "adult": 0.4,
+            "pedestrian": 0.4,
+            "child": 0.4,
+            "child_like": 0.4,
+            "cyclist": 0.4,
+            "vehicle": 0.4,
+            "unknown": 0.4,
+        },
         "mu_weights": {"bias": 1.0, "heading": 0.0, "ttc": 0.0, "density": 0.0},
         "beta_bar_unknown": 0.4,
         "semantic_mode": "fixed",
@@ -287,6 +372,7 @@ BASELINES = {
         "enable_rate_limit": "false",
         "enable_available_projection": "false",
         "enable_guard_fallback": "false",
+        "side_preference_enabled": "false",
     },
     "Unguarded_SEESM": {
         "planner": "secbf_planner.launch",
@@ -384,6 +470,7 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "delta_u_max": 0.4,
     "active_set_distance_m": 8.0,
     "graph_cache_enabled": "false",
+    "solver_max_cpu_time_ms": 0.0,
     "safety_delta_bar": 0.10,
     "safety_delta_beta_bar": 0.30,
     "max_cbf_obstacles": 6,
@@ -403,10 +490,20 @@ DEFAULT_EXPERIMENT_SWITCHES = {
     "guard_kappa": 0.5,
     "guard_max_backtracks": 6,
     "guard_time_budget_ms": 500.0,
+    "guard_solver_max_cpu_time_ms": 70.0,
     # Opt-in diagnostic only.  The formal/default path keeps the teacher's
     # sequential q=0..Q search; enabling this probes q=0 first and then uses
     # binary search over the finite monotone candidate set after failure.
     "guard_binary_search": "false",
+    "guard_bounded_midpoint_then_zero": "false",
+    "emergency_cbf_enabled": "false",
+    "emergency_cbf_alpha": 1.5,
+    "emergency_cbf_extra_margin": 0.10,
+    "emergency_cbf_v_max": 0.35,
+    "emergency_cbf_turn_gain": 1.5,
+    "emergency_cbf_activation_distance": 4.0,
+    "emergency_cbf_progress_v": 0.20,
+    "terminal_action": "safe_stop",
     "side_preference_enabled": "true",
     "side_weight": 0.05,
     "side_epsilon_n": 1e-3,
@@ -501,16 +598,35 @@ def _git_bytes(repository: Path, *arguments: str) -> bytes:
 
 def git_repo_provenance(repository: Path) -> dict:
     repository = Path(repository).resolve(strict=True)
+    pathspec = ["."]  # keep a positive pathspec before exclusions
+    excluded_paths = [
+        "**/__pycache__/**",
+        "**/*.pyc",
+    ]
+    if repository == TEACHER_SEESM_REPO.resolve(strict=True):
+        # Experiment artifacts live in this repository by instruction.  They
+        # must not make the source-state fingerprint change while the runner
+        # itself is producing them.
+        excluded_paths.append("新计划实验输出目录/**")
+    pathspec.extend(
+        f":(exclude,glob){relative_path}" for relative_path in excluded_paths
+    )
     commit = _git_bytes(repository, "rev-parse", "HEAD").decode().strip()
     tree = _git_bytes(repository, "rev-parse", "HEAD^{tree}").decode().strip()
     branch = _git_bytes(repository, "branch", "--show-current").decode().strip()
     status = _git_bytes(
-        repository, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+        repository, "status", "--porcelain=v1", "-z", "--untracked-files=all",
+        "--", *pathspec,
     )
-    tracked_patch = _git_bytes(repository, "diff", "--binary", "HEAD", "--")
-    index_patch = _git_bytes(repository, "diff", "--cached", "--binary", "HEAD", "--")
+    tracked_patch = _git_bytes(
+        repository, "diff", "--binary", "HEAD", "--", *pathspec
+    )
+    index_patch = _git_bytes(
+        repository, "diff", "--cached", "--binary", "HEAD", "--", *pathspec
+    )
     untracked_manifest = _git_bytes(
-        repository, "ls-files", "--others", "--exclude-standard", "-z"
+        repository, "ls-files", "--others", "--exclude-standard", "-z",
+        "--", *pathspec,
     )
     state_payload = b"\0".join(
         (status, tracked_patch, index_patch, untracked_manifest)
@@ -526,6 +642,7 @@ def git_repo_provenance(repository: Path) -> dict:
         "index_patch_sha256": sha256_bytes(index_patch),
         "untracked_manifest_sha256": sha256_bytes(untracked_manifest),
         "working_tree_state_sha256": sha256_bytes(state_payload),
+        "excluded_generated_paths": excluded_paths,
     }
 
 
@@ -684,6 +801,21 @@ def verify_repository_context_unchanged(run_context: dict) -> None:
                     f"Teacher-v1 repository changed during batch: {name}.{field}"
                 )
 
+    inputs = (run_context or {}).get("inputs", {})
+    for name, expected in inputs.items():
+        if not isinstance(expected, dict) or not expected.get("path"):
+            raise RuntimeError(f"missing captured input context for {name}")
+        path = Path(expected["path"])
+        if not path.is_file():
+            raise RuntimeError(
+                f"Teacher-v1 input changed during batch: {name}.missing"
+            )
+        current_sha256 = sha256_file(path)
+        if current_sha256 != expected.get("sha256"):
+            raise RuntimeError(
+                f"Teacher-v1 input changed during batch: {name}.sha256"
+            )
+
 
 def collect_run_context(args) -> dict:
     panjian = git_repo_provenance(repo_root())
@@ -693,7 +825,7 @@ def collect_run_context(args) -> dict:
             raise RuntimeError(
                 f"{label} must be on teacher-v1, got {source['branch']!r}"
             )
-        if source["dirty"]:
+        if source["dirty"] and getattr(args, "execution_tier", "formal") == "formal":
             raise RuntimeError(
                 f"{label} Teacher-v1 source is dirty; commit or isolate changes before a real run"
             )
@@ -709,11 +841,16 @@ def collect_run_context(args) -> dict:
             )
         resolved_packages[package] = str(resolved)
 
+    freeze_path = Path(getattr(args, "parameter_freeze", TEACHER_PARAMETER_FREEZE))
+    evaluation_path = Path(
+        getattr(args, "evaluation_contract", COMMON_OFFLINE_EVALUATION_CONTRACT)
+    )
     inputs = {
         "teacher_manuscript": checked_file_hash(
             TEACHER_MANUSCRIPT_PATH, TEACHER_MANUSCRIPT_SHA256
         ),
-        "parameter_freeze": checked_file_hash(TEACHER_PARAMETER_FREEZE),
+        "parameter_freeze": checked_file_hash(freeze_path),
+        "common_offline_evaluation": checked_file_hash(evaluation_path),
         "scenario_config": checked_file_hash(Path(args.config)),
         "secbf_planner_launch": checked_file_hash(
             repo_root() / "swarm_test/launch/secbf_planner.launch"
@@ -871,6 +1008,432 @@ def load_scenarios(config_path: Path) -> dict:
     return data.get("scenarios", {})
 
 
+class ParameterFreezeError(ValueError):
+    """Raised when a requested Teacher-v1 execution freeze is incomplete."""
+
+
+def _freeze_number(value, label: str, *, positive=False, nonnegative=False) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ParameterFreezeError(f"{label} must be a finite number") from exc
+    if not math.isfinite(parsed):
+        raise ParameterFreezeError(f"{label} must be a finite number")
+    if positive and parsed <= 0.0:
+        raise ParameterFreezeError(f"{label} must be positive")
+    if nonnegative and parsed < 0.0:
+        raise ParameterFreezeError(f"{label} must be nonnegative")
+    return parsed
+
+
+def _freeze_category_table(raw, label: str) -> dict:
+    if not isinstance(raw, dict):
+        raise ParameterFreezeError(f"{label} must be a mapping")
+    missing = [key for key in PARAMETER_FREEZE_CATEGORIES if key not in raw]
+    extra = sorted(set(raw) - set(PARAMETER_FREEZE_CATEGORIES))
+    if missing or extra:
+        raise ParameterFreezeError(
+            f"{label} must contain exactly the eight Teacher categories; "
+            f"missing={missing}, extra={extra}"
+        )
+    return {
+        key: _freeze_number(raw[key], f"{label}.{key}", nonnegative=True)
+        for key in PARAMETER_FREEZE_CATEGORIES
+    }
+
+
+def _freeze_mapping(raw, label: str) -> dict:
+    if not isinstance(raw, dict):
+        raise ParameterFreezeError(f"{label} must be a mapping")
+    return raw
+
+
+def load_parameter_freeze(path: Path, execution_tier: str,
+                          campaign: str = "main") -> dict:
+    """Load the parameters that the runner will actually pass to ROS.
+
+    A hash alone is not a freeze: this loader converts the selected YAML into
+    the per-run overrides below.  Formal execution additionally rejects any
+    non-main matrix or context-dependent solver setting.
+    """
+    if yaml is None:
+        raise ParameterFreezeError("PyYAML is required for parameter freezes")
+    if execution_tier not in {"smoke", "formal"}:
+        raise ParameterFreezeError("execution_tier must be smoke or formal")
+    if campaign not in CAMPAIGN_PROFILES:
+        raise ParameterFreezeError(
+            f"unknown campaign {campaign!r}; expected one of "
+            f"{sorted(CAMPAIGN_PROFILES)}"
+        )
+    resolved_path = Path(path).expanduser().resolve()
+    if not resolved_path.exists():
+        raise ParameterFreezeError(f"parameter freeze not found: {resolved_path}")
+    try:
+        with resolved_path.open("r", encoding="utf-8") as stream:
+            raw = yaml.safe_load(stream) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ParameterFreezeError(
+            f"cannot read parameter freeze {resolved_path}: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ParameterFreezeError("parameter freeze must be a YAML mapping")
+
+    freeze_id = str(raw.get("freeze_id", "")).strip()
+    if not freeze_id:
+        raise ParameterFreezeError("parameter freeze freeze_id is required")
+    status = str(raw.get("status", "")).strip()
+    allowed_statuses = (
+        {"smoke_frozen", "smoke_frozen_not_formal"}
+        if execution_tier == "smoke" else {"formal_frozen"}
+    )
+    if status not in allowed_statuses:
+        raise ParameterFreezeError(
+            f"{execution_tier} execution requires status in {sorted(allowed_statuses)}, "
+            f"got {status!r}"
+        )
+    declared_campaign = str(raw.get("campaign", "")).strip()
+    if declared_campaign != campaign:
+        raise ParameterFreezeError(
+            f"parameter freeze campaign must be {campaign!r}, "
+            f"got {declared_campaign!r}"
+        )
+
+    matrix = _freeze_mapping(raw.get("matrix"), "matrix")
+    matrix_scenarios = matrix.get("scenarios")
+    matrix_methods = matrix.get("requested_methods")
+    profile = CAMPAIGN_PROFILES[campaign]
+    if tuple(matrix_scenarios or ()) != tuple(profile["scenarios"]):
+        raise ParameterFreezeError(
+            f"{campaign} freeze must declare its exact scenario matrix"
+        )
+    if tuple(matrix_methods or ()) != tuple(profile["methods"]):
+        raise ParameterFreezeError(
+            f"{campaign} freeze must declare its exact method matrix"
+        )
+    expected_trials = profile[f"{execution_tier}_trials"]
+    if int(matrix.get("expected_trials", 0)) != expected_trials:
+        raise ParameterFreezeError(
+            f"{campaign} {execution_tier} freeze expected_trials must be "
+            f"{expected_trials}"
+        )
+    preserve_semantic_overrides = matrix.get(
+        "preserve_scenario_semantic_overrides", False
+    )
+    if preserve_semantic_overrides is not profile["scenario_semantic_overrides"]:
+        raise ParameterFreezeError(
+            "matrix.preserve_scenario_semantic_overrides does not match the "
+            f"frozen {campaign} campaign policy"
+        )
+
+    semantic = _freeze_mapping(raw.get("semantic_margin"), "semantic_margin")
+    phi_status = str(semantic.get("phi_status", "")).strip()
+    if phi_status not in {
+        "explicit_linear_current_mapping_frozen_for_smoke",
+        "explicit_linear_current_mapping_frozen_for_formal",
+    }:
+        raise ParameterFreezeError("semantic_margin.phi_status must freeze the explicit linear mapping")
+    phi_raw = _freeze_mapping(semantic.get("phi_weights"), "semantic_margin.phi_weights")
+    phi_key_map = {
+        "bias": "bias", "head_on": "heading", "ttc_norm": "ttc",
+        "density_norm": "density",
+    }
+    if set(phi_raw) != set(phi_key_map):
+        raise ParameterFreezeError("semantic_margin.phi_weights keys must be bias/head_on/ttc_norm/density_norm")
+    mu_weights = {
+        target: _freeze_number(phi_raw[source], f"semantic_margin.phi_weights.{source}")
+        for source, target in phi_key_map.items()
+    }
+    if any(mu_weights[name] < 0.0 for name in ("heading", "ttc", "density")):
+        raise ParameterFreezeError("semantic interaction weights must be nonnegative")
+    beta_bar = _freeze_category_table(semantic.get("beta_bar_m"), "semantic_margin.beta_bar_m")
+    beta_max = _freeze_category_table(semantic.get("beta_max_m"), "semantic_margin.beta_max_m")
+    h_min = _freeze_number(semantic.get("h_min_m"), "semantic_margin.h_min_m", nonnegative=True)
+    delta_beta_positive = _freeze_number(
+        semantic.get("delta_beta_positive_m_per_cycle"),
+        "semantic_margin.delta_beta_positive_m_per_cycle", positive=True,
+    )
+    dynamic = _freeze_mapping(semantic.get("dynamic_tau"), "semantic_margin.dynamic_tau")
+    if dynamic.get("mode") != TEACHER_TAU_MODE:
+        raise ParameterFreezeError("semantic_margin.dynamic_tau.mode must be teacher_tca")
+    dynamic_delta = _freeze_number(dynamic.get("delta_tau"), "dynamic_tau.delta_tau", positive=True)
+    dynamic_max = _freeze_number(dynamic.get("max_tau_sec"), "dynamic_tau.max_tau_sec", nonnegative=True)
+
+    mpc = _freeze_mapping(raw.get("robot_and_mpc"), "robot_and_mpc")
+    gamma = _freeze_number(mpc.get("gamma"), "robot_and_mpc.gamma", positive=True)
+    qf_scale = _freeze_number(mpc.get("qf_scale"), "robot_and_mpc.qf_scale", positive=True)
+    delta_u_weight = _freeze_number(
+        mpc.get("delta_u_weight"), "robot_and_mpc.delta_u_weight", nonnegative=True
+    )
+    delta_u_max = _freeze_number(mpc.get("delta_u_max"), "robot_and_mpc.delta_u_max", positive=True)
+    max_cbf_obstacles = int(_freeze_number(
+        mpc.get("max_cbf_obstacles"), "robot_and_mpc.max_cbf_obstacles", positive=True
+    ))
+    active_set_distance = _freeze_number(
+        mpc.get("active_set_distance_m"), "robot_and_mpc.active_set_distance_m", positive=True
+    )
+    graph_cache = mpc.get("graph_cache_enabled")
+    if not isinstance(graph_cache, bool):
+        raise ParameterFreezeError("robot_and_mpc.graph_cache_enabled must be boolean")
+    solver_max_cpu_time = _freeze_number(
+        mpc.get("solver_max_cpu_time_ms", 0.0),
+        "robot_and_mpc.solver_max_cpu_time_ms",
+        nonnegative=True,
+    )
+
+    guard = _freeze_mapping(raw.get("guard_and_failure_policy"), "guard_and_failure_policy")
+    guard_kappa = _freeze_number(guard.get("kappa"), "guard_and_failure_policy.kappa", positive=True)
+    if guard_kappa > 1.0:
+        raise ParameterFreezeError("guard_and_failure_policy.kappa must be <= 1")
+    guard_backtracks = int(_freeze_number(
+        guard.get("max_backtracks_q"), "guard_and_failure_policy.max_backtracks_q", nonnegative=True
+    ))
+    guard_budget = _freeze_number(
+        guard.get("time_budget_ms"), "guard_and_failure_policy.time_budget_ms", positive=True
+    )
+    guard_solver_budget = _freeze_number(
+        guard.get("recovery_solver_max_cpu_time_ms", 70.0),
+        "guard_and_failure_policy.recovery_solver_max_cpu_time_ms", positive=True,
+    )
+    if guard_solver_budget >= guard_budget:
+        raise ParameterFreezeError(
+            "Guard recovery solver budget must be below total Guard budget"
+        )
+    guard_binary_search = guard.get("guard_binary_search", False)
+    if not isinstance(guard_binary_search, bool):
+        raise ParameterFreezeError("guard_and_failure_policy.guard_binary_search must be boolean")
+    guard_bounded_midpoint_then_zero = guard.get(
+        "bounded_midpoint_then_zero", False
+    )
+    if not isinstance(guard_bounded_midpoint_then_zero, bool):
+        raise ParameterFreezeError(
+            "guard_and_failure_policy.bounded_midpoint_then_zero must be boolean"
+        )
+    if execution_tier == "formal" and guard_binary_search:
+        raise ParameterFreezeError("formal freeze must retain sequential teacher Guard search")
+    terminal_action = guard.get("terminal_action")
+    if terminal_action not in {"safe_stop", "emergency_cbf"}:
+        raise ParameterFreezeError(
+            "guard_and_failure_policy.terminal_action must be safe_stop or emergency_cbf"
+        )
+    emergency = guard.get("emergency_cbf", {})
+    if not isinstance(emergency, dict):
+        raise ParameterFreezeError("guard_and_failure_policy.emergency_cbf must be a mapping")
+    emergency_enabled = terminal_action == "emergency_cbf"
+    emergency_alpha = _freeze_number(emergency.get("alpha", 1.5), "emergency_cbf.alpha", positive=True)
+    emergency_margin = _freeze_number(emergency.get("extra_margin_m", 0.10), "emergency_cbf.extra_margin_m", nonnegative=True)
+    emergency_v_max = _freeze_number(emergency.get("v_max_mps", 0.35), "emergency_cbf.v_max_mps", positive=True)
+    emergency_turn_gain = _freeze_number(emergency.get("turn_gain", 1.5), "emergency_cbf.turn_gain", positive=True)
+    emergency_activation_distance = _freeze_number(
+        emergency.get("activation_distance_m", 4.0),
+        "emergency_cbf.activation_distance_m", positive=True,
+    )
+    emergency_progress_v = _freeze_number(
+        emergency.get("progress_v_mps", 0.20),
+        "emergency_cbf.progress_v_mps", nonnegative=True,
+    )
+
+    solver = _freeze_mapping(
+        raw.get("scenario_specific_solver_settings"),
+        "scenario_specific_solver_settings",
+    )
+    if solver.get("invariant_across_context_levels") is not True:
+        raise ParameterFreezeError(
+            "scenario_specific_solver_settings must be invariant across context levels"
+        )
+    uniform_solver = _freeze_mapping(
+        solver.get("all_context_levels"),
+        "scenario_specific_solver_settings.all_context_levels",
+    )
+    epsilon_max = _freeze_number(
+        uniform_solver.get("epsilon_max"), "all_context_levels.epsilon_max", nonnegative=True
+    )
+    slack_weight = _freeze_number(
+        uniform_solver.get("slack_weight"), "all_context_levels.slack_weight", positive=True
+    )
+    outcome = _freeze_mapping(raw.get("trial_outcome"), "trial_outcome")
+    goal_tolerance = _freeze_number(
+        outcome.get("goal_tolerance_m"), "trial_outcome.goal_tolerance_m",
+        positive=True,
+    )
+    timeout_sec = _freeze_number(
+        outcome.get("timeout_sec"), "trial_outcome.timeout_sec", positive=True,
+    )
+    deadlock_speed = _freeze_number(
+        outcome.get("deadlock_speed_threshold_mps"),
+        "trial_outcome.deadlock_speed_threshold_mps", positive=True,
+    )
+    deadlock_hold = _freeze_number(
+        outcome.get("deadlock_hold_sec"),
+        "trial_outcome.deadlock_hold_sec", positive=True,
+    )
+    if (
+        abs(goal_tolerance - GOAL_TOLERANCE_M) > 1.0e-12
+        or abs(deadlock_speed - DEADLOCK_SPEED_MPS) > 1.0e-12
+        or abs(deadlock_hold - DEADLOCK_HOLD_SEC) > 1.0e-12
+    ):
+        raise ParameterFreezeError(
+            "trial_outcome values must match the executable classifier constants"
+        )
+    stability = _freeze_mapping(raw.get("stability"), "stability")
+    stability_contract = {
+        "tracking_error_threshold_m": _freeze_number(
+            stability.get("tracking_error_threshold_m"),
+            "stability.tracking_error_threshold_m", positive=True,
+        ),
+        "tracking_hold_sec": _freeze_number(
+            stability.get("tracking_hold_sec"),
+            "stability.tracking_hold_sec", positive=True,
+        ),
+        "settling_deadline_sec": _freeze_number(
+            stability.get("settling_deadline_sec"),
+            "stability.settling_deadline_sec", positive=True,
+        ),
+        "final_goal_error_threshold_m": _freeze_number(
+            stability.get("final_goal_error_threshold_m"),
+            "stability.final_goal_error_threshold_m", positive=True,
+        ),
+        "persistent_slack_threshold": _freeze_number(
+            stability.get("persistent_slack_threshold"),
+            "stability.persistent_slack_threshold", positive=True,
+        ),
+        "persistent_slack_hold_sec": _freeze_number(
+            stability.get("persistent_slack_hold_sec"),
+            "stability.persistent_slack_hold_sec", positive=True,
+        ),
+        "runtime_control_period_ms": _freeze_number(
+            stability.get("runtime_control_period_ms"),
+            "stability.runtime_control_period_ms", positive=True,
+        ),
+    }
+
+    return {
+        "id": freeze_id,
+        "status": status,
+        "execution_tier": execution_tier,
+        "campaign": campaign,
+        "expected_trials": expected_trials,
+        "preserve_scenario_semantic_overrides": preserve_semantic_overrides,
+        "path": str(resolved_path),
+        "sha256": sha256_file(resolved_path),
+        "beta_bar": beta_bar,
+        "beta_max": beta_max,
+        "mu_weights": mu_weights,
+        "semantic_phi_status": phi_status,
+        "trial_outcome": {
+            "goal_tolerance_m": goal_tolerance,
+            "timeout_sec": timeout_sec,
+            "deadlock_speed_threshold_mps": deadlock_speed,
+            "deadlock_hold_sec": deadlock_hold,
+        },
+        "stability": stability_contract,
+        "switches": {
+            "guard_h_min": h_min,
+            "delta_beta_positive": delta_beta_positive,
+            "dynamic_tau_mode": TEACHER_TAU_MODE,
+            "dynamic_tau_delta_tau": dynamic_delta,
+            "dynamic_tau_tmax": dynamic_max,
+            "dynamic_tau_max_tau": dynamic_max,
+            "gamma": gamma,
+            "qf_scale": qf_scale,
+            "delta_u_weight": delta_u_weight,
+            "delta_u_max": delta_u_max,
+            "max_cbf_obstacles": max_cbf_obstacles,
+            "active_set_distance_m": active_set_distance,
+            "graph_cache_enabled": graph_cache,
+            "solver_max_cpu_time_ms": solver_max_cpu_time,
+            "guard_kappa": guard_kappa,
+            "guard_max_backtracks": guard_backtracks,
+            "guard_time_budget_ms": guard_budget,
+            "guard_solver_max_cpu_time_ms": guard_solver_budget,
+            "guard_binary_search": guard_binary_search,
+            "guard_bounded_midpoint_then_zero": guard_bounded_midpoint_then_zero,
+            "emergency_cbf_enabled": emergency_enabled,
+            "emergency_cbf_alpha": emergency_alpha,
+            "emergency_cbf_extra_margin": emergency_margin,
+            "emergency_cbf_v_max": emergency_v_max,
+            "emergency_cbf_turn_gain": emergency_turn_gain,
+            "emergency_cbf_activation_distance": emergency_activation_distance,
+            "emergency_cbf_progress_v": emergency_progress_v,
+            "terminal_action": terminal_action,
+            "epsilon_max": epsilon_max,
+            "slack_weight": slack_weight,
+        },
+    }
+
+
+def apply_parameter_freeze(scenario: dict, freeze=None) -> dict:
+    """Return an execution scenario with all frozen, launch-bearing values set."""
+    if not freeze:
+        return scenario
+    resolved = copy.deepcopy(scenario)
+    scenario_beta_bar = dict(resolved.get("beta_bar", {}))
+    scenario_beta_max = dict(resolved.get("beta_max", {}))
+    scenario_mu_weights = dict(resolved.get("mu_weights", {}))
+    resolved["beta_bar"] = dict(freeze["beta_bar"])
+    resolved["beta_max"] = dict(freeze["beta_max"])
+    resolved["mu_weights"] = dict(freeze["mu_weights"])
+    if freeze.get("preserve_scenario_semantic_overrides"):
+        resolved["beta_bar"].update(scenario_beta_bar)
+        resolved["beta_max"].update(scenario_beta_max)
+        resolved["mu_weights"].update(scenario_mu_weights)
+    switches = dict(resolved.get("experiment_switches", {}))
+    switches.update(freeze["switches"])
+    resolved["experiment_switches"] = switches
+    return resolved
+
+
+def parameter_freeze_metadata(freeze):
+    if not freeze:
+        return None
+    return {
+        "id": freeze["id"],
+        "status": freeze["status"],
+        "execution_tier": freeze["execution_tier"],
+        "campaign": freeze["campaign"],
+        "expected_trials": freeze["expected_trials"],
+        "path": freeze["path"],
+        "sha256": freeze["sha256"],
+        "phi_status": freeze["semantic_phi_status"],
+    }
+
+
+def load_common_offline_evaluation_contract(path: Path) -> dict:
+    """Load only immutable provenance for the common post-hoc evaluator."""
+    if yaml is None:
+        raise ParameterFreezeError("PyYAML is required for common evaluation")
+    resolved_path = Path(path).expanduser().resolve()
+    if not resolved_path.exists():
+        raise ParameterFreezeError(
+            f"common offline evaluation contract not found: {resolved_path}"
+        )
+    try:
+        with resolved_path.open("r", encoding="utf-8") as stream:
+            raw = yaml.safe_load(stream) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ParameterFreezeError(
+            f"cannot read common offline evaluation contract {resolved_path}: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ParameterFreezeError("common offline evaluation contract must be a mapping")
+    contract_id = str(raw.get("id", "")).strip()
+    if not contract_id:
+        raise ParameterFreezeError("common offline evaluation contract id is required")
+    if raw.get("version") != COMMON_OFFLINE_EVALUATION_VERSION:
+        raise ParameterFreezeError("common offline evaluation contract version mismatch")
+    status = str(raw.get("status", "")).strip()
+    if status not in {"smoke_frozen", "formal_frozen"}:
+        raise ParameterFreezeError(
+            "common offline evaluation contract status must be smoke_frozen or formal_frozen"
+        )
+    return {
+        "id": contract_id,
+        "version": COMMON_OFFLINE_EVALUATION_VERSION,
+        "status": status,
+        "path": str(resolved_path),
+        "sha256": sha256_file(resolved_path),
+    }
+
+
 def selected(values, requested):
     if requested == "all":
         return list(values)
@@ -948,17 +1511,12 @@ def scenario_beta_bar(baseline_id: str, scenario: dict) -> dict:
 def baseline_beta_max(baseline_id: str) -> dict:
     baseline = BASELINES[baseline_id]
     values = dict(DEFAULT_BETA_MAX)
-    # Until the missing teacher table is resolved, an existing B_bar override
-    # also moves the provisional cap.  A dedicated beta_max mapping wins and
-    # keeps the two roles independently auditable.
-    values.update(baseline.get("beta_bar", {}))
     values.update(baseline.get("beta_max", {}))
     return values
 
 
 def scenario_beta_max(baseline_id: str, scenario: dict) -> dict:
     values = baseline_beta_max(baseline_id)
-    values.update(scenario.get("beta_bar", {}))
     values.update(scenario.get("beta_max", {}))
     return values
 
@@ -1149,7 +1707,7 @@ def semantic_margin_contract(baseline_id: str, scenario: dict,
         "category_change_policy": (
             "preserve_same_id_history_apply_current_category_cap"
         ),
-        "no_cbf_history_policy": "do_not_commit",
+        "no_cbf_history_policy": "no_cbf_or_safe_stop_do_not_commit",
     }
 
 
@@ -1188,7 +1746,8 @@ def typed_cycle_contract(baseline_id: str, switches: dict,
         "id_set_policy": "strict_unique_exact_match",
         "stale_cycle_policy": "reject_nonincreasing_or_unknown_cycle",
         "accepted_sources": [
-            "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
+            "candidate", "previous", "zero", "kappa", "no_cbf", "safe_stop", "emergency_cbf",
+            "mpc_reprojected",
         ],
         "guard": {
             "finite_candidate_set": "beta_pre_guard*kappa^q for q=0..Q-1 plus explicit zero at q=Q",
@@ -1196,15 +1755,22 @@ def typed_cycle_contract(baseline_id: str, switches: dict,
             "max_backtracks_q": int(switches["guard_max_backtracks"]),
             "time_budget_ms": float(switches["guard_time_budget_ms"]),
             "binary_search_enabled": bool_switch(switches["guard_binary_search"]),
+            "bounded_midpoint_then_zero": bool_switch(
+                switches["guard_bounded_midpoint_then_zero"]
+            ),
             "search_mode": (
-                "q0_then_binary_diagnostic"
-                if bool_switch(switches["guard_binary_search"])
-                else "sequential_q0_to_qmax"
+                "bounded_midpoint_then_zero"
+                if bool_switch(switches["guard_bounded_midpoint_then_zero"])
+                else (
+                    "q0_then_binary_diagnostic"
+                    if bool_switch(switches["guard_binary_search"])
+                    else "sequential_q0_to_qmax"
+                )
             ),
             "risk_proxy": "beta_tilde_descending_then_obstacle_id",
             "multi_obstacle_policy": "accepted_components_fixed_unprocessed_components_zero",
         },
-        "history_commit_policy": "accepted_feedback_except_no_cbf",
+        "history_commit_policy": "accepted_feedback_except_no_cbf_or_safe_stop",
     }
 
 
@@ -1267,7 +1833,8 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
                    classes_arg: str, num_obs: int, duration_sec: int,
                    reference_waypoints=None, trial=None, resolved_baseline_id=None,
                    requested_baseline_label=None, protocol_id=DEFAULT_PROTOCOL_ID,
-                   run_context=None, artifact_hashes=None) -> Path:
+                   run_context=None, artifact_hashes=None, freeze_contract=None,
+                   common_evaluation_contract=None) -> Path:
     meta_path = run_dir / "meta.yaml"
     canonical_meta_path = run_dir / "run_meta.yaml"
     start_x, start_y = scenario_start_xy(scenario)
@@ -1287,6 +1854,12 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "log_schema_version": LOG_SCHEMA_VERSION,
         "protocol_id": protocol_id,
         "log_profile": log_profile,
+        "execution_tier": (
+            freeze_contract["execution_tier"] if freeze_contract else "legacy_unfrozen"
+        ),
+        "campaign": freeze_contract["campaign"] if freeze_contract else "legacy",
+        "execution_freeze": parameter_freeze_metadata(freeze_contract),
+        "common_offline_evaluation_contract": common_evaluation_contract,
         "run_state": "running",
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "teacher_manuscript_sha256": TEACHER_MANUSCRIPT_SHA256,
@@ -1384,14 +1957,24 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
             "delta_beta_bar": float(switches["safety_delta_beta_bar"]),
             "log": "safety_recurrence_log.csv",
             "theorem1_applicable_policy": (
-                "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+                "cbf_executed and no backup/no_cbf/safe_stop/baseline_infeasible and "
                 "epsilon_t<=epsilon_max and delta<=delta_bar and "
                 "delta_beta_plus<=delta_beta_bar"
             ),
         },
+        "terminal_fallback_contract": {
+            "action": switches["terminal_action"],
+            "trigger": "final_constrained_attempt_infeasible",
+            "planner_status": ("infeasible_emergency_cbf" if switches["terminal_action"] == "emergency_cbf" else "infeasible_safe_stop"),
+            "final_status": ("backup" if switches["terminal_action"] == "emergency_cbf" else "infeasible"),
+            "accepted_beta_source": switches["terminal_action"],
+            "command": ("analytic_current_state_cbf" if switches["terminal_action"] == "emergency_cbf" else "[0,0]"),
+            "shared_across_methods": True,
+        },
         "max_cbf_obstacles": switches["max_cbf_obstacles"],
         "active_set_distance_m": switches["active_set_distance_m"],
         "graph_cache_enabled": switches["graph_cache_enabled"],
+        "solver_max_cpu_time_ms": switches["solver_max_cpu_time_ms"],
         "guard_binary_search": ros_bool(switches["guard_binary_search"]),
         "cbf_metric": switches["cbf_metric"],
         "front_adsm": switches["front_adsm"],
@@ -1417,6 +2000,13 @@ def write_run_meta(run_dir: Path, scenario_id: str, baseline_id: str, scenario: 
         "planner_v_max": scenario_planner_v_max(scenario),
         "random_seed": random_seed,
         "duration_sec": duration_sec,
+        "trial_outcome_contract": {
+            "goal_tolerance_m": GOAL_TOLERANCE_M,
+            "deadlock_speed_threshold_mps": DEADLOCK_SPEED_MPS,
+            "deadlock_hold_sec": DEADLOCK_HOLD_SEC,
+            "deadlock_requires_final_goal_distance_gt_tolerance": True,
+            "collision_priority_over_goal": True,
+        },
         "safety_contract": (
             {
                 "applicable": False,
@@ -1600,7 +2190,7 @@ def validate_semantic_margin_metadata(meta: dict, baseline_id: str,
         ("first_seen_beta_previous_m", 0.0),
         ("disappearance_policy", "erase_history_reappearance_is_rebirth_zero"),
         ("category_change_policy", "preserve_same_id_history_apply_current_category_cap"),
-        ("no_cbf_history_policy", "do_not_commit"),
+        ("no_cbf_history_policy", "no_cbf_or_safe_stop_do_not_commit"),
     ):
         if semantic.get(field) != expected:
             errors.append(f"semantic_margin_contract.{field} mismatch")
@@ -1649,10 +2239,12 @@ def validate_semantic_margin_metadata(meta: dict, baseline_id: str,
     if typed.get("stale_cycle_policy") != "reject_nonincreasing_or_unknown_cycle":
         errors.append("typed_cycle_contract.stale_cycle_policy mismatch")
     if typed.get("accepted_sources") != [
-        "candidate", "previous", "zero", "kappa", "no_cbf", "mpc_reprojected",
+        "candidate", "previous", "zero", "kappa", "no_cbf", "safe_stop",
+        "emergency_cbf",
+        "mpc_reprojected",
     ]:
         errors.append("typed_cycle_contract.accepted_sources mismatch")
-    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf":
+    if typed.get("history_commit_policy") != "accepted_feedback_except_no_cbf_or_safe_stop":
         errors.append("typed_cycle_contract.history_commit_policy mismatch")
 
 
@@ -1709,7 +2301,7 @@ def validate_safety_recurrence_metadata(meta: dict, baseline_id: str,
     if contract.get("log") != "safety_recurrence_log.csv":
         errors.append("safety_recurrence_contract.log mismatch")
     expected_policy = (
-        "cbf_executed and no backup/no_cbf/baseline_infeasible and "
+        "cbf_executed and no backup/no_cbf/safe_stop/baseline_infeasible and "
         "epsilon_t<=epsilon_max and delta<=delta_bar and "
         "delta_beta_plus<=delta_beta_bar"
     )
@@ -1732,6 +2324,89 @@ def validate_safety_recurrence_metadata(meta: dict, baseline_id: str,
                 not math.isfinite(contract_value) or
                 abs(top_value - contract_value) > 1.0e-12):
             errors.append(f"safety recurrence {field} mismatch or invalid")
+
+
+def validate_terminal_fallback_metadata(meta: dict, baseline_id: str,
+                                        errors: list) -> None:
+    """Require the same final infeasibility action for every comparison arm."""
+    if baseline_id == "B1_ACBF_fixed":
+        return
+    contract = meta.get("terminal_fallback_contract")
+    if not isinstance(contract, dict):
+        errors.append("terminal_fallback_contract must be a mapping")
+        return
+    if contract.get("action") == "emergency_cbf":
+        expected = {
+            "action": "emergency_cbf",
+            "trigger": "final_constrained_attempt_infeasible",
+            "planner_status": "infeasible_emergency_cbf",
+            "final_status": "backup",
+            "accepted_beta_source": "emergency_cbf",
+            "command": "analytic_current_state_cbf",
+            "shared_across_methods": True,
+        }
+    else:
+        expected = {
+            "action": "safe_stop",
+            "trigger": "final_constrained_attempt_infeasible",
+            "planner_status": "infeasible_safe_stop",
+            "final_status": "infeasible",
+            "accepted_beta_source": "safe_stop",
+            "command": "[0,0]",
+            "shared_across_methods": True,
+        }
+    for field, value in expected.items():
+        if contract.get(field) != value:
+            errors.append(f"terminal_fallback_contract.{field} mismatch")
+
+
+def validate_execution_freeze_metadata(meta: dict, errors: list) -> None:
+    """Verify that the metadata names a selected, still-identical freeze."""
+    tier = meta.get("execution_tier")
+    record = meta.get("execution_freeze")
+    if tier == "legacy_unfrozen":
+        if record is not None:
+            errors.append("legacy_unfrozen execution must not carry execution_freeze")
+        return
+    if tier not in {"smoke", "formal"}:
+        errors.append("execution_tier must be smoke, formal, or legacy_unfrozen")
+        return
+    if not isinstance(record, dict):
+        errors.append("execution_freeze must be a mapping")
+        return
+    try:
+        campaign = str(record.get("campaign", "")).strip()
+        loaded = load_parameter_freeze(
+            Path(record.get("path", "")), tier, campaign=campaign
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        errors.append(f"execution_freeze invalid: {exc}")
+        return
+    for field in (
+        "id", "status", "execution_tier", "campaign", "expected_trials",
+        "path", "sha256", "phi_status",
+    ):
+        if record.get(field) != parameter_freeze_metadata(loaded).get(field):
+            errors.append(f"execution_freeze.{field} mismatch")
+
+
+def validate_common_offline_evaluation_metadata(meta: dict, errors: list) -> None:
+    record = meta.get("common_offline_evaluation_contract")
+    if meta.get("execution_tier") == "legacy_unfrozen" and record is None:
+        return
+    if not isinstance(record, dict):
+        errors.append("common_offline_evaluation_contract must be a mapping")
+        return
+    try:
+        loaded = load_common_offline_evaluation_contract(Path(record.get("path", "")))
+    except (OSError, TypeError, ValueError) as exc:
+        errors.append(f"common_offline_evaluation_contract invalid: {exc}")
+        return
+    for field in ("id", "version", "status", "path", "sha256"):
+        if record.get(field) != loaded.get(field):
+            errors.append(f"common_offline_evaluation_contract.{field} mismatch")
+    if meta.get("execution_tier") == "formal" and record.get("status") != "formal_frozen":
+        errors.append("formal execution requires formal_frozen common offline evaluation")
 
 
 def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
@@ -1795,6 +2470,9 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
     validate_semantic_margin_metadata(meta, baseline_id, errors)
     validate_t3_objective_metadata(meta, baseline_id, errors)
     validate_safety_recurrence_metadata(meta, baseline_id, errors)
+    validate_terminal_fallback_metadata(meta, baseline_id, errors)
+    validate_execution_freeze_metadata(meta, errors)
+    validate_common_offline_evaluation_metadata(meta, errors)
 
     # T3 objective values are provenance-bearing parameters, not comments.
     objective = meta.get("mpc_objective_contract")
@@ -1896,7 +2574,8 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
                         errors.append(f"{repo_name} provenance is missing tree")
                     if source.get("branch") != "teacher-v1":
                         errors.append(f"{repo_name} provenance branch is not teacher-v1")
-                    if source.get("dirty") is not False:
+                    if (meta.get("execution_tier") != "smoke" and
+                            source.get("dirty") is not False):
                         errors.append(f"{repo_name} provenance must be clean")
                     if not str(source.get("working_tree_state_sha256", "")).strip():
                         errors.append(f"{repo_name} provenance is missing state hash")
@@ -1913,6 +2592,18 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
                     record = inputs.get(input_name)
                     if not isinstance(record, dict) or not str(record.get("sha256", "")):
                         errors.append(f"missing provenance input hash {input_name}")
+                if meta.get("execution_tier") in {"smoke", "formal"}:
+                    evaluator = inputs.get("common_offline_evaluation")
+                    if (not isinstance(evaluator, dict) or
+                            not str(evaluator.get("sha256", "")).strip()):
+                        errors.append("missing provenance input hash common_offline_evaluation")
+                    freeze = meta.get("execution_freeze") or {}
+                    freeze_input = inputs.get("parameter_freeze") or {}
+                    if freeze.get("sha256") != freeze_input.get("sha256"):
+                        errors.append("provenance parameter_freeze hash mismatch")
+                    common = meta.get("common_offline_evaluation_contract") or {}
+                    if common.get("sha256") != evaluator.get("sha256"):
+                        errors.append("provenance common_offline_evaluation hash mismatch")
 
             ros_provenance = provenance.get("ros")
             if not isinstance(ros_provenance, dict):
@@ -2216,6 +2907,32 @@ def csv_has_data_rows(path: Path) -> bool:
     return len(rows) >= 2
 
 
+def all_cycles_explicit_infeasible_safe_stop(run_dir: Path) -> bool:
+    """Accept empty stage telemetry only with a complete safe-stop proof."""
+    path = Path(run_dir) / "planner_log.csv"
+    if not path.exists():
+        return False
+    try:
+        with path.open(
+            "r", newline="", encoding="utf-8", errors="replace"
+        ) as stream:
+            rows = list(csv.DictReader(stream))
+        return bool(rows) and all(
+            row.get("mpc_status") == "infeasible_safe_stop"
+            and row.get("first_attempt_status") == "infeasible"
+            and row.get("final_status") == "infeasible"
+            and row.get("accepted_beta_source") == "safe_stop"
+            and str(row.get("candidate_feasibility_checked", "")).strip().lower()
+            in {"1", "true", "yes"}
+            and abs(float(row.get("cmd_v", "nan"))) <= 1.0e-12
+            and abs(float(row.get("cmd_w", "nan"))) <= 1.0e-12
+            and row.get("tau_reason") == "stage_audit_unavailable"
+            for row in rows
+        )
+    except (OSError, csv.Error, TypeError, ValueError):
+        return False
+
+
 def audit_required_logs(run_dir: Path, baseline_id: str):
     profile = LOG_PROFILES[log_profile_for_baseline(baseline_id)]
     run_dir = Path(run_dir)
@@ -2224,8 +2941,16 @@ def audit_required_logs(run_dir: Path, baseline_id: str):
         path = run_dir / name
         if not path.exists() or path.stat().st_size <= 1:
             errors.append(f"missing or empty required log: {name}")
+    explicit_infeasible_safe_stop = all_cycles_explicit_infeasible_safe_stop(
+        run_dir
+    )
+    safe_stop_empty_logs = {
+        "tau_stage_log.csv", "safety_recurrence_log.csv",
+    }
     for name in profile["required_data_rows"]:
         if not csv_has_data_rows(run_dir / name):
+            if explicit_infeasible_safe_stop and name in safe_stop_empty_logs:
+                continue
             errors.append(f"required log has no data rows: {name}")
 
     def dict_rows(name):
@@ -2347,7 +3072,9 @@ def ground_truth_obstacle_ids(num_obstacles: int) -> str:
 
 
 def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_params: Path,
-                   classes_arg: str, num_obs: int, scenario: dict):
+                   classes_arg: str, num_obs: int, scenario: dict,
+                   global_path_ready_gate: bool = False,
+                   global_path_start_gate_topic: str = "/teacher_v1/global_path_ready"):
     baseline = BASELINES[baseline_id]
     start_x, start_y = scenario_start_xy(scenario)
     goal_x, goal_y = scenario_goal_xy(scenario)
@@ -2381,6 +3108,8 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
         f"dynamic_tau_min_speed:={switches['dynamic_tau_min_speed']}",
         f"dynamic_tau_min_distance:={switches['dynamic_tau_min_distance']}",
         f"dynamic_tau_max_tau:={switches['dynamic_tau_max_tau']}",
+        f"wait_for_global_path_ready:={ros_bool(global_path_ready_gate)}",
+        f"global_path_start_gate_topic:={global_path_start_gate_topic}",
     ]
     if use_reference_waypoints:
         common_start.extend([
@@ -2410,7 +3139,16 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"guard_kappa:={switches['guard_kappa']}",
             f"guard_max_backtracks:={switches['guard_max_backtracks']}",
             f"guard_time_budget_ms:={switches['guard_time_budget_ms']}",
+            f"guard_solver_max_cpu_time_ms:={switches['guard_solver_max_cpu_time_ms']}",
             f"guard_binary_search:={ros_bool(switches['guard_binary_search'])}",
+            f"guard_bounded_midpoint_then_zero:={ros_bool(switches['guard_bounded_midpoint_then_zero'])}",
+            f"emergency_cbf_enabled:={ros_bool(switches['emergency_cbf_enabled'])}",
+            f"emergency_cbf_alpha:={switches['emergency_cbf_alpha']}",
+            f"emergency_cbf_extra_margin:={switches['emergency_cbf_extra_margin']}",
+            f"emergency_cbf_v_max:={switches['emergency_cbf_v_max']}",
+            f"emergency_cbf_turn_gain:={switches['emergency_cbf_turn_gain']}",
+            f"emergency_cbf_activation_distance:={switches['emergency_cbf_activation_distance']}",
+            f"emergency_cbf_progress_v:={switches['emergency_cbf_progress_v']}",
             f"fixed_beta:={switches['fixed_beta']}",
             f"epsilon_max:={switches['epsilon_max']}",
             f"slack_weight:={switches['slack_weight']}",
@@ -2419,6 +3157,7 @@ def build_commands(scenario_id: str, baseline_id: str, run_dir: Path, obstacle_p
             f"delta_u_max:={switches['delta_u_max']}",
             f"active_set_distance_m:={switches['active_set_distance_m']}",
             f"graph_cache_enabled:={ros_bool(switches['graph_cache_enabled'])}",
+            f"solver_max_cpu_time_ms:={switches['solver_max_cpu_time_ms']}",
             f"safety_delta_bar:={switches['safety_delta_bar']}",
             f"safety_delta_beta_bar:={switches['safety_delta_beta_bar']}",
             f"max_cbf_obstacles:={switches['max_cbf_obstacles']}",
@@ -2502,6 +3241,104 @@ def start_process(cmd, log_path: Path, env=None):
         env=env,
     )
     return proc, log_file
+
+
+def wait_for_global_path_ready(topic: str, timeout_sec: float,
+                               min_span_m: float, env=None):
+    """Wait for a finite global Path or MPC reference with meaningful span."""
+    deadline = time.time() + timeout_sec
+    last_reason = "no message"
+    while time.time() < deadline:
+        remaining = max(0.2, min(2.0, deadline - time.time()))
+        try:
+            result = subprocess.run(
+                ["rostopic", "echo", "-n", "1", topic],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=remaining,
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            last_reason = "topic wait timed out"
+            continue
+        if result.returncode != 0:
+            last_reason = result.stdout.strip() or f"rostopic exit {result.returncode}"
+            time.sleep(0.1)
+            continue
+        try:
+            documents = [
+                document for document in yaml.safe_load_all(result.stdout)
+                if isinstance(document, dict)
+            ]
+            message = documents[0] if documents else {}
+        except (TypeError, ValueError, yaml.YAMLError) as exc:
+            last_reason = f"invalid reference payload: {exc}"
+            continue
+        payload_length = 0
+        if isinstance(message.get("poses"), list):
+            points = []
+            for pose_stamped in message["poses"]:
+                position = ((pose_stamped or {}).get("pose") or {}).get("position") or {}
+                points.append((float(position["x"]), float(position["y"])))
+            if len(points) < 2:
+                last_reason = f"global path point count={len(points)}, expected >=2"
+                continue
+            if not all(math.isfinite(value) for point in points for value in point):
+                last_reason = "global path contains non-finite values"
+                continue
+            payload_length = len(points)
+            span = math.hypot(points[-1][0] - points[0][0], points[-1][1] - points[0][1])
+        else:
+            try:
+                values = [float(value) for value in message.get("data", [])]
+            except (TypeError, ValueError) as exc:
+                last_reason = f"invalid MPC reference payload: {exc}"
+                continue
+            if len(values) < 60 or len(values) % 3 != 0:
+                last_reason = f"reference payload length={len(values)}, expected >=60 triplets"
+                continue
+            if not all(math.isfinite(value) for value in values):
+                last_reason = "reference payload contains non-finite values"
+                continue
+            payload_length = len(values)
+            span = math.hypot(values[-3] - values[0], values[-2] - values[1])
+        if span < min_span_m:
+            last_reason = f"reference span {span:.3f} m < {min_span_m:.3f} m"
+            time.sleep(0.1)
+            continue
+        return {
+            "ready": True,
+            "topic": topic,
+            "payload_length": payload_length,
+            "reference_span_m": span,
+            "reason": "valid reference received",
+        }
+    return {
+        "ready": False,
+        "topic": topic,
+        "payload_length": 0,
+        "reference_span_m": 0.0,
+        "reason": last_reason,
+    }
+
+
+def release_global_path_start_gate(topic: str, env=None):
+    result = subprocess.run(
+        ["rostopic", "pub", "-1", topic, "std_msgs/Bool", "data: true"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=5.0,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"failed to publish global path start gate on {topic}: "
+            f"{result.stdout.strip()}"
+        )
 
 
 def stop_process(proc):
@@ -2613,6 +3450,10 @@ def summarize_planner_log(planner_log: Path) -> dict:
         "mpc_guard_used_rate": "",
         "no_cbf_fallback_count": "",
         "no_cbf_fallback_rate": "",
+        "safe_stop_count": "",
+        "safe_stop_rate": "",
+        "emergency_cbf_count": "",
+        "emergency_cbf_rate": "",
         "slack_max": "",
         "slack_mean": "",
         "solve_time_mean_ms": "",
@@ -2643,7 +3484,20 @@ def summarize_planner_log(planner_log: Path) -> dict:
     total = len(rows)
     first_infeasible = sum(1 for row in rows if row.get("first_attempt_status") == "infeasible")
     guard_used = sum(1 for row in rows if row.get("mpc_feasibility_guard_used") in {"1", "True", "true"})
-    no_cbf = sum(1 for row in rows if row.get("accepted_beta_source") == "no_cbf" or row.get("used_fallback") in {"1", "True", "true"})
+    no_cbf = sum(
+        1 for row in rows
+        if row.get("accepted_beta_source") == "no_cbf"
+    )
+    safe_stop = sum(
+        1 for row in rows
+        if row.get("accepted_beta_source") == "safe_stop" or
+        row.get("mpc_status") == "infeasible_safe_stop"
+    )
+    emergency_cbf = sum(
+        1 for row in rows
+        if row.get("accepted_beta_source") == "emergency_cbf" or
+        row.get("mpc_status") == "infeasible_emergency_cbf"
+    )
     constrained_obs_count = floats("constrained_obs_count")
     slack_max = floats("slack_max") or floats("slack")
     slack_mean = floats("slack_mean")
@@ -2668,6 +3522,10 @@ def summarize_planner_log(planner_log: Path) -> dict:
     metrics["mpc_guard_used_rate"] = f"{guard_used / total:.6f}"
     metrics["no_cbf_fallback_count"] = no_cbf
     metrics["no_cbf_fallback_rate"] = f"{no_cbf / total:.6f}"
+    metrics["safe_stop_count"] = safe_stop
+    metrics["safe_stop_rate"] = f"{safe_stop / total:.6f}"
+    metrics["emergency_cbf_count"] = emergency_cbf
+    metrics["emergency_cbf_rate"] = f"{emergency_cbf / total:.6f}"
     if slack_max:
         metrics["slack_max"] = f"{max(slack_max):.6f}"
     if slack_mean:
@@ -2975,6 +3833,7 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
         "robot_final_goal_distance_m": "",
         "robot_mean_abs_v": "",
         "robot_mean_abs_w": "",
+        "robot_deadlock_low_speed_max_s": "",
         "robot_velocity_smoothness": "",
         "robot_control_effort": "",
         "log_min_distance_m": "",
@@ -3044,6 +3903,27 @@ def summarize_phase5_logs(run_dir: Path) -> dict:
                 metrics["robot_velocity_smoothness"] = f"{smoothness:.6f}"
         if abs_v:
             metrics["robot_mean_abs_v"] = f"{sum(abs_v) / len(abs_v):.6f}"
+            longest_low_speed = 0.0
+            episode_start = None
+            previous_t = None
+            for sample_t, sample_v in zip(times, abs_v):
+                if sample_v < DEADLOCK_SPEED_MPS:
+                    if (
+                        episode_start is None
+                        or previous_t is None
+                        or sample_t - previous_t > 0.5
+                    ):
+                        episode_start = sample_t
+                    longest_low_speed = max(
+                        longest_low_speed, sample_t - episode_start
+                    )
+                    previous_t = sample_t
+                else:
+                    episode_start = None
+                    previous_t = None
+            metrics["robot_deadlock_low_speed_max_s"] = (
+                f"{longest_low_speed:.6f}"
+            )
         if abs_w:
             metrics["robot_mean_abs_w"] = f"{sum(abs_w) / len(abs_w):.6f}"
         if controls:
@@ -3133,13 +4013,15 @@ def classify_termination_reason(run_dir: Path, nav_metrics: dict,
     if first_infeasible is not None and first_infeasible > 0:
         return "infeasible"
 
-    mean_abs_v = as_float(phase5_metrics, "robot_mean_abs_v")
+    low_speed_duration = as_float(
+        phase5_metrics, "robot_deadlock_low_speed_max_s"
+    )
     final_goal_distance = as_float(phase5_metrics, "robot_final_goal_distance_m")
     if (
-        mean_abs_v is not None
+        low_speed_duration is not None
         and final_goal_distance is not None
         and final_goal_distance > GOAL_TOLERANCE_M
-        and mean_abs_v < DEADLOCK_MEAN_ABS_V_MPS
+        and low_speed_duration >= DEADLOCK_HOLD_SEC
     ):
         return "deadlock"
     return "timeout"
@@ -3238,6 +4120,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
         f"- first_infeasible_rate: {planner_metrics['first_infeasible_rate']}",
         f"- mpc_guard_used_rate: {planner_metrics['mpc_guard_used_rate']}",
         f"- no_cbf_fallback_rate: {planner_metrics['no_cbf_fallback_rate']}",
+        f"- safe_stop_rate: {planner_metrics['safe_stop_rate']}",
         f"- slack_max: {planner_metrics['slack_max']}",
         f"- slack_mean: {planner_metrics['slack_mean']}",
         f"- solve_time_mean_ms: {planner_metrics['solve_time_mean_ms']}",
@@ -3302,6 +4185,7 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "invalid_reasons", "robot_records", "robot_path_length_m",
                 "robot_travel_time_s", "robot_final_goal_distance_m",
                 "robot_mean_abs_v", "robot_mean_abs_w",
+                "robot_deadlock_low_speed_max_s",
                 "robot_velocity_smoothness", "robot_control_effort",
                 "log_min_distance_m", "log_min_h_ee", "log_invalid_obstacle_rows",
                 "safety_bound_passed", "guard_records", "semantic_classes",
@@ -3310,7 +4194,9 @@ def write_summary(run_dir: Path, scenario_id: str, baseline_id: str, commands,
                 "planner_records", "constrained_obs_count_mean", "constrained_obs_count_max",
                 "first_infeasible_count", "first_infeasible_rate",
                 "mpc_guard_used_count", "mpc_guard_used_rate", "no_cbf_fallback_count",
-                "no_cbf_fallback_rate", "slack_max", "slack_mean",
+                "no_cbf_fallback_rate", "safe_stop_count", "safe_stop_rate",
+                "emergency_cbf_count", "emergency_cbf_rate",
+                "slack_max", "slack_mean",
                 "solve_time_mean_ms", "solve_time_max_ms",
                 "side_preference_enabled", "side_weight", "side_cost_mean", "side_cost_max",
                 "tracking_rmse_m", "tracking_error_max_m",
@@ -3454,13 +4340,20 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         scenario, obstacles = materialize_trial(scenario, trial)
     else:
         obstacles = scenario.get("obstacles", [])
+    scenario = apply_parameter_freeze(
+        scenario, getattr(args, "execution_freeze", None)
+    )
     if not obstacles:
         raise RuntimeError(f"Scenario {scenario_id} has no obstacles")
 
     classes_arg = obstacle_classes(obstacles)
     obstacle_params = run_dir / "obstacles_param.yaml"
     planner_cmd, start_cmd = build_commands(
-        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
+        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario,
+        global_path_ready_gate=getattr(args, "global_path_ready_gate", False),
+        global_path_start_gate_topic=getattr(
+            args, "global_path_start_gate_topic", "/teacher_v1/global_path_ready"
+        ),
     )
 
     commands = [("planner", planner_cmd), ("start_test", start_cmd)]
@@ -3518,9 +4411,17 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
         protocol_id=getattr(args, "protocol_id", DEFAULT_PROTOCOL_ID),
         run_context=trial_run_context,
         artifact_hashes=artifact_hashes,
+        freeze_contract=getattr(args, "execution_freeze", None),
+        common_evaluation_contract=getattr(
+            args, "common_evaluation_contract", None
+        ),
     )
     planner_cmd, start_cmd = build_commands(
-        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario
+        scenario_id, baseline_id, run_dir, obstacle_params, classes_arg, len(obstacles), scenario,
+        global_path_ready_gate=getattr(args, "global_path_ready_gate", False),
+        global_path_start_gate_topic=getattr(
+            args, "global_path_start_gate_topic", "/teacher_v1/global_path_ready"
+        ),
     )
 
     processes = []
@@ -3539,6 +4440,43 @@ def run_one(scenario_id: str, baseline_id: str, scenario: dict, args, timestamp:
 
         starter, starter_log = start_process(start_cmd, run_dir / "start_test.log", env=env)
         processes.append(("start_test", starter, starter_log))
+
+        gate_record = {
+            "enabled": bool(getattr(args, "global_path_ready_gate", False)),
+            "ready": True,
+            "wait_sec": 0.0,
+        }
+        if gate_record["enabled"]:
+            gate_started = time.time()
+            gate_record.update(wait_for_global_path_ready(
+                getattr(
+                    args, "global_path_ready_topic",
+                    "/global_path",
+                ),
+                getattr(args, "global_path_ready_timeout_sec", 15.0),
+                getattr(args, "global_path_ready_min_span_m", 0.25),
+                env=env,
+            ))
+            gate_record["wait_sec"] = time.time() - gate_started
+            if gate_record["ready"]:
+                release_global_path_start_gate(
+                    getattr(
+                        args, "global_path_start_gate_topic",
+                        "/teacher_v1/global_path_ready",
+                    ),
+                    env=env,
+                )
+                gate_record["released_at"] = dt.datetime.now(
+                    dt.timezone.utc
+                ).isoformat()
+            else:
+                unexpected_exits.append({
+                    "process": "global_path_ready_gate", "return_code": -1,
+                })
+            atomic_write_text(
+                run_dir / "global_path_ready_gate.yaml",
+                yaml.safe_dump(gate_record, sort_keys=False),
+            )
 
         deadline = time.time() + args.duration_sec
         while time.time() < deadline:
@@ -3634,11 +4572,38 @@ def main():
     parser.add_argument("--duration-sec", type=int, default=90)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--seed-manifest")
+    parser.add_argument(
+        "--campaign", choices=sorted(CAMPAIGN_PROFILES), default="main",
+    )
+    parser.add_argument("--execution-tier", choices=["smoke", "formal"], default="smoke")
+    parser.add_argument(
+        "--parameter-freeze",
+        help="Campaign-specific frozen execution YAML.",
+    )
+    parser.add_argument(
+        "--evaluation-contract",
+        default=str(COMMON_OFFLINE_EVALUATION_CONTRACT),
+        help="Method-independent Teacher offline evaluation contract.",
+    )
     parser.add_argument("--output-root", default=str(default_output))
     parser.add_argument("--protocol-id")
     parser.add_argument("--roscore", choices=["auto", "external"], default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-existing-complete", action="store_true")
+    parser.add_argument(
+        "--global-path-ready-gate", action="store_true",
+        help="hold dynamic obstacles until a meaningful global MPC reference is published",
+    )
+    parser.add_argument(
+        "--global-path-ready-topic",
+        default="/global_path",
+    )
+    parser.add_argument(
+        "--global-path-start-gate-topic",
+        default="/teacher_v1/global_path_ready",
+    )
+    parser.add_argument("--global-path-ready-timeout-sec", type=float, default=15.0)
+    parser.add_argument("--global-path-ready-min-span-m", type=float, default=0.25)
     parser.add_argument(
         "--config",
         default=str(root / "swarm_test/config/secbf_scenarios.yaml"),
@@ -3648,14 +4613,39 @@ def main():
     args.config = str(Path(args.config).expanduser().resolve())
     if args.seed_manifest:
         args.seed_manifest = str(Path(args.seed_manifest).expanduser().resolve())
+    if args.parameter_freeze:
+        args.parameter_freeze = str(Path(args.parameter_freeze).expanduser().resolve())
+    elif args.execution_tier == "smoke":
+        args.parameter_freeze = str(
+            PARAMETER_FREEZE_ROOT / f"{args.campaign}_smoke.yaml"
+        )
+    else:
+        parser.error("--parameter-freeze is required for formal execution")
+    args.evaluation_contract = str(
+        Path(args.evaluation_contract).expanduser().resolve()
+    )
     if args.duration_sec <= 0:
         parser.error("--duration-sec must be positive")
     if args.repeat <= 0:
         parser.error("--repeat must be positive")
+    if args.global_path_ready_timeout_sec <= 0.0:
+        parser.error("--global-path-ready-timeout-sec must be positive")
+    if args.global_path_ready_min_span_m <= 0.0:
+        parser.error("--global-path-ready-min-span-m must be positive")
     try:
         args.output_root = str(ensure_teacher_output_root(Path(args.output_root)))
     except ValueError as exc:
         parser.error(str(exc))
+    try:
+        args.execution_freeze = load_parameter_freeze(
+            Path(args.parameter_freeze), args.execution_tier,
+            campaign=args.campaign,
+        )
+        args.common_evaluation_contract = load_common_offline_evaluation_contract(
+            Path(args.evaluation_contract)
+        )
+    except ParameterFreezeError as exc:
+        parser.error(f"Teacher-v1 freeze preflight failed: {exc}")
     if not args.dry_run:
         if not str(args.protocol_id or "").strip():
             parser.error("--protocol-id is required for every non-dry Teacher-v1 run")
@@ -3671,6 +4661,18 @@ def main():
     scenario_ids = selected(SCENARIO_INDEX.keys(), args.scenario)
     requested_baselines = selected(list(BASELINES) + list(PAPER_BASELINE_ALIASES), args.baseline)
     baseline_ids = [resolve_baseline_alias(value) for value in requested_baselines]
+    if args.execution_tier == "formal":
+        profile = CAMPAIGN_PROFILES[args.campaign]
+        if tuple(scenario_ids) != tuple(profile["scenarios"]):
+            parser.error(
+                f"formal {args.campaign} execution must select its exact "
+                "frozen scenario matrix"
+            )
+        if tuple(requested_baselines) != tuple(profile["methods"]):
+            parser.error(
+                f"formal {args.campaign} execution must select its exact "
+                "frozen method matrix"
+            )
     if args.seed_manifest and args.repeat != 1:
         parser.error("--seed-manifest cannot be combined with --repeat != 1")
     trials = load_seed_manifest(Path(args.seed_manifest)) if args.seed_manifest else []
