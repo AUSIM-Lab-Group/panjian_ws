@@ -3,6 +3,8 @@ yolov8n.pt
 .catkin_workspace
 build/
 devel/
+build_current/
+devel_current/
 **/__pycache__/
 experiments/**/runs*/
 swarm_test/output/*.json

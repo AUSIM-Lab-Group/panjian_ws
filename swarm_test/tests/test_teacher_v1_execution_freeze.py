@@ -35,7 +35,7 @@ def launch_args(command):
 def test_execution_tier_selects_expected_source_branch(runner):
     assert runner.required_source_branch("smoke") == "teacher-v1"
     assert runner.required_source_branch("formal") == (
-        "formal/source-v3-clean-20260728"
+        "formal/logging-repair-v4-20260729"
     )
 
 
@@ -95,7 +95,13 @@ def test_formal_freezes_use_regression_validated_recovery_profile(runner, campai
     freeze = runner.load_parameter_freeze(path, "formal", campaign=campaign)
     switches = freeze["switches"]
 
-    assert freeze["id"] == f"teacher_v1_{campaign}_formal_v3_clean_20260728"
+    expected_freeze_ids = {
+        "main": "teacher_v1_main_formal_v3_clean_20260728",
+        "ablation": "teacher_v1_ablation_formal_current_20260729",
+        "stress": "teacher_v1_stress_formal_v3_clean_20260728",
+        "runtime": "teacher_v1_runtime_formal_v3_clean_20260728",
+    }
+    assert freeze["id"] == expected_freeze_ids[campaign]
     assert switches["graph_cache_enabled"] is True
     assert switches["solver_max_cpu_time_ms"] == pytest.approx(120.0)
     assert switches["guard_time_budget_ms"] == pytest.approx(200.0)

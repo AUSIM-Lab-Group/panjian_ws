@@ -1,8 +1,8 @@
-freeze_id: teacher_v1_ablation_formal_v3_clean_20260728
+freeze_id: teacher_v1_ablation_formal_current_20260729
 status: formal_frozen
 execution_tier: formal
 campaign: ablation
-created_at: '2026-07-28'
+created_at: '2026-07-29'
 authority:
   definitions: 老师发的实验设置/最新指示/draft_V7_071.tex (non-red text)
   experiment_placeholders: 老师发的实验设置/最新指示/draft_V6.tex (Experimental Validation red
@@ -120,9 +120,15 @@ j_side:
   weight: 0.05
   activation_distance_m: 3.0
 validated_recovery_implementation_contract:
-  panjian_algorithm_source_commit: 8a6c00eb3dd1406a445ff06affc408899a9df9ac
-  seesm_analysis_source_commit: dfa9391803ae411925d7b4d137016007e4fe3fd2
-  source_release_branch: formal/source-v3-clean-20260728
+  workspace_authority: /home/lxr20/lxr/SEESM_lxr
+  code_state_policy: component_main_ablation_share_current_workspace_code
+  panjian_algorithm_source_commit: 078712a96a13f5ca647afc9a6784aba556fe8485
+  seesm_analysis_source_commit: afe29b65673a84cb884059c25a04d4a80930a006
+  source_release_branch: formal/logging-repair-v4-20260729
+  build_overlay: panjian_ws/devel_current
+  build_cxx_standard: 14
+  teacher_mpc_binary_sha256: 6be54893b56d08c5c1634b0f17134e013e64ed284574dee89227a6a7cb4ce352
+  teacher_guard_ground_truth_binary_sha256: 9423f22d806b7819904ef47909517cacb38bde797b741a04fdcfbd900e5994fd
   common_offline_evaluation: panjian_ws/swarm_test/config/common_offline_evaluation_v1.yaml
   common_offline_evaluation_sha256: 3a149768c7b3df2e67a2aac149763d7c0514a0b83359cee7a4af0d1f2f4503a6
   regression_evidence: seesm_social_navigation/新计划实验输出目录/04_fix_validation/local_crowding_recovery_adaptive_budget_regression_20260728
