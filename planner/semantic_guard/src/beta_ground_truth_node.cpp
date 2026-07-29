@@ -18,6 +18,7 @@
 #include "semantic_guard/GuardLog.h"
 #include "semantic_guard/PreGuardMarginArray.h"
 #include "semantic_guard/PredictedObstacleArray.h"
+#include "semantic_guard/applied_margin_feedback.hpp"
 #include "semantic_guard/dynamic_tau.hpp"
 #include "semantic_guard/planar_velocity.hpp"
 #include "semantic_guard/semantic_margin_update.hpp"
@@ -37,6 +38,7 @@ struct GroundTruthMarginAudit {
     double beta_pre = 0.0;
     bool rate_limit_active = false;
     bool projection_active = false;
+    bool category_bound_enforced = false;
     double d_i = 0.0;
     double rel_v_norm = 0.0;
     double ttc = std::numeric_limits<double>::infinity();
@@ -502,6 +504,7 @@ private:
             audit.rate_limit_active = update.positive_increment_bound_active;
             audit.projection_active =
                 std::abs(update.beta_pre - beta_hat) > 1e-9;
+            audit.category_bound_enforced = policy.enforce_category_bound;
             audit.d_i = d_i;
             audit.rel_v_norm = rel_v_norm;
             audit.ttc = ttc;
@@ -557,25 +560,9 @@ private:
             const GroundTruthMarginAudit& audit = cycle.audits[index];
             const std::string& source = msg->accepted_sources[index];
             const double applied = msg->beta_applied[index];
-            const bool known_source =
-                source == "candidate" || source == "previous" ||
-                source == "zero" || source == "kappa" ||
-                source == "mpc_reprojected" || source == "no_cbf" ||
-                source == "safe_stop" || source == "emergency_cbf";
-            const bool source_value_valid =
-                applied <= audit.beta_max + 1e-8 &&
-                ((source == "candidate" &&
-                 std::abs(applied - audit.beta_pre) <= 1e-8) ||
-                (source == "previous" &&
-                 std::abs(applied - audit.beta_previous) <= 1e-8) ||
-                ((source == "zero" || source == "no_cbf" ||
-                  source == "safe_stop" || source == "emergency_cbf") &&
-                 std::abs(applied) <= 1e-8) ||
-                ((source == "kappa" || source == "mpc_reprojected") &&
-                 applied <= audit.beta_pre + 1e-8));
-            if (!std::isfinite(msg->beta_applied[index]) ||
-                msg->beta_applied[index] < 0.0 ||
-                !known_source || !source_value_valid) {
+            if (!semantic_guard::validateAppliedMarginFeedback(
+                    source, applied, audit.beta_max, audit.beta_pre,
+                    audit.beta_previous, audit.category_bound_enforced)) {
                 ROS_ERROR_THROTTLE(
                     1.0,
                     "[beta_ground_truth] reject invalid feedback payload/source");

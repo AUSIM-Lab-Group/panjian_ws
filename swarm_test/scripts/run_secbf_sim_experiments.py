@@ -120,7 +120,11 @@ SEMANTIC_MARGIN_CONTRACT_VERSION = "teacher_v1_f05_f07_provisional_001"
 TYPED_CYCLE_CONTRACT_VERSION = "teacher_v1_typed_cycle_001"
 DEFAULT_PROTOCOL_ID = "teacher_v1_protocol_001"
 DEVELOPMENT_SOURCE_BRANCH = "teacher-v1"
-FORMAL_SOURCE_BRANCH = "formal/source-v3-clean-20260728"
+FORMAL_SOURCE_BRANCH = "formal/logging-repair-v4-20260729"
+FORMAL_ACCEPTED_SOURCE_BRANCHES = {
+    "formal/source-v3-clean-20260728",
+    FORMAL_SOURCE_BRANCH,
+}
 TEACHER_WORKSPACE = SCRIPT_DIR.parents[2]
 TEACHER_SEESM_REPO = TEACHER_WORKSPACE / "seesm_social_navigation"
 TEACHER_MANUSCRIPT_PATH = (
@@ -824,6 +828,12 @@ def required_source_branch(execution_tier: str) -> str:
         FORMAL_SOURCE_BRANCH
         if execution_tier == "formal" else DEVELOPMENT_SOURCE_BRANCH
     )
+
+
+def accepted_source_branches(execution_tier: str) -> set:
+    if execution_tier == "formal":
+        return FORMAL_ACCEPTED_SOURCE_BRANCHES
+    return {DEVELOPMENT_SOURCE_BRANCH}
 
 
 def collect_run_context(args) -> dict:
@@ -2584,12 +2594,13 @@ def validate_run_meta_contract(run_dir: Path, strict_provenance=True):
                         errors.append(f"{repo_name} provenance is missing commit")
                     if not str(source.get("tree", "")).strip():
                         errors.append(f"{repo_name} provenance is missing tree")
-                    expected_branch = required_source_branch(
+                    accepted_branches = accepted_source_branches(
                         meta.get("execution_tier")
                     )
-                    if source.get("branch") != expected_branch:
+                    if source.get("branch") not in accepted_branches:
                         errors.append(
-                            f"{repo_name} provenance branch is not {expected_branch}"
+                            f"{repo_name} provenance branch is not one of "
+                            f"{sorted(accepted_branches)}"
                         )
                     if (meta.get("execution_tier") != "smoke" and
                             source.get("dirty") is not False):

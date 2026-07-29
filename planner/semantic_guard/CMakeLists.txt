@@ -69,4 +69,6 @@ if(CATKIN_ENABLE_TESTING)
     test/test_safety_recurrence.cpp)
   catkin_add_gtest(emergency_cbf_test
     test/test_emergency_cbf.cpp)
+  catkin_add_gtest(applied_margin_feedback_test
+    test/test_applied_margin_feedback.cpp)
 endif()
