@@ -569,10 +569,11 @@ def semantic_violation_metrics(
         # (which is zero/fixed for some baselines), beta_pre_guard,
         # beta_applied, a logged tau, or a controller-specific dynamic_tau
         # contract.  That is the teacher-required common offline comparison.
-        if (
+        direction_is_observable = (
             distance > float(common_evaluation["min_feature_distance_m"])
             and speed > float(common_evaluation["min_feature_speed_mps"])
-        ):
+        )
+        if direction_is_observable:
             f_head = max(0.0, -cos_delta)
         else:
             f_head = 0.0
@@ -618,7 +619,14 @@ def semantic_violation_metrics(
         logged_h_eesm = parse_float(row.get("h_eesm"))
         if logged_h_eesm is None:
             logged_h_eesm = parse_float(row.get("h_ee"))
-        if logged_h_eesm is not None:
+        # beta_ground_truth_node intentionally logs cos_delta=0 below the
+        # feature-speed gate, even though its internal dynamic-tau calculation
+        # still has the full relative-velocity vector.  In that regime the
+        # logged scalar geometry cannot reconstruct the controller h_eesm
+        # unambiguously, so do not treat the resulting difference as a
+        # dynamic-EESM contract error.  H_eval itself remains well-defined by
+        # the frozen public evaluator and is still included above.
+        if logged_h_eesm is not None and direction_is_observable:
             h_eesm_eval_log_errors.append(abs(h_eesm_eval - logged_h_eesm))
 
     common_eval_status = "ok" if not common_eval_error else "invalid_raw_input"

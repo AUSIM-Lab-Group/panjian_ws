@@ -183,6 +183,25 @@ def test_common_eval_ignores_logged_tau_and_controller_margin(tmp_path):
     assert reference["common_eval_status"] == changed["common_eval_status"] == "ok"
 
 
+def test_common_eval_skips_h_eesm_equivalence_when_direction_is_unobservable(tmp_path):
+    rows = [{
+        "time": "0.1", "obstacle_cycle_id": "8", "obs_id": "4000",
+        "class": "adult", "h_seesm": "1.0", "h_eesm": "1.98",
+        "d_i": "2.0", "rel_v_norm": "0.009", "cos_delta": "0.0",
+        "R_base": "0.8", "tau": "2.0",
+    }]
+    write_margin_rows(tmp_path, rows)
+
+    metrics = postprocess.semantic_violation_metrics(
+        tmp_path, common_evaluation_contract()
+    )
+
+    assert metrics["common_eval_status"] == "ok"
+    assert metrics["eval_records"] == 1
+    assert metrics["min_h_eval"] is not None
+    assert metrics["h_eesm_eval_log_error_max"] is None
+
+
 def test_common_eval_caps_phi_with_frozen_beta_max(tmp_path):
     rows = [{
         "time": "0.1", "obstacle_cycle_id": "9", "obs_id": "4000",
