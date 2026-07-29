@@ -9,7 +9,7 @@ preprocess:
     scan_line: 16
     scan_rate: 10                # only need to be set for velodyne, unit: Hz,
     timestamp_unit: 2            # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
-    blind: 2
+    blind: 0.2
 
 mapping:
     acc_cov: 0.1
@@ -40,6 +40,6 @@ self_filter:
     max_z: 1.80
 
 pcd_save:
-    pcd_save_en: true
+    pcd_save_en: false
     interval: -1                 # how many LiDAR frames saved in each pcd file; 
                                  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

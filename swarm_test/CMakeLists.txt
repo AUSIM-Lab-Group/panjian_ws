@@ -56,5 +56,6 @@ target_link_libraries(rosbag_trans_color_node ${catkin_LIBRARIES})
 catkin_install_python(PROGRAMS
   scripts/reference_path_waypoints.py
   scripts/reference_path_goal_publisher.py
+  scripts/check_scout_real_topics.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

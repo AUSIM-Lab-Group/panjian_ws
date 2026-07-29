@@ -414,6 +414,35 @@ ping 192.168.4.200
 
 #### 启动流程
 
+当前 Teacher-v1 MPC-SECBF 实车工程链优先使用独立入口。默认命令只发布到
+`/cmd_vel_secbf_dryrun`，不会直接驱动 Scout：
+
+```bash
+source /opt/ros/noetic/setup.bash
+source /home/lxr20/lxr/SEESM_lxr/panjian_ws/devel_current/setup.bash
+roslaunch swarm_test scout_secbf_real.launch
+```
+
+离线或不连接底盘时：
+
+```bash
+roslaunch swarm_test scout_secbf_real.launch \
+  start_base:=false \
+  cmd_vel_topic:=/cmd_vel_secbf_dryrun
+```
+
+只有完成 dry-run 和架空轮检查后，现场才显式使用：
+
+```bash
+roslaunch swarm_test scout_secbf_real.launch \
+  cmd_vel_topic:=/cmd_vel \
+  v_max:=0.15 \
+  reverse_v_max:=0.15 \
+  o_max:=0.30
+```
+
+下面的五终端流程保留为旧 ACBF 实车链调试参考。
+
 # 终端 1：底盘
 sudo modprobe gs_usb
 sudo ip link set can0 up type can bitrate 500000

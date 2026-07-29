@@ -9,6 +9,7 @@
 
 #include <casadi/casadi.hpp>
 #include "dynamic_perception/cluster_track.hpp"
+#include "dynamic_perception/tracker_contract.hpp"
 #include "dynamic_perception/panther_types.hpp"
 #include "dynamic_perception/Hungarian.h"         // 匈牙利多目标分配算法
 #include "dynamic_simulator/DynTraj.h"
@@ -45,6 +46,8 @@ private:
   int max_size_sliding_window_;
   double meters_to_create_new_track_;
   int max_frames_skipped_;
+  int track_id_start_;
+  tp::TrackIdSequence track_ids_;
 
   std::map<int, casadi::Function> cf_get_mean_variance_pred_;
   std::vector<tp::track> all_tracks_;

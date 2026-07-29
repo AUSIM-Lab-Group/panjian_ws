@@ -1,5 +1,7 @@
 <launch>
   <!-- 无相机版本：适合没有 D435 的车或调试 -->
+  <arg name="fast_lio_config" default="$(find fast_lio)/config/velodyne.yaml" />
+  <param name="/use_sim_time" value="false" />
 
   <!-- 起雷达驱动 -->
   <include file="$(find rslidar_sdk)/launch/start.launch" />
@@ -11,7 +13,9 @@
   <include file="$(find sbg_driver)/launch/examples/sbg_ellipseN.launch" />
 
   <!-- 启动 FAST-LIO -->
-  <include file="$(find fast_lio)/launch/state_estimation.launch" />
+  <include file="$(find fast_lio)/launch/state_estimation.launch">
+    <arg name="config_file" value="$(arg fast_lio_config)" />
+  </include>
 
   <!-- 相机默认关闭 -->
   <!-- <include file="$(find realsense2_camera)/launch/rs_aligned_depth.launch"/> -->

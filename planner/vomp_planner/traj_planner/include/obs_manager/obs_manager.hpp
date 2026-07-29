@@ -67,8 +67,16 @@ public:
     nh.param("obs_manager/pre_step", pre_step, 25);
     nh.param("obs_manager/step_time", step_time, 0.1);
     nh.param("obs_manager/teacher_snapshot_period", teacher_snapshot_period_, 0.05);
+    nh.param("obs_manager/predicted_obstacle_timeout", predicted_obstacle_timeout_, 0.50);
+    if (pre_step <= 0 || !std::isfinite(step_time) || step_time <= 0.0) {
+      throw std::invalid_argument("obs_manager pre_step and step_time must be positive");
+    }
     if (!std::isfinite(teacher_snapshot_period_) || teacher_snapshot_period_ <= 0.0) {
       throw std::invalid_argument("obs_manager/teacher_snapshot_period must be positive");
+    }
+    if (!std::isfinite(predicted_obstacle_timeout_) ||
+        predicted_obstacle_timeout_ <= 0.0) {
+      throw std::invalid_argument("obs_manager/predicted_obstacle_timeout must be positive");
     }
     nh.param("search/global_seesm_enable", global_seesm_enable_, false);
     nh.param("search/global_seesm_tau", tau_global_, 0.20);
@@ -410,6 +418,7 @@ private:
   int pre_step;
   double step_time;
   double teacher_snapshot_period_ = 0.05;
+  double predicted_obstacle_timeout_ = 0.50;
   uint64_t teacher_snapshot_cycle_id_ = 0;
   uint64_t last_applied_margin_cycle_id_ = 0;
   double tau_global_ = 0.20;
@@ -603,7 +612,10 @@ private:
     if (is_use_GroundTruth) {
       return (query_time - obs.start_time).toSec() < 5.0 - 1e-3;
     }
-    return query_time.toSec() <= obs.Time1 - 0.05;
+    const double source_age = (query_time - obs.start_time).toSec();
+    return std::isfinite(source_age) && source_age >= -0.05 &&
+           source_age <= predicted_obstacle_timeout_ &&
+           query_time.toSec() <= obs.Time1 - 0.05;
   }
 
   void computeObstacleStateAt(const obstacle_traj& obs,
@@ -756,14 +768,24 @@ private:
   void publishTeacherObstacleSnapshot(const ros::TimerEvent&)
   {
     semantic_guard::PredictedObstacleArray snapshot;
-    snapshot.header.stamp = ros::Time::now();
+    const ros::Time now = ros::Time::now();
+    snapshot.header.stamp = now;
     snapshot.header.frame_id = "world";
     snapshot.cycle_id = ++teacher_snapshot_cycle_id_;
     snapshot.horizon_steps = static_cast<uint32_t>(std::max(pre_step, 0));
     snapshot.prediction_step_sec = step_time;
 
-    const auto active_obstacles = collectActiveObstacles(snapshot.header.stamp);
+    const auto active_obstacles = collectActiveObstacles(now);
+    if (!is_use_GroundTruth && !active_obstacles.empty()) {
+      snapshot.header.stamp = active_obstacles.front()->start_time;
+      for (const obstacle_traj* obstacle : active_obstacles) {
+        if (obstacle->start_time < snapshot.header.stamp) {
+          snapshot.header.stamp = obstacle->start_time;
+        }
+      }
+    }
     snapshot.obstacle_ids.reserve(active_obstacles.size());
+    std::unordered_set<uint32_t> unique_ids;
     for (const obstacle_traj* obstacle : active_obstacles) {
       if (obstacle->Id_ < 0) {
         ROS_ERROR_THROTTLE(
@@ -771,14 +793,22 @@ private:
             obstacle->Id_);
         return;
       }
-      snapshot.obstacle_ids.push_back(static_cast<uint32_t>(obstacle->Id_));
+      const uint32_t obstacle_id = static_cast<uint32_t>(obstacle->Id_);
+      if (!unique_ids.insert(obstacle_id).second ||
+          !std::isfinite(obstacle->circle_R_) || obstacle->circle_R_ < 0.0) {
+        ROS_ERROR_THROTTLE(
+            1.0, "[teacher_snapshot] refusing duplicate/invalid obstacle ID=%u",
+            obstacle_id);
+        return;
+      }
+      snapshot.obstacle_ids.push_back(obstacle_id);
     }
 
     const size_t horizon = static_cast<size_t>(snapshot.horizon_steps);
     snapshot.state_data.resize(7 * horizon * active_obstacles.size());
     for (size_t stage = 0; stage < horizon; ++stage) {
       const ros::Time prediction_time =
-          snapshot.header.stamp + ros::Duration(stage * step_time);
+          now + ros::Duration(stage * step_time);
       for (size_t obstacle_index = 0;
            obstacle_index < active_obstacles.size(); ++obstacle_index) {
         Eigen::Vector4d position_velocity;
@@ -904,6 +934,31 @@ private:
   // --------------------动态感知得出障碍物预测轨迹
   void predict_Traj_Callback(const dynamic_simulator::DynTraj& msg)     // 接收障碍物预测轨迹的回调函数
   {
+    const bool coefficients_valid =
+        !msg.pwp_mean.all_coeff_x.empty() &&
+        !msg.pwp_mean.all_coeff_y.empty() &&
+        msg.pwp_mean.all_coeff_x[0].data.size() >= 3 &&
+        msg.pwp_mean.all_coeff_y[0].data.size() >= 3;
+    const bool times_valid = msg.pwp_mean.times.size() >= 2 &&
+        std::isfinite(msg.pwp_mean.times[0]) &&
+        std::isfinite(msg.pwp_mean.times[1]) &&
+        msg.pwp_mean.times[1] > msg.pwp_mean.times[0];
+    const bool bbox_valid = msg.bbox.size() >= 2 &&
+        std::isfinite(msg.bbox[0]) && std::isfinite(msg.bbox[1]) &&
+        msg.bbox[0] >= 0.0 && msg.bbox[1] >= 0.0;
+    if (msg.id < 0 || msg.header.stamp.isZero() || !coefficients_valid ||
+        !times_valid || !bbox_valid) {
+      ROS_ERROR_THROTTLE(1.0, "[teacher_snapshot] reject malformed predicted trajectory id=%d", msg.id);
+      return;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+      if (!std::isfinite(msg.pwp_mean.all_coeff_x[0].data[i]) ||
+          !std::isfinite(msg.pwp_mean.all_coeff_y[0].data[i])) {
+        ROS_ERROR_THROTTLE(1.0, "[teacher_snapshot] reject nonfinite trajectory coefficients id=%d", msg.id);
+        return;
+      }
+    }
+
     obstacle_traj tmp_obs;    // 将障碍物消息转为vo_obstacle格式
     tmp_obs.Id_ = msg.id;
     tmp_obs.start_time = msg.header.stamp;
@@ -929,13 +984,13 @@ private:
       obstalce_trajs_.insert(std::make_pair(tmp_obs.Id_, tmp_obs));
     }
 
-    // 删除操作1: 删除超时的障碍物轨迹
+    // 删除操作1: 按源消息时间戳删除超时的障碍物轨迹。
     ros::Time time_now = ros::Time::now(); //当前时刻
     std::vector<std::unordered_map<int, obstacle_traj>::iterator> elements_to_remove;
     for (auto traj_iter = obstalce_trajs_.begin(); traj_iter != obstalce_trajs_.end(); traj_iter++) {
-      double time_out = time_now.toSec() - traj_iter->second.Time0;
-      if(time_out >= 1.0 - 1e-3 && traj_iter != obstalce_trajs_.end()) {  // 删除超时的障碍物轨迹
-        ROS_INFO("over time is:%f", time_out);
+      if (!isObstacleActiveAt(traj_iter->second, time_now)) {
+        const double time_out = (time_now - traj_iter->second.start_time).toSec();
+        ROS_INFO("predicted obstacle timeout is:%f", time_out);
         elements_to_remove.push_back(traj_iter);
       }
     }

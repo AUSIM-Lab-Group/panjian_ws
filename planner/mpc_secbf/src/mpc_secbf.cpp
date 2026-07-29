@@ -45,11 +45,15 @@ void MPC_SECBF_SOLVE::init_solver(double Ts, int N, double v_max, double v_min, 
                                    double delta_u_max,
                                    double active_set_distance_m,
                                    bool graph_cache_enabled,
-                                   double solver_max_cpu_time_ms) {
+                                   double solver_max_cpu_time_ms,
+                                   double reverse_v_max) {
     Ts_ = Ts;
     N_ = N;
     v_max_ = v_max;
     v_min_ = v_min;
+    reverse_v_max_ = std::isfinite(reverse_v_max) && reverse_v_max >= 0.0
+                         ? reverse_v_max
+                         : 0.2;
     omega_max_ = o_max;
     Q_ = Q;
     R_ = R;
@@ -223,7 +227,7 @@ void MPC_SECBF_SOLVE::initTeacherParameterizedProblem(int obstacle_slots) {
     }
     cost += teacher_side_cost_;
 
-    prob.subject_to(prob.bounded(-0.2, teacher_U_(0, casadi::Slice()), v_max_));
+    prob.subject_to(prob.bounded(-reverse_v_max_, teacher_U_(0, casadi::Slice()), v_max_));
     prob.subject_to(prob.bounded(-omega_max_, teacher_U_(1, casadi::Slice()), omega_max_));
     prob.subject_to(prob.bounded(0.0, teacher_epsilon_, epsilon_max_));
 
@@ -821,8 +825,8 @@ bool MPC_SECBF_SOLVE::solveRebuilding(Eigen::VectorXd* cur_state, Eigen::MatrixX
     }
 
     // Control bounds
-    // 允许小幅倒车 (-0.2 m/s) 用于紧急避障, 但不鼓励长距离倒车
-    prob.subject_to(prob.bounded(-0.2, v, v_max_));
+    // 允许参数化的小幅倒车用于避障，但不鼓励长距离倒车。
+    prob.subject_to(prob.bounded(-reverse_v_max_, v, v_max_));
     prob.subject_to(prob.bounded(-omega_max_, omega, omega_max_));
     prob.subject_to(prob.bounded(0.0, epsilon, epsilon_max_));
 

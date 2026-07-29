@@ -1,0 +1,43 @@
+common:
+    lid_topic:  "/velodyne_points"
+    imu_topic:  "/imu_raw"
+    time_sync_en: false
+
+preprocess:
+    lidar_type: 2
+    scan_line: 16
+    scan_rate: 10
+    timestamp_unit: 2
+    blind: 2
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree: 180
+    det_range: 100.0
+    extrinsic_est_en: true
+    extrinsic_T: [0, 0, 0.40]
+    extrinsic_R: [1, 0, 0,
+                  0, 1, 0,
+                  0, 0, 1]
+
+publish:
+    path_en: false
+    scan_publish_en: true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+self_filter:
+    enable: true
+    min_x: -0.45
+    max_x: 0.30
+    min_y: -0.45
+    max_y: 0.45
+    min_z: -0.40
+    max_z: 1.80
+
+pcd_save:
+    pcd_save_en: true
+    interval: -1

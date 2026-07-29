@@ -7,6 +7,11 @@ Obstalce_prediction::Obstalce_prediction(ros::NodeHandle nh):nh_(nh)
   nh_.param("max_size_sliding_window", max_size_sliding_window_, 40); // 这个系数不能改，与casadi求解绑定了
   nh_.param("meters_to_create_new_track", meters_to_create_new_track_,1.0);
   nh_.param("max_frames_skipped", max_frames_skipped_,0);
+  nh_.param("track_id_start", track_id_start_, 4000);
+  if (track_id_start_ < 0) {
+    throw std::invalid_argument("track_id_start must be nonnegative");
+  }
+  track_ids_.reset(track_id_start_);
 
   cluster_sub_ = nh_.subscribe("/l_shape_fitting/jsk_bbox_array", 1, &Obstalce_prediction::cluster_cb, this);
   obs_traj_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("obstacle_prediction/marker_predicted_traj", 1);
@@ -28,6 +33,11 @@ void Obstalce_prediction::init_predictor(ros::NodeHandle nh){
   nh_.param("max_size_sliding_window", max_size_sliding_window_, 40); // 这个系数不能改，与casadi求解绑定
   nh_.param("meters_to_create_new_track", meters_to_create_new_track_,1.0);
   nh_.param("max_frames_skipped", max_frames_skipped_,0);
+  nh_.param("track_id_start", track_id_start_, 4000);
+  if (track_id_start_ < 0) {
+    throw std::invalid_argument("track_id_start must be nonnegative");
+  }
+  track_ids_.reset(track_id_start_);
 
   cluster_sub_ = nh_.subscribe("/l_shape_fitting/jsk_bbox_array", 1, &Obstalce_prediction::cluster_cb, this);
   obs_traj_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("obstacle_prediction/marker_predicted_traj", 1);
@@ -115,21 +125,22 @@ void Obstalce_prediction::cluster_cb(const jsk_recognition_msgs::BoundingBoxArra
     double cost = HungAlgo.Solve(costMatrix, track_assigned_to_cluster);
 
     for (unsigned int i = 0; i < costMatrix.size(); i++){
-      all_tracks_[track_assigned_to_cluster[i]].num_frames_skipped--;
-
-      if (track_assigned_to_cluster[i] == -1){  // 为新出现的障碍物分配一个新轨道
+      const int assigned_track = track_assigned_to_cluster[i];
+      if (!tp::isValidTrackAssignment(assigned_track, all_tracks_.size())) {
+        // 为未分配或非法分配的障碍物建立新轨道。
         // std::cout << "cluster " << i << " unassigned, creating new track for it" << std::endl;
         // std::cout << clusters[i].centroidXYZ.transpose() << std::endl;
         addNewTrack(clusters[i]);
       }
       else{
-        if (all_tracks_[track_assigned_to_cluster[i]].is_new == true){
-          all_tracks_[track_assigned_to_cluster[i]].is_new = false;
+        all_tracks_[assigned_track].num_frames_skipped = 0;
+        if (all_tracks_[assigned_track].is_new == true){
+          all_tracks_[assigned_track].is_new = false;
           // std::cout << "track " << i << " is new" << std::endl;
         }
         else{
           // std::cout << "Add track " << i << " to History" << std::endl;
-          all_tracks_[track_assigned_to_cluster[i]].addToHistory(clusters[i]);
+          all_tracks_[assigned_track].addToHistory(clusters[i]);
         }
       }
     }
@@ -172,7 +183,7 @@ void Obstalce_prediction::pubPredictTraj(const ros::TimerEvent& e){
 
     dynamic_simulator::DynTraj dynTraj_msg;
     dynTraj_msg.header.frame_id = "world";
-    dynTraj_msg.header.stamp = ros::Time::now();
+    dynTraj_msg.header.stamp = ros::Time().fromSec(time_pcloud);
     dynTraj_msg.use_pwp_field = true;
     dynTraj_msg.pwp_mean = pwp2PwpMsg(track_j.pwp_mean);
     dynTraj_msg.pwp_var = pwp2PwpMsg(track_j.pwp_var);
@@ -182,7 +193,7 @@ void Obstalce_prediction::pubPredictTraj(const ros::TimerEvent& e){
 
     dynTraj_msg.bbox = std::vector<float>(tmp.begin(), tmp.end());
 
-    double t_now = ros::Time::now().toSec();
+    double t_now = time_pcloud;
     dynTraj_msg.pos = eigen2rosvector(track_j.pwp_mean.eval(t_now));
     dynTraj_msg.id = track_j.id_int;
     dynTraj_msg.is_agent = false;
@@ -195,7 +206,8 @@ void Obstalce_prediction::pubPredictTraj(const ros::TimerEvent& e){
 
 void Obstalce_prediction::addNewTrack(const tp::cluster& c)
 {
-  tp::track tmp(c, min_size_sliding_window_, max_size_sliding_window_);
+  tp::track tmp(c, min_size_sliding_window_, max_size_sliding_window_,
+                track_ids_.next());
   generatePredictedPwpForTrack(tmp);
   all_tracks_.push_back(tmp);
 }
@@ -288,4 +300,3 @@ void Obstalce_prediction::generatePredictedPwpForTrack(tp::track& track_j)
 
   track_j.pwp_var = pwp_var;
 }
-

@@ -23,6 +23,7 @@
     <arg name="global_seesm_enable" default="false"/>
     <arg name="global_seesm_margin_topic" default="/safety_margin/beta_applied_final"/>
     <arg name="global_seesm_log_path" default=""/>
+    <arg name="predicted_obstacle_timeout" default="0.50"/>
     <arg name="dynamic_tau_enabled" default="true"/>
     <arg name="dynamic_tau_mode" default="teacher_tca"/>
     <arg name="dynamic_tau_delta_tau" default="1e-6"/>
@@ -52,6 +53,7 @@
         <param name="obs_manager/use_GroundTruth" value="$(arg _perception_GroundTruth)"/>
         <param name="obs_manager/pre_step" value="$(arg pre_step_)" />
         <param name="obs_manager/step_time" value="$(arg step_time_)" />
+        <param name="obs_manager/predicted_obstacle_timeout" value="$(arg predicted_obstacle_timeout)" type="double"/>
 
         <param name="use_presetGoal"        value="$(arg _use_UserGoal)"/>
         <param name="goal_x"                value="$(arg _goal_x)"/>
@@ -155,6 +157,7 @@
         <param name="obs_manager/use_GroundTruth" value="$(arg _perception_GroundTruth)"/>
         <param name="obs_manager/pre_step" value="$(arg pre_step_)" />
         <param name="obs_manager/step_time" value="$(arg step_time_)" />
+        <param name="obs_manager/predicted_obstacle_timeout" value="$(arg predicted_obstacle_timeout)" type="double"/>
 
         <param name="use_presetGoal"        value="$(arg _use_UserGoal)"/>
         <param name="goal_x"                value="$(arg _goal_x)"/>

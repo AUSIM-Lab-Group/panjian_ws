@@ -17,7 +17,8 @@ class track
 {
 public:
   bool is_new = true;
-  track(const cluster& c, const int& min_ssw_tmp, const int& max_ssw_tmp)
+  track(const cluster& c, const int& min_ssw_tmp, const int& max_ssw_tmp,
+        const int track_id)
   {
     max_ssw = max_ssw_tmp;
     min_ssw = min_ssw_tmp;
@@ -53,9 +54,7 @@ public:
     ss << std::hex << (r << 16 | g << 8 | b);
     id_string = ss.str();
 
-    id_int = stoi(std::to_string(r) + std::to_string(g) + std::to_string(b));  // concatenate r, g, b
-
-    // TODO: The previous approach will **almost** always generate different ids, but not always
+    id_int = track_id;
   }
 
   void addToHistory(const cluster& c)

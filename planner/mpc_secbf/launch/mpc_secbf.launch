@@ -49,6 +49,7 @@
   <arg name="dynamic_tau_min_distance" default="1e-6"/>
   <arg name="dynamic_tau_max_tau" default="2.0"/>
   <arg name="v_min" default="0.3"/>
+  <arg name="reverse_v_max" default="0.2"/>
   <arg name="o_max" default="0.8"/>
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="global_path_topic" default="/global_path"/>
@@ -70,6 +71,7 @@
     <param name="mpc/step_time" value="$(arg step_time)"/>
     <param name="mpc/v_max" value="$(arg v_max)"/>
     <param name="mpc/v_min" value="$(arg v_min)"/>
+    <param name="mpc/reverse_v_max" value="$(arg reverse_v_max)"/>
     <param name="mpc/o_max" value="$(arg o_max)"/>
     <param name="mpc/gamma" value="$(arg gamma)"/>
     <param name="mpc/beta_bar_unknown" value="$(arg beta_bar_unknown)"/>

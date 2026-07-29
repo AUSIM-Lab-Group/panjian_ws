@@ -113,6 +113,15 @@ add_dependencies(obstacle_prediction_node
   )
 target_link_libraries(obstacle_prediction_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${EIGEN3_INCLUDE_DIR} casadi::casadi)
 
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(tracker_contract_test
+    test/test_tracker_contract.cpp
+    src/Hungarian.cpp)
+  if(TARGET tracker_contract_test)
+    target_link_libraries(tracker_contract_test ${catkin_LIBRARIES})
+  endif()
+endif()
+
 
 add_executable(obs_manager_node
   src/obs_manager_node.cpp

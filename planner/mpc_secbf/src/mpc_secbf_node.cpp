@@ -103,7 +103,7 @@ public:
         double emergency_cbf_activation_distance, emergency_cbf_progress_v;
         double side_weight, side_epsilon_n, side_sign, side_min_obstacle_speed, side_activation_distance;
         int side_horizon;
-        double v_max, v_min, o_max;
+        double v_max, v_min, reverse_v_max, o_max;
         std::string cbf_metric;
         nh_.param("dynamic_tau_enabled", dynamic_tau_enabled_, false);
         std::string dynamic_tau_mode;
@@ -146,7 +146,11 @@ public:
         nh_.param("mpc/pre_step", N, 20);
         nh_.param("mpc/v_max", v_max, 0.5);
         nh_.param("mpc/v_min", v_min, 0.3);
+        nh_.param("mpc/reverse_v_max", reverse_v_max, 0.2);
         nh_.param("mpc/o_max", o_max, 0.8);
+        if (!std::isfinite(reverse_v_max) || reverse_v_max < 0.0) {
+            throw std::invalid_argument("mpc/reverse_v_max must be nonnegative");
+        }
         nh_.param("mpc/gamma", gamma, 0.35);
         nh_.param("mpc/beta_bar_unknown", beta_unknown, 0.4);
         nh_.param("mpc/epsilon_max", epsilon_max, 0.05);
@@ -281,7 +285,7 @@ public:
                             side_horizon, side_sign, side_min_obstacle_speed,
                             side_activation_distance, qf_scale, delta_u_weight,
                             delta_u_max, active_set_distance_m, graph_cache_enabled,
-                            solver_max_cpu_time_ms);
+                            solver_max_cpu_time_ms, reverse_v_max);
         guard_solver_.init_solver(
             Ts, N, v_max, v_min, o_max, Q, R, gamma, beta_unknown,
             robot_radius, epsilon_max, slack_weight, max_cbf_obstacles,
@@ -289,7 +293,7 @@ public:
             side_preference_enabled, side_weight, side_epsilon_n, side_horizon,
             side_sign, side_min_obstacle_speed, side_activation_distance,
             qf_scale, delta_u_weight, delta_u_max, active_set_distance_m,
-            graph_cache_enabled, guard_solver_max_cpu_time_ms);
+            graph_cache_enabled, guard_solver_max_cpu_time_ms, reverse_v_max);
         side_preference_enabled_ = side_preference_enabled;
         side_weight_ = side_weight;
 

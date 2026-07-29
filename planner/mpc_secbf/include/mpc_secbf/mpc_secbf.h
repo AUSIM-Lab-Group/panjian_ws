@@ -70,7 +70,8 @@ public:
                      double delta_u_max = 0.4,
                      double active_set_distance_m = 8.0,
                      bool graph_cache_enabled = false,
-                     double solver_max_cpu_time_ms = 0.0);
+                     double solver_max_cpu_time_ms = 0.0,
+                     double reverse_v_max = 0.2);
 
     /**
      * Solve the MPC-SECBF problem.
@@ -171,6 +172,7 @@ private:
     int N_ = 20;
     double v_max_ = 0.5;
     double v_min_ = 0.3;
+    double reverse_v_max_ = 0.2;
     double omega_max_ = 0.8;
     double gamma_ = 0.35;
     double beta_bar_unknown_ = 0.4;

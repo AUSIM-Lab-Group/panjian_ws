@@ -1,8 +1,11 @@
 <launch>
 
+  <arg name="config_file" default="$(find fast_lio)/config/velodyne.yaml" />
+
   <!-- 启动Fast-LIO2 -->
   <include file="$(find fast_lio)/launch/mapping_velodyne.launch">
     <arg name="rviz" value="false"/>
+    <arg name="config_file" value="$(arg config_file)"/>
   </include>
   
   <!-- 发布静态坐标变换 -->

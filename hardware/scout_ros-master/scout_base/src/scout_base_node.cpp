@@ -18,17 +18,18 @@ int main(int argc, char **argv) {
   ros::init(argc, argv, "scout_odom");
   ros::NodeHandle node(""), private_node("~");
 
-  // check wether controlling scout mini
+  // Fetch connection parameters before protocol detection.
   bool is_scout_mini = false;
-  //private_node.param<bool>("is_scout_mini", is_scout_mini, false);
-  node.getParam("is_scout_mini",is_scout_mini);
+  private_node.param<bool>("is_scout_mini", is_scout_mini, false);
+  std::string port_name;
+  private_node.param<std::string>("port_name", port_name, std::string("can0"));
   std::cout << "Working as scout mini: " << is_scout_mini << std::endl;
 
   // check protocol version
   ProtocolDectctor detector;
   try
   {
-      detector.Connect("can0");
+      detector.Connect(port_name);
       auto proto = detector.DetectProtocolVersion(5);
       if (proto == ProtocolVersion::AGX_V1) {
           std::cout << "Detected protocol: AGX_V1" << std::endl;
@@ -45,16 +46,18 @@ int main(int argc, char **argv) {
       if (robot == nullptr)
           std::cout << "Failed to create robot object" << std::endl;
   }
-  catch (const std::exception error)
+  catch (const std::exception &error)
   {
-      ROS_ERROR("please bringup up can or make sure can port exist");
-      ros::shutdown();
+      ROS_ERROR("please bring up CAN or make sure the configured port exists: %s", error.what());
+      return -1;
+  }
+  if (robot == nullptr) {
+    ROS_ERROR("Failed to create Scout robot object");
+    return -1;
   }
   ScoutROSMessenger messenger(robot.get(),&node);
 
   // fetch parameters before connecting to rt
-  std::string port_name;
-  private_node.param<std::string>("port_name", port_name, std::string("can0"));
   private_node.param<std::string>("odom_frame", messenger.odom_frame_,
                                   std::string("odom"));
   private_node.param<std::string>("base_frame", messenger.base_frame_,

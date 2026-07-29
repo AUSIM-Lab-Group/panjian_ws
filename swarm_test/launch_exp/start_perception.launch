@@ -2,6 +2,7 @@
     <!-- Gazebo 仿真时设 true，实物实验设 false -->
     <arg name="use_sim_time" default="true"/>
     <arg name="show_rviz"    default="false"/>
+    <arg name="track_id_start" default="4000"/>
     <param name="/use_sim_time" value="$(arg use_sim_time)"/>
 
     <!-- 启动动态感知模块 -->
@@ -21,8 +22,9 @@
 
     <!-- 启动轨迹预测 -->
     <node pkg="dynamic_perception" type="obstacle_prediction_node" name="obstacle_prediction_node" output="screen">
-        <param name="/obstacle_prediction_node/max_frames_skipped" value="4" type="int"/>
-        <param name="/obstacle_prediction_node/meters_to_create_new_track" value="1.0" type="double"/>
+        <param name="max_frames_skipped" value="4" type="int"/>
+        <param name="meters_to_create_new_track" value="1.0" type="double"/>
+        <param name="track_id_start" value="$(arg track_id_start)" type="int"/>
     </node>
 
     <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(find scout_gazebo_sim)/config/single_scout.rviz" />
