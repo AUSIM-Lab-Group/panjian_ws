@@ -4,15 +4,15 @@ set -eo pipefail
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT_ROOT="$(cd "$WORKSPACE/.." && pwd)"
 SEESM_REPO="$PROJECT_ROOT/seesm_social_navigation"
-OUTPUT_ROOT="$SEESM_REPO/新计划实验输出目录/04_formal/ablation_formal_20260729"
+OUTPUT_ROOT="$SEESM_REPO/新计划实验输出目录/04_formal/ablation_formal_current_20260730"
 MANIFEST="$WORKSPACE/swarm_test/config/seed_manifests/20260712_nine_condition_formal30.csv"
 FREEZE="$WORKSPACE/swarm_test/config/experiment_freezes/ablation_formal.yaml"
 RUNNER="$WORKSPACE/swarm_test/scripts/run_secbf_sim_experiments.py"
 OVERLAY="$WORKSPACE/devel_current"
 EXPECTED_BRANCH="formal/logging-repair-v4-20260729"
-EXPECTED_PANJIAN_ALGORITHM_COMMIT="078712a96a13f5ca647afc9a6784aba556fe8485"
+EXPECTED_PANJIAN_ALGORITHM_COMMIT="5adfce86b8e1b05d39abaeabd8a10620f394ff03"
 EXPECTED_SEESM_COMMIT="afe29b65673a84cb884059c25a04d4a80930a006"
-EXPECTED_MPC_SHA256="6be54893b56d08c5c1634b0f17134e013e64ed284574dee89227a6a7cb4ce352"
+EXPECTED_MPC_SHA256="0a07dc1e47c5ef30598ab6e886c7cf1aa377b95d019acc0bcfd372684dc51ac3"
 EXPECTED_GUARD_SHA256="9423f22d806b7819904ef47909517cacb38bde797b741a04fdcfbd900e5994fd"
 
 source /opt/ros/noetic/setup.bash
@@ -57,7 +57,7 @@ python3 -u "$RUNNER" \
   --campaign ablation \
   --execution-tier formal \
   --parameter-freeze "$FREEZE" \
-  --protocol-id teacher_v1_ablation_formal_current_20260729 \
+  --protocol-id teacher_v1_ablation_formal_current_20260730 \
   --output-root "$OUTPUT_ROOT" \
   --roscore auto \
   --skip-existing-complete \
