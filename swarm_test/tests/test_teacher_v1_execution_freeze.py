@@ -98,7 +98,7 @@ def test_formal_freezes_use_regression_validated_recovery_profile(runner, campai
     expected_freeze_ids = {
         "main": "teacher_v1_main_formal_v3_clean_20260728",
         "ablation": "teacher_v1_ablation_formal_current_20260729",
-        "stress": "teacher_v1_stress_formal_v3_clean_20260728",
+        "stress": "teacher_v1_stress_formal_current_20260731",
         "runtime": "teacher_v1_runtime_formal_v3_clean_20260728",
     }
     assert freeze["id"] == expected_freeze_ids[campaign]
