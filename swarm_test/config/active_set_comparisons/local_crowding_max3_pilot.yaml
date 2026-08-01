@@ -1,11 +1,11 @@
 comparison_id: teacher_v1_local_crowding_active_set_max3_pilot_20260801
-status: controlled_pilot
+status: controlled_formal_provenance_pilot
 created_at: '2026-08-01'
 scenario: stress_local_crowding
 baseline: SEESM_Ours
 duration_sec: 30
 seed_manifest: swarm_test/config/seed_manifests/20260801_local_crowding_max3_pilot5.csv
-parameter_freeze: swarm_test/config/experiment_freezes/stress_smoke.yaml
+parameter_freeze: swarm_test/config/experiment_freezes/active_set_formal.yaml
 common_evaluation: swarm_test/config/common_offline_evaluation_v1.yaml
 output_root: seesm_social_navigation/新计划实验输出目录/03_smoke/local_crowding_active_set_max3_pilot_20260801
 selection_policy:

@@ -182,6 +182,8 @@ RUNTIME_MATRIX_SCENARIOS = (
     "runtime_scaling_n6",
 )
 RUNTIME_MATRIX_METHODS = ("EESM_MPC_ECBF", "Proposed_MPC_SECBF")
+ACTIVE_SET_MATRIX_SCENARIOS = ("stress_local_crowding",)
+ACTIVE_SET_MATRIX_METHODS = ("SEESM_Ours",)
 
 CAMPAIGN_PROFILES = {
     "main": {
@@ -211,6 +213,13 @@ CAMPAIGN_PROFILES = {
         "smoke_trials": 16,
         "formal_trials": 240,
         "scenario_semantic_overrides": False,
+    },
+    "active_set": {
+        "scenarios": ACTIVE_SET_MATRIX_SCENARIOS,
+        "methods": ACTIVE_SET_MATRIX_METHODS,
+        "smoke_trials": 5,
+        "formal_trials": 5,
+        "scenario_semantic_overrides": True,
     },
 }
 

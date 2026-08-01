@@ -9,6 +9,7 @@ ANALYZER = REPO_ROOT / "swarm_test/scripts/analyze_local_crowding_active_set_com
 CONFIG = REPO_ROOT / "swarm_test/config/active_set_comparisons/local_crowding_max3_pilot.yaml"
 MANIFEST = REPO_ROOT / "swarm_test/config/seed_manifests/20260801_local_crowding_max3_pilot5.csv"
 RUN_SCRIPT = REPO_ROOT / "swarm_test/scripts/run_20260801_local_crowding_max3_pilot5.sh"
+FREEZE = REPO_ROOT / "swarm_test/config/experiment_freezes/active_set_formal.yaml"
 
 
 def load_analyzer():
@@ -26,6 +27,16 @@ def test_comparison_config_keeps_default_reference_and_distance_ordering():
     assert config["variants"]["candidate"]["max_cbf_obstacles"] == 3
     assert config["selection_policy"]["ordering"] == "current_distance_ascending"
     assert config["acceptance"]["expected_pairs"] == 5
+    assert config["parameter_freeze"].endswith("active_set_formal.yaml")
+
+
+def test_active_set_formal_freeze_matches_dedicated_matrix():
+    config = yaml.safe_load(FREEZE.read_text(encoding="utf-8"))
+    assert config["status"] == "formal_frozen"
+    assert config["campaign"] == "active_set"
+    assert config["matrix"]["scenarios"] == ["stress_local_crowding"]
+    assert config["matrix"]["requested_methods"] == ["SEESM_Ours"]
+    assert config["matrix"]["expected_trials"] == 5
 
 
 def test_manifest_has_five_complete_five_obstacle_trials():
@@ -73,3 +84,5 @@ def test_run_script_uses_both_active_set_limits_and_dedicated_roots():
     assert 'run_variant max3 3 "$CANDIDATE_ROOT"' in text
     assert "local_crowding_active_set_max3_pilot_20260801" in text
     assert "--skip-existing-complete" in text
+    assert "--campaign active_set" in text
+    assert "--execution-tier formal" in text

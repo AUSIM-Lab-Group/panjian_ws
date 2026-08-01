@@ -5,7 +5,7 @@ WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT_ROOT="$(cd "$WORKSPACE/.." && pwd)"
 CONFIG="$WORKSPACE/swarm_test/config/active_set_comparisons/local_crowding_max3_pilot.yaml"
 MANIFEST="$WORKSPACE/swarm_test/config/seed_manifests/20260801_local_crowding_max3_pilot5.csv"
-FREEZE="$WORKSPACE/swarm_test/config/experiment_freezes/stress_smoke.yaml"
+FREEZE="$WORKSPACE/swarm_test/config/experiment_freezes/active_set_formal.yaml"
 EVALUATOR="$WORKSPACE/swarm_test/config/common_offline_evaluation_v1.yaml"
 OUTPUT_BASE="$PROJECT_ROOT/seesm_social_navigation/新计划实验输出目录/03_smoke/local_crowding_active_set_max3_pilot_20260801"
 REFERENCE_ROOT="$OUTPUT_BASE/max6"
@@ -36,8 +36,8 @@ run_variant() {
     --baseline SEESM_Ours \
     --duration-sec 30 \
     --seed-manifest "$MANIFEST" \
-    --campaign stress \
-    --execution-tier smoke \
+    --campaign active_set \
+    --execution-tier formal \
     --parameter-freeze "$FREEZE" \
     --protocol-id "teacher_v1_local_crowding_active_set_${label}_pilot_20260801" \
     --output-root "$output_root" \
