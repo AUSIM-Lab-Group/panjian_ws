@@ -221,6 +221,13 @@ CAMPAIGN_PROFILES = {
         "formal_trials": 5,
         "scenario_semantic_overrides": True,
     },
+    "active_set_formal30": {
+        "scenarios": ACTIVE_SET_MATRIX_SCENARIOS,
+        "methods": ACTIVE_SET_MATRIX_METHODS,
+        "smoke_trials": 30,
+        "formal_trials": 30,
+        "scenario_semantic_overrides": True,
+    },
 }
 
 

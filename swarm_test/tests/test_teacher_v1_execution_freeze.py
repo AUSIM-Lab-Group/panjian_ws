@@ -112,6 +112,17 @@ def test_formal_freezes_use_regression_validated_recovery_profile(runner, campai
     assert switches["emergency_cbf_progress_v"] == pytest.approx(0.2)
 
 
+def test_active_set_formal30_campaign_loads_thirty_trial_freeze(runner):
+    path = runner.PARAMETER_FREEZE_ROOT / "active_set_formal30.yaml"
+    freeze = runner.load_parameter_freeze(
+        path, "formal", campaign="active_set_formal30"
+    )
+    assert freeze["campaign"] == "active_set_formal30"
+    assert freeze["expected_trials"] == 30
+    assert freeze["switches"]["max_cbf_obstacles"] == 6
+    assert freeze["switches"]["active_set_distance_m"] == pytest.approx(8.0)
+
+
 def test_main_method_side_preference_definition(runner):
     assert runner.baseline_switches("Standard_MPC_CBF")[
         "side_preference_enabled"

@@ -1,0 +1,42 @@
+comparison_id: teacher_v1_local_crowding_active_set_max3_formal30_20260801
+status: controlled_formal_provenance
+created_at: '2026-08-01'
+report_title: Local-crowding max6/max3 active-set formal30
+scenario: stress_local_crowding
+baseline: SEESM_Ours
+duration_sec: 30
+seed_manifest: swarm_test/config/seed_manifests/20260720_feasibility_stress_formal30.csv
+parameter_freeze: swarm_test/config/experiment_freezes/active_set_formal30.yaml
+common_evaluation: swarm_test/config/common_offline_evaluation_v1.yaml
+output_root: seesm_social_navigation/新计划实验输出目录/04_formal/local_crowding_active_set_max3_formal30_20260801
+selection_policy:
+  active_set_distance_m: 8.0
+  ordering: current_distance_ascending
+  note: This comparison changes only the maximum number of distance-ranked CBF obstacles.
+variants:
+  reference:
+    label: max6
+    max_cbf_obstacles: 6
+  candidate:
+    label: max3
+    max_cbf_obstacles: 3
+acceptance:
+  expected_pairs: 30
+  max_added_executed_collision_pairs: 0
+  min_mean_d_min_delta_m: -0.05
+  max_mean_semantic_violation_delta: 0.005
+  max_success_regression_pairs: 0
+diagnostics:
+  severe_d_min_drop_threshold_m: 0.10
+artifacts:
+  report: local_crowding_max3_formal30_report.md
+  pass_sentinel: ACTIVE_SET_MAX3_FORMAL30_PASS.txt
+  fail_sentinel: ACTIVE_SET_MAX3_FORMAL30_FAIL.txt
+boundary:
+- Keep the production/formal default at 6 unless every acceptance gate passes and the paired minimum-distance tail is reviewed.
+- A formal30 PASS authorizes consideration of max3; it does not change the default automatically.
+- This comparison retains distance-ascending ordering and changes no other controller switch.
+decision_policy: >-
+  Keep the production/formal default at 6 until all 30-pair gates pass and no
+  collision, minimum-distance, or semantic-violation regression requiring
+  follow-up is found in the paired tail audit.

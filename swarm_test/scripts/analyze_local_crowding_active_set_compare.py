@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit and compare the paired max6/max3 local-crowding pilot."""
+"""Audit paired max6/max3 local-crowding active-set campaigns."""
 
 from __future__ import annotations
 
@@ -90,6 +90,13 @@ def load_variant(root: Path, expected_max: int) -> dict[tuple[str, str], dict]:
             "constrained_obs_mean": number(summary["constrained_obs_count_mean"]),
             "constrained_obs_max": number(summary["constrained_obs_count_max"]),
         }
+        for field in (
+            "d_min_m", "min_h_eval", "semantic_violation", "mpc_feasibility",
+            "solve_mean_ms", "solve_p95_ms", "constrained_obs_mean",
+            "constrained_obs_max",
+        ):
+            if not math.isfinite(rows[key][field]):
+                raise ValueError(f"{run_id}: non-finite required metric {field}")
     return rows
 
 
@@ -200,8 +207,15 @@ def build_pairs(reference: dict, candidate: dict) -> list[dict]:
 
 
 def write_report(path: Path, config: dict, pairs: list[dict], gates: list[dict], passed: bool) -> None:
+    severe_drop_threshold = float(
+        config.get("diagnostics", {}).get("severe_d_min_drop_threshold_m", 0.10)
+    )
+    severe_drop_pairs = sum(
+        row["delta_d_min_m"] < -severe_drop_threshold for row in pairs
+    )
+    worst_pair = min(pairs, key=lambda row: row["delta_d_min_m"])
     lines = [
-        "# Local-crowding max6/max3 active-set pilot",
+        f"# {config.get('report_title', 'Local-crowding max6/max3 active-set pilot')}",
         "",
         f"- Comparison: `{config['comparison_id']}`",
         f"- Scenario: `{config['scenario']}`",
@@ -216,6 +230,10 @@ def write_report(path: Path, config: dict, pairs: list[dict], gates: list[dict],
         f"- Added executed-collision pairs: `{sum(row['executed_collision_added'] for row in pairs)}`",
         f"- Success-regression pairs: `{sum(row['success_regression'] for row in pairs)}`",
         f"- Mean minimum-distance delta: `{mean([row['delta_d_min_m'] for row in pairs]):.6f} m`",
+        f"- Worst paired minimum-distance delta: `{worst_pair['delta_d_min_m']:.6f} m` "
+        f"at `{worst_pair['trial_id']}`",
+        f"- Paired minimum-distance drops greater than `{severe_drop_threshold:.2f} m`: "
+        f"`{severe_drop_pairs}/{len(pairs)}`",
         f"- Mean semantic-violation delta: `{100.0 * mean([row['delta_semantic_violation'] for row in pairs]):.4f} percentage points`",
         f"- Mean common-clearance delta: `{mean([row['delta_min_h_eval'] for row in pairs]):.6f} m`",
         f"- Mean MPC-feasibility delta: `{100.0 * mean([row['delta_mpc_feasibility'] for row in pairs]):.4f} percentage points`",
@@ -231,13 +249,16 @@ def write_report(path: Path, config: dict, pairs: list[dict], gates: list[dict],
             f"`{gate['operator']} {gate['limit']}` -> "
             f"`{'PASS' if gate['passed'] else 'FAIL'}`"
         )
+    boundary = config.get("boundary", [
+        "A PASS is screening evidence only. Keep the default at 6 until the same gates pass on 30 paired seeds.",
+        "This comparison retains the current distance-ascending active-set ordering and changes no other controller switch.",
+    ])
     lines.extend([
         "",
         "## Boundary",
         "",
-        "- A PASS is screening evidence only. Keep the default at 6 until the same gates pass on 30 paired seeds.",
-        "- This comparison retains the current distance-ascending active-set ordering and changes no other controller switch.",
     ])
+    lines.extend(f"- {item}" for item in boundary)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -258,12 +279,18 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "paired_trials.csv", pairs)
     write_csv(args.output_dir / "acceptance_gates.csv", gates)
-    write_report(args.output_dir / "local_crowding_max3_pilot_report.md", config, pairs, gates, passed)
+    artifacts = config.get("artifacts", {})
+    report_name = artifacts.get(
+        "report", "local_crowding_max3_pilot_report.md"
+    )
+    pass_name = artifacts.get("pass_sentinel", "ACTIVE_SET_MAX3_PILOT_PASS.txt")
+    fail_name = artifacts.get("fail_sentinel", "ACTIVE_SET_MAX3_PILOT_FAIL.txt")
+    write_report(args.output_dir / report_name, config, pairs, gates, passed)
     sentinel = args.output_dir / (
-        "ACTIVE_SET_MAX3_PILOT_PASS.txt" if passed else "ACTIVE_SET_MAX3_PILOT_FAIL.txt"
+        pass_name if passed else fail_name
     )
     sentinel.write_text(
-        f"active-set max3 pilot {'passed' if passed else 'failed'}: "
+        f"active-set max3 comparison {'passed' if passed else 'failed'}: "
         f"{len(pairs)}/{config['acceptance']['expected_pairs']} paired trials.\n",
         encoding="utf-8",
     )
