@@ -3380,15 +3380,27 @@ def release_global_path_start_gate(topic: str, env=None):
 
 def stop_process(proc):
     if proc.poll() is not None:
-        return
+        return True
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-        proc.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        proc.wait(timeout=5)
+        process_group = os.getpgid(proc.pid)
     except ProcessLookupError:
-        pass
+        return True
+
+    for stop_signal, timeout_sec in (
+        (signal.SIGINT, 8),
+        (signal.SIGTERM, 5),
+        (signal.SIGKILL, 2),
+    ):
+        try:
+            os.killpg(process_group, stop_signal)
+        except ProcessLookupError:
+            return True
+        try:
+            proc.wait(timeout=timeout_sec)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return proc.poll() is not None
 
 
 def run_verify(run_dir: Path, epsilon_max=0.05, delta_bar_beta=0.3):

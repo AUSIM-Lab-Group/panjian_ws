@@ -1,6 +1,7 @@
 import csv
 import importlib.util
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
@@ -832,6 +833,46 @@ def test_seed_manifest_missing_selected_scenario_fails_closed(tmp_path, runner):
     )
     assert result.returncode != 0
     assert "has no trials for selected scenario" in result.stdout
+
+
+def test_stop_process_escalates_to_sigkill_after_shutdown_timeouts(
+    monkeypatch, runner
+):
+    class StubbornProcess:
+        pid = 4242
+
+        def __init__(self):
+            self.wait_timeouts = []
+            self.alive = True
+
+        def poll(self):
+            return None if self.alive else -signal.SIGKILL
+
+        def wait(self, timeout):
+            self.wait_timeouts.append(timeout)
+            if timeout < 2:
+                raise AssertionError("unexpected timeout")
+            if timeout in (8, 5):
+                raise subprocess.TimeoutExpired("roslaunch", timeout)
+            self.alive = False
+            return -signal.SIGKILL
+
+    sent_signals = []
+    monkeypatch.setattr(runner.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(
+        runner.os, "killpg", lambda process_group, stop_signal: sent_signals.append(
+            (process_group, stop_signal)
+        )
+    )
+
+    proc = StubbornProcess()
+    assert runner.stop_process(proc)
+    assert proc.wait_timeouts == [8, 5, 2]
+    assert sent_signals == [
+        (proc.pid, signal.SIGINT),
+        (proc.pid, signal.SIGTERM),
+        (proc.pid, signal.SIGKILL),
+    ]
 
 
 def read_csv_rows(path):
