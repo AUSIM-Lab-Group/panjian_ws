@@ -42,12 +42,24 @@ def analyze_trial(run):
         if math.hypot(f(r,'vx',0),f(r,'vy',0))>1e-3: grouped[r.get('id','')].append((f(r,'t'),f(r,'d_i')))
     closest=[min(v,key=lambda x:x[1])[0] for v in grouped.values() if v]
     completion=max(closest)+1.0 if closest else (track[0][0] if track else float('nan'))
-    out={'interaction_completion_t':completion,'tracking_rmse_m':math.sqrt(sum(v*v for _,v in track)/len(track)) if track else float('nan'),'tracking_error_max_m':max((v for _,v in track),default=float('nan'))}
+    post_track=[(t,v) for t,v in track if math.isfinite(completion) and t>=completion]
+    post_window=max((t-completion for t,_ in post_track),default=0.0)
+    out={
+        'interaction_completion_t':completion,
+        'post_interaction_sample_count':len(post_track),
+        'post_interaction_window_s':post_window,
+        'tracking_rmse_m':math.sqrt(sum(v*v for _,v in track)/len(track)) if track else float('nan'),
+        'tracking_error_max_m':max((v for _,v in track),default=float('nan')),
+    }
     for threshold in (0.20,0.30,0.40):
         for hold in (0.5,1.0):
             start=sustained_start(track,completion,lambda v,t=threshold:v<=t,hold)
             out[f'settle_{threshold:.2f}_{hold:.1f}_s']=start-completion if start is not None else float('nan')
-            out[f'settle_{threshold:.2f}_{hold:.1f}_within5']=int(start is not None and start-completion<=5.0)
+            evaluable=(start is not None) or post_window>=5.0+hold
+            out[f'settle_{threshold:.2f}_{hold:.1f}_evaluable']=int(evaluable)
+            out[f'settle_{threshold:.2f}_{hold:.1f}_within5']=(
+                int(start is not None and start-completion<=5.0) if evaluable else ''
+            )
     for threshold in (1e-3,3e-3,5e-3):
         longest=longest_episode(slack,lambda v,t=threshold:v>t)
         out[f'slack_run_gt_{threshold:g}_s']=longest
